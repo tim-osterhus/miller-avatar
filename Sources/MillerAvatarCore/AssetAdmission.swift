@@ -139,13 +139,22 @@ private struct AccessorInfo {
     let componentBytes: UInt64
     let componentCount: UInt64
     let count: UInt64
-    let offset: UInt64
+    let offset: UInt64?
     let stride: UInt64
     let normalized: Bool
+    let sparse: SparseAccessorInfo?
 
     var elementBytes: UInt64 {
         componentBytes * componentCount
     }
+}
+
+private struct SparseAccessorInfo {
+    let count: UInt64
+    let indicesOffset: UInt64
+    let indexComponentType: UInt64
+    let indexBytes: UInt64
+    let valuesOffset: UInt64
 }
 
 private struct SemanticValidator {
@@ -268,7 +277,11 @@ private struct SemanticValidator {
 
         for key in ["extensionsUsed", "extensionsRequired"] {
             try checkpoint()
-            guard let names = document[key] as? [Any] else {
+            guard let value = document[key] else {
+                if key == "extensionsRequired" { continue }
+                throw AdmissionError.invalid
+            }
+            guard let names = value as? [Any] else {
                 throw AdmissionError.invalid
             }
             var uniqueNames = Set<String>()
@@ -290,6 +303,7 @@ private struct SemanticValidator {
             throw AdmissionError.invalid
         }
         try scanClosedValues(document)
+        try validateSparseLocations()
         try validateAllowlistedExtensionObjects(in: document)
         try validateExtensionLocations()
     }
@@ -319,7 +333,7 @@ private struct SemanticValidator {
     private func scanClosedValues(_ value: Any) throws {
         try checkpoint()
         if let object = value as? [String: Any] {
-            if object["uri"] != nil || object["sparse"] != nil {
+            if object["uri"] != nil {
                 throw AdmissionError.invalid
             }
             if let extensions = object["extensions"] as? [String: Any] {
@@ -338,6 +352,41 @@ private struct SemanticValidator {
             }
         } else if let number = value as? NSNumber {
             guard number.doubleValue.isFinite else { throw AdmissionError.invalid }
+        }
+    }
+
+    private func validateSparseLocations() throws {
+        for (key, value) in document {
+            try checkpoint()
+            if key == "accessors" {
+                guard let accessors = value as? [Any] else {
+                    throw AdmissionError.invalid
+                }
+                for accessor in accessors {
+                    try validateSparseLocations(in: accessor, allowedHere: true)
+                }
+            } else {
+                try validateSparseLocations(in: value, allowedHere: false)
+            }
+        }
+    }
+
+    private func validateSparseLocations(
+        in value: Any,
+        allowedHere: Bool
+    ) throws {
+        try checkpoint()
+        if let object = value as? [String: Any] {
+            if object["sparse"] != nil, !allowedHere {
+                throw AdmissionError.invalid
+            }
+            for child in object.values {
+                try validateSparseLocations(in: child, allowedHere: false)
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                try validateSparseLocations(in: child, allowedHere: false)
+            }
         }
     }
 
@@ -571,8 +620,6 @@ private struct SemanticValidator {
             guard let accessor = value as? [String: Any] else {
                 throw AdmissionError.invalid
             }
-            let viewIndex = try index(accessor["bufferView"], count: bufferViews.count)
-            let view = bufferViews[viewIndex]
             let componentType = try uint(accessor["componentType"])
             let componentBytes: UInt64
             switch componentType {
@@ -594,53 +641,187 @@ private struct SemanticValidator {
             }
             let count = try uint(accessor["count"])
             guard count > 0 else { throw AdmissionError.invalid }
-            let localOffset = try optionalUInt(accessor["byteOffset"]) ?? 0
             let elementBytes = try AssetBudget.multiply(componentBytes, componentCount)
-            let stride = view.stride ?? elementBytes
-            guard stride >= elementBytes, localOffset % componentBytes == 0 else {
-                throw AdmissionError.invalid
-            }
-            let span: UInt64
-            if count == 0 {
-                span = 0
-            } else {
-                span = try AssetBudget.add(
+
+            let denseOffset: UInt64?
+            let stride: UInt64
+            if let viewValue = accessor["bufferView"] {
+                let view = bufferViews[try index(viewValue, count: bufferViews.count)]
+                let localOffset = try optionalUInt(accessor["byteOffset"]) ?? 0
+                stride = view.stride ?? elementBytes
+                guard stride >= elementBytes,
+                      localOffset % componentBytes == 0
+                else {
+                    throw AdmissionError.invalid
+                }
+                let span = try AssetBudget.add(
                     try AssetBudget.multiply(count - 1, stride),
                     elementBytes
                 )
+                guard try AssetBudget.add(localOffset, span) <= view.length else {
+                    throw AdmissionError.invalid
+                }
+                denseOffset = try AssetBudget.add(view.offset, localOffset)
+            } else {
+                guard accessor["byteOffset"] == nil else {
+                    throw AdmissionError.invalid
+                }
+                denseOffset = nil
+                stride = elementBytes
             }
-            guard try AssetBudget.add(localOffset, span) <= view.length else {
+
+            let logicalBytes = try AssetBudget.multiply(count, elementBytes)
+            let logicalTotal = try AssetBudget.add(accessorBytes, logicalBytes)
+            try AssetBudget.require(
+                logicalTotal,
+                maximum: budget.accessorReferencedBytes
+            )
+            let sparse = try validateSparseAccessor(
+                accessor["sparse"],
+                accessorCount: count,
+                componentBytes: componentBytes,
+                elementBytes: elementBytes,
+                remainingReferencedBytes: budget.accessorReferencedBytes - logicalTotal
+            )
+            guard denseOffset != nil || sparse != nil else {
                 throw AdmissionError.invalid
             }
-            let referenced = try AssetBudget.multiply(count, elementBytes)
+
+            let referenced = try AssetBudget.add(
+                logicalBytes,
+                sparse?.referencedBytes ?? 0
+            )
             accessorBytes = try AssetBudget.add(accessorBytes, referenced)
             try AssetBudget.require(
                 accessorBytes,
                 maximum: budget.accessorReferencedBytes
             )
-            let absoluteOffset = try AssetBudget.add(view.offset, localOffset)
             let info = AccessorInfo(
                 componentType: componentType,
                 componentBytes: componentBytes,
                 componentCount: componentCount,
                 count: count,
-                offset: absoluteOffset,
+                offset: denseOffset,
                 stride: stride,
-                normalized: (accessor["normalized"] as? Bool) ?? false
+                normalized: (accessor["normalized"] as? Bool) ?? false,
+                sparse: sparse?.info
             )
             try validateFiniteValues(info)
             accessors.append(info)
         }
     }
 
+    private struct ValidatedSparseAccessor {
+        let info: SparseAccessorInfo
+        let referencedBytes: UInt64
+    }
+
+    private func validateSparseAccessor(
+        _ value: Any?,
+        accessorCount: UInt64,
+        componentBytes: UInt64,
+        elementBytes: UInt64,
+        remainingReferencedBytes: UInt64
+    ) throws -> ValidatedSparseAccessor? {
+        guard let value else { return nil }
+        guard let sparse = value as? [String: Any],
+              let indicesObject = sparse["indices"] as? [String: Any],
+              let valuesObject = sparse["values"] as? [String: Any]
+        else {
+            throw AdmissionError.invalid
+        }
+        let sparseCount = try uint(sparse["count"])
+        guard sparseCount > 0, sparseCount <= accessorCount else {
+            throw AdmissionError.invalid
+        }
+
+        let indexComponentType = try uint(indicesObject["componentType"])
+        let indexBytes: UInt64
+        switch indexComponentType {
+        case 5121: indexBytes = 1
+        case 5123: indexBytes = 2
+        case 5125: indexBytes = 4
+        default: throw AdmissionError.invalid
+        }
+        let indicesView = bufferViews[
+            try index(indicesObject["bufferView"], count: bufferViews.count)
+        ]
+        let valuesView = bufferViews[
+            try index(valuesObject["bufferView"], count: bufferViews.count)
+        ]
+        guard indicesView.stride == nil, valuesView.stride == nil else {
+            throw AdmissionError.invalid
+        }
+
+        let indicesLocalOffset = try optionalUInt(indicesObject["byteOffset"]) ?? 0
+        let valuesLocalOffset = try optionalUInt(valuesObject["byteOffset"]) ?? 0
+        let indicesLength = try AssetBudget.multiply(sparseCount, indexBytes)
+        let valuesLength = try AssetBudget.multiply(sparseCount, elementBytes)
+        let referencedBytes = try AssetBudget.add(indicesLength, valuesLength)
+        try AssetBudget.require(
+            referencedBytes,
+            maximum: remainingReferencedBytes
+        )
+        guard indicesLocalOffset % indexBytes == 0,
+              valuesLocalOffset % componentBytes == 0,
+              try AssetBudget.add(indicesLocalOffset, indicesLength) <= indicesView.length,
+              try AssetBudget.add(valuesLocalOffset, valuesLength) <= valuesView.length
+        else {
+            throw AdmissionError.invalid
+        }
+
+        let indicesOffset = try AssetBudget.add(indicesView.offset, indicesLocalOffset)
+        let valuesOffset = try AssetBudget.add(valuesView.offset, valuesLocalOffset)
+        guard indicesOffset % indexBytes == 0,
+              valuesOffset % componentBytes == 0
+        else {
+            throw AdmissionError.invalid
+        }
+
+        var previousIndex: UInt64?
+        for position in 0..<sparseCount {
+            if position % 256 == 0 { try checkpoint() }
+            let offset = try AssetBudget.add(
+                indicesOffset,
+                try AssetBudget.multiply(position, indexBytes)
+            )
+            let indexValue: UInt64
+            switch indexComponentType {
+            case 5121: indexValue = UInt64(binary[Int(offset)])
+            case 5123: indexValue = UInt64(readUInt16(at: offset))
+            case 5125: indexValue = UInt64(readUInt32(at: offset))
+            default: throw AdmissionError.invalid
+            }
+            guard indexValue < accessorCount,
+                  previousIndex.map({ $0 < indexValue }) ?? true
+            else {
+                throw AdmissionError.invalid
+            }
+            previousIndex = indexValue
+        }
+
+        return ValidatedSparseAccessor(
+            info: SparseAccessorInfo(
+                count: sparseCount,
+                indicesOffset: indicesOffset,
+                indexComponentType: indexComponentType,
+                indexBytes: indexBytes,
+                valuesOffset: valuesOffset
+            ),
+            referencedBytes: referencedBytes
+        )
+    }
+
     private func validateFiniteValues(_ accessor: AccessorInfo) throws {
         guard accessor.componentType == 5126 else { return }
+        var sparsePosition = 0
         for element in 0..<accessor.count {
             if element % 256 == 0 { try checkpoint() }
-            let base = try AssetBudget.add(
-                accessor.offset,
-                try AssetBudget.multiply(element, accessor.stride)
-            )
+            guard let base = try elementOffset(
+                accessor,
+                element: element,
+                sparsePosition: &sparsePosition
+            ) else { continue }
             for component in 0..<accessor.componentCount {
                 let offset = try AssetBudget.add(
                     base,
@@ -918,13 +1099,19 @@ private struct SemanticValidator {
         guard accessor.normalized else { throw AdmissionError.invalid }
         var result: [Double] = []
         result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
-            let base = try AssetBudget.add(
-                accessor.offset,
-                try AssetBudget.multiply(element, accessor.stride)
+            let base = try elementOffset(
+                accessor,
+                element: element,
+                sparsePosition: &sparsePosition
             )
             for component in 0..<accessor.componentCount {
+                guard let base else {
+                    result.append(0)
+                    continue
+                }
                 let offset = try AssetBudget.add(
                     base,
                     try AssetBudget.multiply(component, accessor.componentBytes)
@@ -1350,16 +1537,22 @@ private struct SemanticValidator {
         guard accessor.componentType == 5126 else { throw AdmissionError.invalid }
         var result: [Double] = []
         result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
-            let base = try AssetBudget.add(
-                accessor.offset,
-                try AssetBudget.multiply(element, accessor.stride)
+            let base = try elementOffset(
+                accessor,
+                element: element,
+                sparsePosition: &sparsePosition
             )
             for component in 0..<accessor.componentCount {
-                result.append(
-                    Double(float32(at: try AssetBudget.add(base, component * 4)))
-                )
+                if let base {
+                    result.append(
+                        Double(float32(at: try AssetBudget.add(base, component * 4)))
+                    )
+                } else {
+                    result.append(0)
+                }
             }
         }
         return result
@@ -1368,13 +1561,19 @@ private struct SemanticValidator {
     private func integerValues(_ accessor: AccessorInfo) throws -> [UInt64] {
         var result: [UInt64] = []
         result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
-            let base = try AssetBudget.add(
-                accessor.offset,
-                try AssetBudget.multiply(element, accessor.stride)
+            let base = try elementOffset(
+                accessor,
+                element: element,
+                sparsePosition: &sparsePosition
             )
             for component in 0..<accessor.componentCount {
+                guard let base else {
+                    result.append(0)
+                    continue
+                }
                 let offset = try AssetBudget.add(
                     base,
                     try AssetBudget.multiply(component, accessor.componentBytes)
@@ -1392,6 +1591,48 @@ private struct SemanticValidator {
             }
         }
         return result
+    }
+
+    private func elementOffset(
+        _ accessor: AccessorInfo,
+        element: UInt64,
+        sparsePosition: inout Int
+    ) throws -> UInt64? {
+        if let sparse = accessor.sparse,
+           UInt64(sparsePosition) < sparse.count,
+           try sparseIndex(sparse, position: UInt64(sparsePosition)) == element
+        {
+            let offset = try AssetBudget.add(
+                sparse.valuesOffset,
+                try AssetBudget.multiply(
+                    UInt64(sparsePosition),
+                    accessor.elementBytes
+                )
+            )
+            sparsePosition += 1
+            return offset
+        }
+        guard let offset = accessor.offset else { return nil }
+        return try AssetBudget.add(
+            offset,
+            try AssetBudget.multiply(element, accessor.stride)
+        )
+    }
+
+    private func sparseIndex(
+        _ sparse: SparseAccessorInfo,
+        position: UInt64
+    ) throws -> UInt64 {
+        let offset = try AssetBudget.add(
+            sparse.indicesOffset,
+            try AssetBudget.multiply(position, sparse.indexBytes)
+        )
+        switch sparse.indexComponentType {
+        case 5121: return UInt64(binary[Int(offset)])
+        case 5123: return UInt64(readUInt16(at: offset))
+        case 5125: return UInt64(readUInt32(at: offset))
+        default: throw AdmissionError.invalid
+        }
     }
 
     private func float32(at offset: UInt64) -> Float {

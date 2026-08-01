@@ -38,8 +38,42 @@ test("suspension and reduced motion match native reducer behavior", () => {
   });
   assert.deepEqual(policy.effects, []);
   const resumed = reducePresentation(policy.state, { type: "resume" });
-  assert.deepEqual(resumed.effects, [{ type: "reconcile" }]);
+  assert.deepEqual(resumed.effects, [{
+    type: "reconcile",
+    phase: "speaking",
+    mouthScalar: 0,
+    reducedMotion: true,
+  }]);
   assert.equal(resumed.state.mouthScalar, 0);
+});
+
+test("reset and resume carry enough state to restore renderer presentation", () => {
+  const stopped = reducePresentation(initialPresentationState(), {
+    type: "project_phase",
+    payload: {
+      projection_sequence: 1,
+      generation_id: generation,
+      phase: "stopped",
+      playback_id: null,
+    },
+  }).state;
+  const reset = reducePresentation(stopped, {
+    type: "reset",
+    payload: { generation_id: null, reason: "operator" },
+  });
+  assert.deepEqual(reset.effects, [
+    { type: "clear_mouth" },
+    { type: "reset", generationID: null, reason: "operator" },
+  ]);
+
+  const suspended = reducePresentation(stopped, { type: "suspend", visibility: "occluded" }).state;
+  const resumed = reducePresentation(suspended, { type: "resume" });
+  assert.deepEqual(resumed.effects, [{
+    type: "reconcile",
+    phase: "stopped",
+    mouthScalar: 0,
+    reducedMotion: false,
+  }]);
 });
 
 test("hidden suspension revokes playback and cues while preserving generation", () => {

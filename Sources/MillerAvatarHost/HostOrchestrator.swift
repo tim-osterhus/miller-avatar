@@ -254,7 +254,8 @@ public final class HostOrchestrator {
         update(
             sessionID: .set(sessionID),
             admission: HostAdmissionStatus.none,
-            lastFailure: .set(nil)
+            lastFailure: .set(nil),
+            retryAvailable: false
         )
         visibilityState = VisibilityCoordinator.reduce(
             state: visibilityState,
@@ -474,5 +475,21 @@ public enum WindowPolicy {
 
     public static func focusTarget(after event: WindowEvent) -> WindowControl? {
         event == .rendererFailed ? .startOrRetry : nil
+    }
+
+    public static func nextResponderIndex(
+        after current: Int?,
+        enabled: [Bool],
+        backward: Bool
+    ) -> Int? {
+        guard !enabled.isEmpty else { return nil }
+        let current = current.flatMap { enabled.indices.contains($0) ? $0 : nil }
+        let direction = backward ? -1 : 1
+        let start = current ?? (backward ? 0 : enabled.count - 1)
+        for distance in 1...enabled.count {
+            let index = (start + direction * distance + enabled.count) % enabled.count
+            if enabled[index] { return index }
+        }
+        return nil
     }
 }

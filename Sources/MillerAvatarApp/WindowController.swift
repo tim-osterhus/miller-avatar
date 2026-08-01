@@ -4,6 +4,28 @@ import MillerAvatarCore
 import MillerAvatarHost
 @preconcurrency import WebKit
 
+private final class KeyboardNavigationWindow: NSWindow {
+    var tabTraversal: ((Bool) -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if moveFocusIfTab(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if moveFocusIfTab(event) { return }
+        super.sendEvent(event)
+    }
+
+    private func moveFocusIfTab(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              event.keyCode == 48,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        else { return false }
+        return tabTraversal?(event.modifierFlags.contains(.shift)) ?? false
+    }
+}
+
 @MainActor
 final class WindowController: NSWindowController, NSWindowDelegate {
     private let rendererDriver = StandaloneRendererDriver()
@@ -17,7 +39,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         rendererDriver.onWebView = { [weak diagnostics] webView in
             diagnostics?.installRendererView(webView)
         }
-        let window = NSWindow(
+        let window = KeyboardNavigationWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -26,6 +48,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         window.title = MillerAvatarBuild.productName
         window.minSize = NSSize(width: 760, height: 560)
         window.contentViewController = diagnostics
+        window.initialFirstResponder = diagnostics.initialFocusView
+        window.tabTraversal = { [weak diagnostics] backward in
+            diagnostics?.moveFocus(backward: backward) ?? false
+        }
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -44,6 +70,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         host.setVisibility(.visible)
+        diagnostics.restoreFocusAfterActivation()
     }
 
     func windowDidMiniaturize(_ notification: Notification) {

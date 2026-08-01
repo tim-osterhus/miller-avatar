@@ -37,6 +37,7 @@ export interface RendererBackend {
   configure(reducedMotion: boolean): void;
   loadAsset(url: string, signal: AbortSignal): Promise<LoadedAvatar>;
   renderOnce(): FirstFrameEvidence;
+  renderFrame(): void;
   update(deltaSeconds: number): void;
   apply(effect: PresentationEffect): void;
   startClock(): void;
@@ -227,7 +228,7 @@ export class WebRendererCore {
     if (!this.presentation.reducedMotion) {
       this.backend.update(0);
     }
-    this.backend.renderOnce();
+    this.backend.renderFrame();
     this.observe(sequence, { type: "resumed", payload: { ...this.counters } });
     if (!this.presentation.reducedMotion) this.schedule();
   }
@@ -264,7 +265,7 @@ export class WebRendererCore {
         this.lastTimestamp = timestamp;
         if (!this.advanceCounters(1, 1, 1, "render", null)) return;
         this.backend.update(delta);
-        this.backend.renderOnce();
+        this.backend.renderFrame();
         this.schedule();
       } catch {
         this.fail("render_failed", "render", null);

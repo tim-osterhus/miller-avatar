@@ -3,20 +3,40 @@ import MillerAvatarCore
 import MillerAvatarHost
 @preconcurrency import WebKit
 
+private final class FocusableButton: NSButton {
+    override var acceptsFirstResponder: Bool { isEnabled && !isHidden }
+}
+
+private final class FocusablePopUpButton: NSPopUpButton {
+    override var acceptsFirstResponder: Bool { isEnabled && !isHidden }
+}
+
+private final class FocusableSlider: NSSlider {
+    override var acceptsFirstResponder: Bool { isEnabled && !isHidden }
+}
+
 @MainActor
 final class DiagnosticsViewController: NSViewController {
     var onSnapshotChange: ((HostSnapshot) -> Void)?
+    var initialFocusView: NSView { startButton }
 
     private let host: HostOrchestrator
     private let selector = AssetSelectionController()
     private let statusLabel = NSTextField(labelWithString: "")
     private let fallbackView = NSView()
     private let liveView = NSView()
-    private let startButton = NSButton(title: "Start Renderer", target: nil, action: nil)
-    private let selectButton = NSButton(title: "Select VRM…", target: nil, action: nil)
-    private let phasePopup = NSPopUpButton()
-    private let mouthSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private let reducedMotion = NSButton(checkboxWithTitle: "Reduced Motion", target: nil, action: nil)
+    private let phaseBadgeLabel = NSTextField(labelWithString: "IDLE")
+    private let startButton = FocusableButton(title: "Start Renderer", target: nil, action: nil)
+    private let selectButton = FocusableButton(title: "Select VRM…", target: nil, action: nil)
+    private let phasePopup = FocusablePopUpButton()
+    private let mouthSlider = FocusableSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let reducedMotion = FocusableButton(
+        checkboxWithTitle: "Reduced Motion",
+        target: nil,
+        action: nil
+    )
+    private let disposeButton = FocusableButton(title: "Dispose", target: nil, action: nil)
+    private var nativeFocusViews: [NSView] = []
     private weak var rendererView: WKWebView?
 
     init(host: HostOrchestrator) {
@@ -35,7 +55,10 @@ final class DiagnosticsViewController: NSViewController {
     func installRendererView(_ webView: WKWebView?) {
         rendererView?.removeFromSuperview()
         rendererView = webView
-        guard let webView else { return }
+        guard let webView else {
+            disposeButton.nextKeyView = startButton
+            return
+        }
         webView.translatesAutoresizingMaskIntoConstraints = false
         liveView.addSubview(webView)
         NSLayoutConstraint.activate([
@@ -44,6 +67,7 @@ final class DiagnosticsViewController: NSViewController {
             webView.topAnchor.constraint(equalTo: liveView.topAnchor),
             webView.bottomAnchor.constraint(equalTo: liveView.bottomAnchor),
         ])
+        disposeButton.nextKeyView = webView
         webView.nextKeyView = startButton
     }
 
@@ -51,6 +75,40 @@ final class DiagnosticsViewController: NSViewController {
         view = NSView()
         buildInterface()
         render(host.snapshot)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        view.window?.recalculateKeyViewLoop()
+        restoreUsableFocus()
+    }
+
+    func restoreFocusAfterActivation() {
+        view.window?.recalculateKeyViewLoop()
+        restoreUsableFocus()
+    }
+
+    func moveFocus(backward: Bool) -> Bool {
+        guard let window = view.window else { return false }
+        var candidates = nativeFocusViews
+        if let rendererView, viewIsVisible(rendererView) {
+            candidates.append(rendererView)
+        }
+        let enabled = candidates.map(focusEligible)
+        let current = candidates.firstIndex {
+            responder(window.firstResponder, belongsTo: $0)
+        }
+        guard let next = WindowPolicy.nextResponderIndex(
+            after: current,
+            enabled: enabled,
+            backward: backward
+        ) else {
+            return false
+        }
+        let target = candidates[next]
+        guard window.makeFirstResponder(target) else { return false }
+        target.needsDisplay = true
+        return true
     }
 
     private func buildInterface() {
@@ -78,7 +136,9 @@ final class DiagnosticsViewController: NSViewController {
         let resumeButton = button("Resume Visible", #selector(resumeVisible))
         let resetButton = button("Reset", #selector(resetRenderer))
         let failButton = button("Simulate Render Failure", #selector(simulateFailure))
-        let disposeButton = button("Dispose", #selector(disposeRenderer))
+        disposeButton.target = self
+        disposeButton.action = #selector(disposeRenderer)
+        disposeButton.bezelStyle = .rounded
 
         let controls = NSGridView(views: [
             [startButton, selectButton, phasePopup],
@@ -111,11 +171,24 @@ final class DiagnosticsViewController: NSViewController {
         liveView.layer?.backgroundColor = NSColor.black.cgColor
         liveView.isHidden = true
 
+        phaseBadgeLabel.wantsLayer = true
+        phaseBadgeLabel.drawsBackground = true
+        phaseBadgeLabel.backgroundColor = NSColor.black.withAlphaComponent(0.72)
+        phaseBadgeLabel.layer?.borderColor = NSColor.white.withAlphaComponent(0.45).cgColor
+        phaseBadgeLabel.layer?.borderWidth = 1
+        phaseBadgeLabel.layer?.cornerRadius = 8
+        phaseBadgeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
+        phaseBadgeLabel.textColor = .white
+        phaseBadgeLabel.alignment = .center
+        phaseBadgeLabel.setAccessibilityLabel("Avatar phase")
+
         let surface = NSView()
         surface.addSubview(fallbackView)
         surface.addSubview(liveView)
+        surface.addSubview(phaseBadgeLabel)
         fallbackView.translatesAutoresizingMaskIntoConstraints = false
         liveView.translatesAutoresizingMaskIntoConstraints = false
+        phaseBadgeLabel.translatesAutoresizingMaskIntoConstraints = false
         for child in [fallbackView, liveView] {
             NSLayoutConstraint.activate([
                 child.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
@@ -124,6 +197,12 @@ final class DiagnosticsViewController: NSViewController {
                 child.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
             ])
         }
+        NSLayoutConstraint.activate([
+            phaseBadgeLabel.topAnchor.constraint(equalTo: surface.topAnchor, constant: 12),
+            phaseBadgeLabel.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -12),
+            phaseBadgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            phaseBadgeLabel.heightAnchor.constraint(equalToConstant: 26),
+        ])
 
         let stack = NSStackView(views: [title, statusLabel, controls, surface])
         stack.orientation = .vertical
@@ -151,10 +230,40 @@ final class DiagnosticsViewController: NSViewController {
         resumeButton.nextKeyView = resetButton
         resetButton.nextKeyView = failButton
         failButton.nextKeyView = disposeButton
+        disposeButton.nextKeyView = startButton
+        nativeFocusViews = [
+            startButton, selectButton, phasePopup, mouthSlider, reducedMotion,
+            hideButton, occludeButton, resumeButton, resetButton, failButton,
+            disposeButton,
+        ]
     }
 
-    private func button(_ title: String, _ action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
+    private func focusEligible(_ candidate: NSView) -> Bool {
+        guard viewIsVisible(candidate) else { return false }
+        if let control = candidate as? NSControl, !control.isEnabled {
+            return false
+        }
+        return candidate.acceptsFirstResponder
+    }
+
+    private func viewIsVisible(_ candidate: NSView) -> Bool {
+        var current: NSView? = candidate
+        while let view = current {
+            if view.isHidden { return false }
+            current = view.superview
+        }
+        return true
+    }
+
+    private func responder(_ responder: NSResponder?, belongsTo candidate: NSView) -> Bool {
+        guard let responderView = responder as? NSView else {
+            return responder === candidate
+        }
+        return responderView === candidate || responderView.isDescendant(of: candidate)
+    }
+
+    private func button(_ title: String, _ action: Selector) -> FocusableButton {
+        let button = FocusableButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
         return button
     }
@@ -176,9 +285,35 @@ final class DiagnosticsViewController: NSViewController {
             snapshot.lifecycle == .absent && snapshot.lastFailure == nil
         )
         startButton.title = snapshot.retryAvailable ? "Retry Once" : "Start Renderer"
+        phasePopup.selectItem(withTitle: snapshot.phase.rawValue)
+        let badgePhase: String
+        if case .failed = snapshot.lifecycle {
+            badgePhase = PresentationPhase.failed.rawValue
+        } else {
+            badgePhase = snapshot.phase.rawValue
+        }
+        phaseBadgeLabel.stringValue = badgePhase.uppercased()
+        phaseBadgeLabel.setAccessibilityValue(badgePhase)
         reducedMotion.state = snapshot.reducedMotion ? .on : .off
+        if snapshot.lifecycle != .live || snapshot.phase != .speaking || snapshot.reducedMotion {
+            mouthSlider.doubleValue = 0
+        }
         if case .failed = snapshot.lifecycle {
             view.window?.makeFirstResponder(startButton)
+        } else {
+            restoreUsableFocus()
+        }
+    }
+
+    private func restoreUsableFocus() {
+        guard let window = view.window else { return }
+        if let control = window.firstResponder as? NSControl, control.isEnabled {
+            return
+        }
+        let target = [startButton, selectButton, phasePopup, mouthSlider, reducedMotion]
+            .first(where: \.isEnabled)
+        if let target {
+            window.makeFirstResponder(target)
         }
     }
 

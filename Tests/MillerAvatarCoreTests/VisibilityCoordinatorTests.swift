@@ -96,6 +96,23 @@ import Testing
         }
     }
 
+    @Test func transientOcclusionBeforeFirstFrameDoesNotDisposeTheSession() {
+        for lifecycle in [
+            RendererSessionState.startingRenderer,
+            .rendererReady,
+            .loadingAsset,
+        ] {
+            let state = VisibilityCoordinatorState(
+                sessionID: sessionA,
+                lifecycle: lifecycle
+            )
+            let result = reduce(state, .desired(.occluded))
+            #expect(result.effects.isEmpty)
+            #expect(result.state.desired == .occluded)
+            #expect(!result.state.disposalRequested)
+        }
+    }
+
     @Test func oldSessionObservationsAreNoOps() {
         let state = VisibilityCoordinatorState(
             sessionID: sessionB,

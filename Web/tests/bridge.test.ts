@@ -47,6 +47,27 @@ test("fake backend proves scheduling, suspension, exact resume deltas, and dispo
   assert.equal(messages.at(-1)?.type, "disposed");
 });
 
+test("terminal presentation phases render without re-running first-frame proof", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(2, "load_asset", { asset_token: asset }));
+  await core.accept(command(3, "project_phase", {
+    projection_sequence: 1,
+    generation_id: "33333333-3333-4333-8333-333333333333",
+    phase: "stopped",
+    playback_id: null,
+  }));
+
+  scheduler.run(100);
+
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(backend.firstFrameProofs, 1);
+  assert.equal(backend.frameRenders, 1);
+});
+
 test("context loss emits one failure, disposes, and fences later commands", async () => {
   const backend = new FakeBackend();
   const scheduler = new FakeScheduler();
@@ -148,14 +169,18 @@ class FakeScheduler implements FrameScheduler {
 class FakeBackend implements RendererBackend {
   loadedURL = "";
   disposals = 0;
+  firstFrameProofs = 0;
+  frameRenders = 0;
   configure(): void {}
   async loadAsset(url: string, _signal: AbortSignal) {
     this.loadedURL = url;
     return { capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 2 } };
   }
   renderOnce() {
+    this.firstFrameProofs += 1;
     return { viewport_width: 800, viewport_height: 600, visible_meshes: 1, decoded_textures: 2, material_bindings: 2, alpha_probe_pixels: 5 };
   }
+  renderFrame(): void { this.frameRenders += 1; }
   update(): void {}
   apply(_effect: PresentationEffect): void {}
   startClock(): void {}

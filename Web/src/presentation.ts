@@ -23,7 +23,12 @@ export type PresentationEffect =
   | { type: "set_reduced_motion"; enabled: boolean }
   | { type: "reset"; generationID: string | null; reason: ResetReason }
   | { type: "clear_mouth" }
-  | { type: "reconcile" };
+  | {
+    type: "reconcile";
+    phase: PresentationPhase;
+    mouthScalar: number;
+    reducedMotion: boolean;
+  };
 
 export interface PresentationResult {
   state: PresentationState;
@@ -66,7 +71,13 @@ export function reducePresentation(
   }
   if (input.type === "resume") {
     if (!state.suspended) return unchanged(state);
-    return changed({ ...state, suspended: false, mouthScalar: 0 }, [{ type: "reconcile" }]);
+    const next = { ...state, suspended: false, mouthScalar: 0 };
+    return changed(next, [{
+      type: "reconcile",
+      phase: next.phase,
+      mouthScalar: next.mouthScalar,
+      reducedMotion: next.reducedMotion,
+    }]);
   }
   if (input.type === "renderer_failed" || input.type === "dispose") {
     return changed(revoke({ ...state, terminated: true }), [{ type: "clear_mouth" }]);

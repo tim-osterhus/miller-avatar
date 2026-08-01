@@ -19,7 +19,7 @@ test("camera fits padded bounds in portrait and landscape viewports", () => {
     assert.ok(Number.isFinite(fit.far) && fit.far > fit.near);
     assert.ok(Number.isFinite(fit.position.z));
     const distance = fit.position.z - fit.target.z;
-    const paddedHalfDepth = ((bounds.max.z - bounds.min.z) * 1.2) / 2;
+    const paddedHalfDepth = ((bounds.max.z - bounds.min.z) * 1.1) / 2;
     assert.ok(fit.near <= distance - paddedHalfDepth);
     assert.ok(fit.far >= distance + paddedHalfDepth);
   }
@@ -37,6 +37,6 @@ test("camera recalculates aspect and rejects invalid or degenerate bounds", () =
     max: { x: 0, y: 0, z: 5 },
     visibleMeshes: 1,
   }, 100, 100);
-  assert.ok(depthDominated.position.z - depthDominated.target.z > 6);
-  assert.equal(depthDominated.near, 0.01);
+  assert.ok(depthDominated.position.z - depthDominated.target.z > 5.5);
+  assert.ok(Math.abs(depthDominated.near - 0.01) < Number.EPSILON);
 });

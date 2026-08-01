@@ -14,7 +14,7 @@ export interface CameraFit {
 }
 
 const minimumExtent = 0.0001;
-const paddingFactor = 1.2;
+const paddingFactor = 1.1;
 export const maximumViewportDimension = 8_192;
 export const maximumViewportPixels = maximumViewportDimension * maximumViewportDimension;
 

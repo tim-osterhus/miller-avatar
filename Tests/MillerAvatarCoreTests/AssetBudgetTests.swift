@@ -33,4 +33,16 @@ import Testing
             try AssetBudget.mipmappedRGBA8Bytes(pixelCount: UInt64.max)
         }
     }
+
+    @Test func alphaTextureCeilingsRemainInternallyCoupled() throws {
+        #expect(AssetBudget.alpha.decodedImagePixels == 27 * 1_024 * 1_024)
+        #expect(
+            AssetBudget.alpha.decodedRGBA8Bytes
+                == AssetBudget.alpha.decodedImagePixels * 4
+        )
+        let mipmappedBytes = try AssetBudget.mipmappedRGBA8Bytes(
+            pixelCount: AssetBudget.alpha.decodedImagePixels
+        )
+        #expect(AssetBudget.alpha.mipmappedRGBA8Bytes == mipmappedBytes)
+    }
 }

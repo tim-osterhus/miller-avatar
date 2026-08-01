@@ -68,6 +68,7 @@ class RecordingBackend implements RendererBackend {
       alpha_probe_pixels: 1,
     };
   }
+  renderFrame(): void {}
   update(): void {}
   apply(_effect: PresentationEffect): void {}
   startClock(): void {}

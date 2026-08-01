@@ -17,6 +17,118 @@ import UniformTypeIdentifiers
         #expect(asset.summary.imageCount == 0)
     }
 
+    @Test func admitsVRMWhenOptionalExtensionsRequiredArrayIsAbsent() async throws {
+        var document = SyntheticGLBFactory.minimalDocument()
+        document.removeValue(forKey: "extensionsRequired")
+        let result = await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(document: document)
+        )
+        guard case .admitted = result else {
+            Issue.record("VRM without optional extensionsRequired was rejected")
+            return
+        }
+    }
+
+    @Test func admitsBoundedSparseAccessorWithoutDenseBase() async throws {
+        let fixture = sparsePositionDocument(indices: [0, 2])
+        let result = await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: fixture.document,
+                binary: fixture.binary
+            )
+        )
+
+        guard case let .admitted(asset) = result else {
+            Issue.record("valid sparse POSITION accessor was rejected")
+            return
+        }
+        #expect(asset.summary.accessorReferencedBytes == 62)
+    }
+
+    @Test func rejectsMalformedSparseAccessorEnvelopes() async throws {
+        for indices: [UInt8] in [[2, 0], [1, 1], [0, 3]] {
+            let fixture = sparsePositionDocument(indices: indices)
+            #expect(await AssetAdmission().admit(
+                try SyntheticGLBFactory.make(
+                    document: fixture.document,
+                    binary: fixture.binary
+                )
+            ).isRejected)
+        }
+
+        var invalidType = sparsePositionDocument(indices: [0, 2])
+        invalidType.document = replacingSparseIndices(
+            in: invalidType.document,
+            with: [
+                "bufferView": 0,
+                "componentType": 5122,
+            ]
+        )
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: invalidType.document,
+                binary: invalidType.binary
+            )
+        ).isRejected)
+
+        var excessiveCount = sparsePositionDocument(indices: [0, 2])
+        excessiveCount.document = replacingSparseCount(
+            in: excessiveCount.document,
+            with: 4
+        )
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: excessiveCount.document,
+                binary: excessiveCount.binary
+            )
+        ).isRejected)
+
+        var stridedValues = sparsePositionDocument(indices: [0, 2])
+        var views = stridedValues.document["bufferViews"] as! [[String: Any]]
+        views[1]["byteStride"] = 12
+        stridedValues.document["bufferViews"] = views
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: stridedValues.document,
+                binary: stridedValues.binary
+            )
+        ).isRejected)
+    }
+
+    @Test func rejectsNonfiniteSparseValuesAndEnforcesAggregateBudget() async throws {
+        let nonfinite = sparsePositionDocument(
+            indices: [0, 2],
+            values: [
+                .infinity, 0, 0,
+                0, 1, 0,
+            ]
+        )
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: nonfinite.document,
+                binary: nonfinite.binary
+            )
+        ).isRejected)
+
+        let valid = sparsePositionDocument(indices: [0, 2])
+        #expect(await AssetAdmission(
+            budget: SyntheticGLBFactory.budget(accessorReferencedBytes: 62)
+        ).admit(
+            try SyntheticGLBFactory.make(
+                document: valid.document,
+                binary: valid.binary
+            )
+        ).isAdmitted)
+        #expect(await AssetAdmission(
+            budget: SyntheticGLBFactory.budget(accessorReferencedBytes: 61)
+        ).admit(
+            try SyntheticGLBFactory.make(
+                document: valid.document,
+                binary: valid.binary
+            )
+        ).isRejected)
+    }
+
     @Test func declaresAssetCapabilitiesFromTheValidatedEnvelope() async throws {
         let document = SyntheticGLBFactory.minimalDocument(extra: [
             "extensionsUsed": [
@@ -1002,6 +1114,78 @@ private func skinnedDocument(jointIndex: UInt8) -> (
         binaryByteCount: binary.count
     )
     return (document, binary)
+}
+
+private func sparsePositionDocument(
+    indices: [UInt8],
+    values: [Float] = [
+        0, 0, 0,
+        0, 1, 0,
+    ]
+) -> (document: [String: Any], binary: Data) {
+    var binary = Data(indices)
+    while binary.count < 4 {
+        binary.append(0)
+    }
+    for value in values {
+        binary.append(littleEndian: value.bitPattern)
+    }
+    let valuesLength = values.count * MemoryLayout<Float>.size
+    let document = SyntheticGLBFactory.minimalDocument(
+        extra: [
+            "buffers": [["byteLength": binary.count]],
+            "bufferViews": [
+                ["buffer": 0, "byteOffset": 0, "byteLength": indices.count],
+                ["buffer": 0, "byteOffset": 4, "byteLength": valuesLength],
+            ],
+            "accessors": [[
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "sparse": [
+                    "count": indices.count,
+                    "indices": [
+                        "bufferView": 0,
+                        "componentType": 5121,
+                    ],
+                    "values": ["bufferView": 1],
+                ],
+            ]],
+            "meshes": [[
+                "primitives": [[
+                    "attributes": ["POSITION": 0],
+                ]],
+            ]],
+        ],
+        binaryByteCount: binary.count
+    )
+    return (document, binary)
+}
+
+private func replacingSparseIndices(
+    in document: [String: Any],
+    with indices: [String: Any]
+) -> [String: Any] {
+    var document = document
+    var accessors = document["accessors"] as! [[String: Any]]
+    var sparse = accessors[0]["sparse"] as! [String: Any]
+    sparse["indices"] = indices
+    accessors[0]["sparse"] = sparse
+    document["accessors"] = accessors
+    return document
+}
+
+private func replacingSparseCount(
+    in document: [String: Any],
+    with count: Int
+) -> [String: Any] {
+    var document = document
+    var accessors = document["accessors"] as! [[String: Any]]
+    var sparse = accessors[0]["sparse"] as! [String: Any]
+    sparse["count"] = count
+    accessors[0]["sparse"] = sparse
+    document["accessors"] = accessors
+    return document
 }
 
 private func textureDocument(textureIndex: UInt64) -> (

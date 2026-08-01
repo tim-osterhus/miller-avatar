@@ -37,6 +37,10 @@ import Testing
         let entry = try handler.response(for: request("/bundle/index.html"))
         #expect(entry.mimeType == "text/html; charset=utf-8")
         #expect(entry.data == Data("html".utf8))
+        let policy = entry.headers["Content-Security-Policy"]
+        #expect(policy?.contains("connect-src 'self' blob: miller-avatar-local:") == true)
+        #expect(policy?.contains("http:") == false)
+        #expect(policy?.contains("https:") == false)
 
         let script = try handler.response(for: request("/bundle/app.js"))
         #expect(script.mimeType == "text/javascript; charset=utf-8")

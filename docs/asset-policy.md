@@ -7,8 +7,14 @@ belong to the native host.
 The standalone alpha accepts one GLB 2.0 container with one JSON chunk and
 zero or one BIN chunk. The JSON chunk must describe VRM 1.0 through
 `VRMC_vrm.specVersion`. The parser rejects malformed framing, duplicate JSON
-keys, nonfinite numbers, external resources, animation arrays, sparse
-accessors, and unknown extensions.
+keys, nonfinite numbers, external resources, animation arrays, malformed or
+over-budget sparse accessors, and unknown extensions.
+
+Sparse accessors may omit their dense base, in which case unspecified values
+are zero. Sparse indices must be unsigned, strictly increasing, unique, and in
+range. Their index and value buffer views must be non-strided, aligned, and
+fully bounded. Logical accessor bytes plus sparse index and override storage
+all count against the accessor aggregate ceiling.
 
 The extension allowlist is:
 
@@ -46,9 +52,9 @@ JSON object at its supported location.
 | Textures | 64 |
 | Samplers | 64 |
 | One image dimension | 8,192 pixels |
-| Decoded base-image pixels | 16,777,216 |
-| Estimated RGBA8 base-image bytes | 64 MiB |
-| Estimated RGBA8 bytes with full mip chains | 86 MiB |
+| Decoded base-image pixels | 28,311,552 |
+| Estimated RGBA8 base-image bytes | 108 MiB |
+| Estimated RGBA8 bytes with full mip chains | 144 MiB |
 | Buffer bytes | 64 MiB |
 | Accessor-referenced bytes | 64 MiB |
 | Vertices | 1,000,000 |

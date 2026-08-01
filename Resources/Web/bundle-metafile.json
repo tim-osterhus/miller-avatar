@@ -295,7 +295,7 @@
       "format": "esm"
     },
     "src/bridge.ts": {
-      "bytes": 14506,
+      "bytes": 14531,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -336,12 +336,12 @@
       "format": "esm"
     },
     "src/index.ts": {
-      "bytes": 327,
+      "bytes": 382,
       "imports": [
         {
-          "path": "src/runtime.ts",
+          "path": "src/main.ts",
           "kind": "import-statement",
-          "original": "./runtime.js"
+          "original": "./main.js"
         },
         {
           "path": "src/bridge.ts",
@@ -369,9 +369,19 @@
           "original": "./lifecycle.js"
         },
         {
+          "path": "src/main.ts",
+          "kind": "import-statement",
+          "original": "./main.js"
+        },
+        {
           "path": "src/presentation.ts",
           "kind": "import-statement",
           "original": "./presentation.js"
+        },
+        {
+          "path": "src/renderer.ts",
+          "kind": "import-statement",
+          "original": "./renderer.js"
         },
         {
           "path": "src/runtime.ts",
@@ -391,13 +401,29 @@
       "imports": [],
       "format": "esm"
     },
+    "src/main.ts": {
+      "bytes": 1664,
+      "imports": [
+        {
+          "path": "src/renderer.ts",
+          "kind": "import-statement",
+          "original": "./renderer.js"
+        },
+        {
+          "path": "src/runtime.ts",
+          "kind": "import-statement",
+          "original": "./runtime.js"
+        }
+      ],
+      "format": "esm"
+    },
     "src/presentation.ts": {
-      "bytes": 6492,
+      "bytes": 6719,
       "imports": [],
       "format": "esm"
     },
-    "src/runtime.ts": {
-      "bytes": 9369,
+    "src/renderer.ts": {
+      "bytes": 13821,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -414,6 +440,17 @@
           "kind": "import-statement",
           "original": "@pixiv/three-vrm"
         },
+        {
+          "path": "src/camera.ts",
+          "kind": "import-statement",
+          "original": "./camera.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/runtime.ts": {
+      "bytes": 1466,
+      "imports": [
         {
           "path": "src/bridge.ts",
           "kind": "import-statement",
@@ -436,7 +473,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 739563,
+      "bytes": 743330,
       "inputs": {
         "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
           "bytesInOutput": 144009
@@ -454,7 +491,7 @@
           "bytesInOutput": 991
         },
         "src/bridge.ts": {
-          "bytesInOutput": 7010
+          "bytesInOutput": 7012
         },
         "src/camera.ts": {
           "bytesInOutput": 977
@@ -471,11 +508,17 @@
         "src/lifecycle.ts": {
           "bytesInOutput": 594
         },
+        "src/main.ts": {
+          "bytesInOutput": 755
+        },
         "src/presentation.ts": {
-          "bytesInOutput": 2824
+          "bytesInOutput": 2924
+        },
+        "src/renderer.ts": {
+          "bytesInOutput": 6693
         },
         "src/runtime.ts": {
-          "bytesInOutput": 4540
+          "bytesInOutput": 545
         },
         "src/validation.ts": {
           "bytesInOutput": 9232

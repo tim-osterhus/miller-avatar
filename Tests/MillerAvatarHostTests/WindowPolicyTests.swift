@@ -17,4 +17,39 @@ import Testing
         #expect(WindowPolicy.focusTarget(after: .rendererFailed) == .startOrRetry)
         #expect(WindowPolicy.fallbackIsInitiallyVisible)
     }
+
+    @Test func explicitTraversalSkipsDisabledControlsAndWraps() {
+        let enabled = [true, false, true, true]
+
+        #expect(WindowPolicy.nextResponderIndex(
+            after: 0,
+            enabled: enabled,
+            backward: false
+        ) == 2)
+        #expect(WindowPolicy.nextResponderIndex(
+            after: 3,
+            enabled: enabled,
+            backward: false
+        ) == 0)
+        #expect(WindowPolicy.nextResponderIndex(
+            after: 0,
+            enabled: enabled,
+            backward: true
+        ) == 3)
+        #expect(WindowPolicy.nextResponderIndex(
+            after: nil,
+            enabled: enabled,
+            backward: false
+        ) == 0)
+        #expect(WindowPolicy.nextResponderIndex(
+            after: nil,
+            enabled: enabled,
+            backward: true
+        ) == 3)
+        #expect(WindowPolicy.nextResponderIndex(
+            after: 0,
+            enabled: [false, false],
+            backward: false
+        ) == nil)
+    }
 }

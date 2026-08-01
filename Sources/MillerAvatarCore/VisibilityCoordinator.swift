@@ -101,7 +101,7 @@ public enum VisibilityCoordinator {
             return ReducerResult(state: state)
         }
 
-        if isPreLive(state.lifecycle), state.desired != .visible {
+        if isPreLive(state.lifecycle), state.desired == .hidden {
             guard !state.disposalRequested else {
                 return ReducerResult(state: state)
             }
