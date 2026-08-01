@@ -73,9 +73,13 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     public static let scheme = "miller-avatar-local"
     public static let host = "app"
     public static let origin = "miller-avatar-local://app"
-    public static let entrypointURL = URL(
-        string: "miller-avatar-local://app/bundle/index.html"
-    )!
+    public static func entrypointURL(for sessionID: UUID) -> URL {
+        URL(
+            string: origin + "/session/"
+                + sessionID.uuidString.lowercased()
+                + "/bundle/index.html"
+        )!
+    }
 
     private static let contentSecurityPolicy = """
     default-src 'none'; script-src 'self'; style-src 'self'; \
@@ -85,11 +89,18 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     base-uri 'none'; form-action 'none'; navigate-to 'none'
     """
 
-    public let activeAssetURL: URL
+    public var activeAssetURL: URL {
+        lock.withLock { storedAssetURL }
+    }
+
+    public var entrypointURL: URL {
+        Self.entrypointURL(for: lease.id)
+    }
 
     private let lease: RendererSessionLease
     private let sessionController: RendererSessionController
     private let bundledResources: [String: Data]
+    private var storedAssetURL: URL
     private var assetData: Data?
     private let scheduleDelivery: (@escaping () -> Void) -> Void
     private let lock = NSLock()
@@ -126,7 +137,24 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let activeAssetURL = URL(string: Self.origin + assetPath) else {
             throw LocalSchemeError.invalidInventory
         }
-        self.activeAssetURL = activeAssetURL
+        storedAssetURL = activeAssetURL
+    }
+
+    @discardableResult
+    public func installAsset(token: UUID, data: Data) -> Bool {
+        guard let url = URL(string: Self.origin + "/session/"
+            + lease.id.uuidString.lowercased() + "/"
+            + token.uuidString.lowercased() + ".vrm")
+        else {
+            return false
+        }
+        return sessionController.perform(for: lease) {
+            lock.withLock {
+                storedAssetURL = url
+                assetData = data
+                assetServingEnabled = true
+            }
+        }
     }
 
     public func response(for request: URLRequest) throws -> LocalSchemeResponse {
@@ -159,13 +187,13 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
               request.value(forHTTPHeaderField: "Range") == nil,
               !hasConditionalHeader,
               let url = request.url,
-              let path = Self.canonicalPath(for: url),
-              let mimeType = Self.mimeType(for: path)
+              let path = Self.canonicalPath(for: url)
         else {
             throw LocalSchemeError.rejected
         }
 
         let data: Data
+        let mimeType: String
         if url == activeAssetURL {
             guard let activeAssetData = lock.withLock({
                 assetServingEnabled ? assetData : nil
@@ -173,11 +201,16 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
                 throw LocalSchemeError.staleSession
             }
             data = activeAssetData
+            mimeType = "model/gltf-binary"
         } else {
-            guard let resource = bundledResources[path] else {
+            guard let bundlePath = bundlePath(for: path),
+                  let resource = bundledResources[bundlePath],
+                  let bundleMIMEType = Self.bundleMIMEType(for: bundlePath)
+            else {
                 throw LocalSchemeError.rejected
             }
             data = resource
+            mimeType = bundleMIMEType
         }
 
         var headers = [
@@ -317,6 +350,12 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         return path
     }
 
+    private func bundlePath(for path: String) -> String? {
+        let prefix = "/session/\(lease.id.uuidString.lowercased())/bundle/"
+        guard path.hasPrefix(prefix) else { return nil }
+        return "/bundle/" + String(path.dropFirst(prefix.count))
+    }
+
     private static func isCanonicalBundlePath(_ path: String) -> Bool {
         guard path.hasPrefix("/bundle/"),
               let url = URL(string: origin + path)
@@ -358,14 +397,6 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
             }
         }
         return true
-    }
-
-    private static func mimeType(for path: String) -> String? {
-        if let mimeType = bundleMIMEType(for: path) { return mimeType }
-        if path.hasSuffix(".vrm") {
-            return "model/gltf-binary"
-        }
-        return nil
     }
 
 }

@@ -15,8 +15,8 @@ public enum WebViewFactory {
         RendererObservationHandler.channelName,
     ]
 
-    public static var entryRequest: URLRequest {
-        URLRequest(url: LocalSchemeHandler.entrypointURL)
+    public static func entryRequest(for sessionID: UUID) -> URLRequest {
+        URLRequest(url: LocalSchemeHandler.entrypointURL(for: sessionID))
     }
 
     public static func makeConfiguration(
@@ -51,7 +51,7 @@ public enum WebViewFactory {
         )
         webView.navigationDelegate = navigationPolicy
         webView.uiDelegate = navigationPolicy
-        webView.load(entryRequest)
+        webView.load(URLRequest(url: schemeHandler.entrypointURL))
         return RendererWebViewAssembly(
             webView: webView,
             schemeHandler: schemeHandler,

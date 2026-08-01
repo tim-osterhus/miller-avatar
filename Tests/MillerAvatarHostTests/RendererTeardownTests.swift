@@ -76,6 +76,57 @@ import MillerAvatarCore
         #expect(actions.events.contains("return to fallback"))
     }
 
+    @Test func navigationPolicyRemainsAliveUntilUnifiedTeardownClearsDelegates() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin()
+        let resources = closedBundleResources()
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: resources,
+            resourceRecords: resources.keys.sorted().map {
+                LocalSchemeResourceRecord.make(path: $0, data: resources[$0]!)
+            },
+            assetToken: UUID(),
+            assetData: Data()
+        )
+        let observationHandler = RendererObservationHandler(
+            lease: lease,
+            sessionController: controller
+        )
+        var policy: NavigationPolicy? = NavigationPolicy(lease: lease)
+        weak var weakPolicy = policy
+        let webView = WebViewFactory.make(
+            schemeHandler: handler,
+            navigationPolicy: policy!,
+            observationHandler: observationHandler
+        ).webView
+        let retention = NavigationPolicyRetention(policy!)
+        policy = nil
+
+        #expect(weakPolicy != nil)
+        let actions = WebKitRendererTeardownActions(
+            webView: webView,
+            schemeHandler: handler,
+            scriptHandlerNames: WebViewFactory.scriptMessageHandlerNames,
+            onDelegatesCleared: {
+                #expect(webView.navigationDelegate == nil)
+                #expect(webView.uiDelegate == nil)
+                retention.releaseAfterDelegatesCleared()
+            },
+            fallback: {}
+        )
+        let teardown = RendererTeardown(
+            lease: lease,
+            sessionController: controller,
+            actions: actions
+        )
+
+        teardown.run()
+
+        #expect(weakPolicy == nil)
+    }
+
     @Test func staleTeardownCannotReleaseAReplacementWithTheSameID() {
         let controller = RendererSessionController()
         let id = UUID()
@@ -143,8 +194,9 @@ import MillerAvatarCore
                 forURLScheme: LocalSchemeHandler.scheme
             ) === handler
         )
-        #expect(WebViewFactory.entryRequest.url == LocalSchemeHandler.entrypointURL)
-        #expect(WebViewFactory.entryRequest.url?.isFileURL == false)
+        let entryRequest = WebViewFactory.entryRequest(for: lease.id)
+        #expect(entryRequest.url == handler.entrypointURL)
+        #expect(entryRequest.url?.isFileURL == false)
     }
 
     private func closedBundleResources() -> [String: Data] {

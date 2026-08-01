@@ -69,6 +69,7 @@ public struct RendererPolicyFailure: Equatable, Sendable {
 
 public final class NavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegate {
     private let lease: RendererSessionLease
+    private let entrypointURL: URL
     private let onPolicyFailure: (RendererPolicyFailure) -> Void
     private let violation: () -> Void
     private var admittedInitialNavigation = false
@@ -79,6 +80,7 @@ public final class NavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegat
         violation: @escaping () -> Void = {}
     ) {
         self.lease = lease
+        entrypointURL = LocalSchemeHandler.entrypointURL(for: lease.id)
         self.onPolicyFailure = { _ in }
         self.violation = violation
     }
@@ -88,6 +90,7 @@ public final class NavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegat
         onPolicyFailure: @escaping (RendererPolicyFailure) -> Void
     ) {
         self.lease = lease
+        entrypointURL = LocalSchemeHandler.entrypointURL(for: lease.id)
         self.onPolicyFailure = onPolicyFailure
         self.violation = {}
     }
@@ -102,7 +105,7 @@ public final class NavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegat
         var admitted = false
         let current = lease.performIfValid {
             guard !admittedInitialNavigation,
-                  request.url == LocalSchemeHandler.entrypointURL,
+                  request.url == entrypointURL,
                   request.isMainFrame,
                   request.hasTargetFrame,
                   request.navigationType == .other,
@@ -146,7 +149,7 @@ public final class NavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegat
         let current = lease.performIfValid {
             guard awaitingInitialResponse,
                   navigationResponse.isForMainFrame,
-                  navigationResponse.response.url == LocalSchemeHandler.entrypointURL,
+                  navigationResponse.response.url == entrypointURL,
                   navigationResponse.canShowMIMEType
             else {
                 return

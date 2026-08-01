@@ -62,10 +62,19 @@ npm_version=$(npm --version)
         --format=esm \
         --platform=browser \
         --target=es2023 \
+        --minify \
         --outfile="$stage/app.js" \
         --metafile="$stage/raw-metafile.json" \
         --legal-comments=none
 )
+
+STAGED_APP="$stage/app.js" node --input-type=module <<'NODE'
+import { readFileSync, writeFileSync } from "node:fs";
+
+const path = process.env.STAGED_APP;
+if (!path) throw new Error("missing staged app path");
+writeFileSync(path, readFileSync(path, "utf8").replace(/[ \t]+$/gmu, ""));
+NODE
 
 cp "$web_root/src/index.html" "$stage/index.html"
 cp "$web_root/src/styles.css" "$stage/styles.css"
@@ -82,6 +91,9 @@ const npmVersion = process.env.NPM_VERSION;
 if (!repo || !web || !stage || !npmVersion) throw new Error("missing normalized bundle paths");
 
 const raw = JSON.parse(readFileSync(resolve(stage, "raw-metafile.json"), "utf8"));
+const outputRecords = Object.values(raw.outputs);
+if (outputRecords.length !== 1) throw new Error("expected exactly one JavaScript bundle output");
+outputRecords[0].bytes = readFileSync(resolve(stage, "app.js")).byteLength;
 const within = (root, value) => value === root || value.startsWith(`${root}/`);
 const absoluteFromWeb = (value) => {
   const absolute = resolve(web, value);
@@ -180,8 +192,20 @@ if find "$stage" -type f \( -name '*.map' -o -name '*.vrm' -o -name '*.glb' -o -
     printf 'web bundle contains a forbidden asset\n' >&2
     exit 1
 fi
-if rg -n 'https?://|WebSocket|EventSource|new Worker|serviceWorker' "$stage"; then
+if rg -n 'WebSocket|EventSource|new Worker|serviceWorker' "$stage"; then
     printf 'web bundle contains a forbidden capability\n' >&2
+    exit 1
+fi
+observed_urls=$(rg --no-filename -o 'https?://[^"[:space:]\\]+' "$stage" || true)
+unexpected_urls=""
+while IFS= read -r url; do
+    case "$url" in
+        ""|"http://hacksoflife.blogspot.ch/2009/11/per-pixel-tangent-space-normal-mapping.html"|"http://www.w3.org/1999/xhtml"|"https://vrm.dev/licenses/1.0/") ;;
+        *) unexpected_urls="${unexpected_urls}${url}"$'\n' ;;
+    esac
+done <<< "$observed_urls"
+if [[ -n "$unexpected_urls" ]]; then
+    printf 'web bundle contains an unexpected external URL\n%s\n' "$unexpected_urls" >&2
     exit 1
 fi
 if rg -n -F "$repo_root" "$stage"; then

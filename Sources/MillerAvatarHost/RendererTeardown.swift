@@ -73,6 +73,7 @@ public final class WebKitRendererTeardownActions: RendererTeardownActions {
     private let schemeHandler: LocalSchemeHandler
     private let scriptHandlerNames: [String]
     private let onDisposing: (DisposalReason) -> Void
+    private let onDelegatesCleared: () -> Void
     private let fallback: () -> Void
 
     public init(
@@ -80,12 +81,14 @@ public final class WebKitRendererTeardownActions: RendererTeardownActions {
         schemeHandler: LocalSchemeHandler,
         scriptHandlerNames: [String],
         onDisposing: @escaping (DisposalReason) -> Void = { _ in },
+        onDelegatesCleared: @escaping () -> Void = {},
         fallback: @escaping () -> Void
     ) {
         self.webView = webView
         self.schemeHandler = schemeHandler
         self.scriptHandlerNames = scriptHandlerNames
         self.onDisposing = onDisposing
+        self.onDelegatesCleared = onDelegatesCleared
         self.fallback = fallback
     }
 
@@ -115,6 +118,7 @@ public final class WebKitRendererTeardownActions: RendererTeardownActions {
     public func clearDelegates() {
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
+        onDelegatesCleared()
     }
 
     public func revokeAssetServing() {

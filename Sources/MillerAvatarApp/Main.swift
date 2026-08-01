@@ -1,10 +1,13 @@
-import MillerAvatarCore
-import MillerAvatarHost
+import AppKit
 
 @main
-enum MillerAvatarApp {
+enum MillerAvatarApplication {
+    @MainActor
     static func main() {
-        _ = MillerAvatarHost.productName
-        _ = MillerAvatarBuild.bundleIdentifier
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.setActivationPolicy(.regular)
+        application.delegate = delegate
+        application.run()
     }
 }

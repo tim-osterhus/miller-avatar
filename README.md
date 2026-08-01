@@ -4,24 +4,24 @@ Miller Avatar is the optional avatar-presentation package for Miller. It is
 kept separate so Miller remains usable when avatar presentation is absent,
 disabled, loading, or unavailable.
 
-## Standalone alpha foundation
+## Standalone alpha
 
-The current repository milestone establishes a Swift 6.1 package targeting
-macOS 15, an isolated Command Line Tools build harness, sandbox configuration,
-and boundaries for the standalone alpha's core, native host, and app. It also
-defines the closed v1 Swift/TypeScript bridge contract with shared fixtures and
-implements renderer-neutral Swift reducers for lifecycle, semantic projection,
-mouth cues, Reduced Motion, and visibility coordination. It does not yet
-implement native-host bridge transport or the application UI. It includes a
-pinned, testable TypeScript local-web renderer core with closed bridge
-validation, lifecycle and presentation reducers, fake-backend coverage,
-finite camera fitting, and a deterministic closed-CSP bundle. The core keeps
-live Three.js/VRM loading behind an abort-aware backend seam; its generated
-five-file bundle has an atomic v2 MIME/hash manifest. It does implement bounded
-native preflight for the closed GLB-form VRM 1.0 envelope; see
-`docs/asset-policy.md`. The native host also provides a contained WebKit
-surface with a closed custom scheme, fail-closed navigation, nonpersistent
-data storage, session leases, and idempotent renderer teardown.
+The current repository milestone assembles a Swift 6.1 macOS 15 diagnostic
+application with a native-first fallback UI and contained WebKit renderer. It
+captures a selected VRM as bounded in-memory bytes, performs native admission,
+and keeps file paths out of the bridge, diagnostics, and persistence. A strict
+ordered Swift/TypeScript bridge drives the renderer; the host keeps the fallback
+visible until a valid first frame, closes startup and load deadlines, and permits
+only one explicit retry.
+
+The app uses the existing pure reducers for lifecycle, semantic presentation,
+mouth cues, Reduced Motion, and visibility. Its local web bundle has a closed
+CSP and scheme boundary, fail-closed navigation, nonpersistent data storage,
+session fencing, and idempotent renderer teardown. The release bundle is ad-hoc
+signed with App Sandbox, read-only user-selected file access, and the network
+client entitlement required for WebKit child processes. `scripts/test-signed-boundary.sh`
+verifies that freshly signed bundles reach wrapper and renderer readiness without
+shipping fault hooks or private model fixtures.
 
 Clean Swift tests and app builds use repository resources as committed. They
 do not run npm or regenerate `Resources/Web/`. Maintainer-only bundle

@@ -5,6 +5,29 @@ import Testing
 
 @MainActor
 @Suite struct LocalSchemeHandlerTests {
+    @Test func installedAssetReplacesTheInitialOpaqueAsset() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin()
+        let initialToken = UUID()
+        let replacementToken = UUID()
+        let resources = bundleResources()
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: resources,
+            resourceRecords: resources.keys.sorted().map {
+                LocalSchemeResourceRecord.make(path: $0, data: resources[$0]!)
+            },
+            assetToken: initialToken,
+            assetData: Data()
+        )
+
+        handler.installAsset(token: replacementToken, data: Data([1, 2, 3]))
+
+        let response = try handler.response(for: URLRequest(url: handler.activeAssetURL))
+        #expect(response.data == Data([1, 2, 3]))
+        #expect(!handler.activeAssetURL.absoluteString.contains(initialToken.uuidString.lowercased()))
+    }
     private let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     private let assetToken = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
 
@@ -32,6 +55,16 @@ import Testing
                 for: request("/session/\(sessionID.uuidString.lowercased())/other.vrm")
             )
         }
+    }
+
+    @Test func servesTheBundleOnlyFromTheActiveSessionScopedEntrypoint() throws {
+        let handler = makeHandler()
+        let entryURL = URL(string: "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/bundle/index.html")!
+
+        let entry = try handler.response(for: URLRequest(url: entryURL))
+
+        #expect(entry.data == Data("html".utf8))
+        #expect(entry.url == entryURL)
     }
 
     @Test func rejectsEveryNoncanonicalOrAmbiguousURLForm() {
@@ -477,7 +510,13 @@ import Testing
     }
 
     private func request(_ path: String) -> URLRequest {
-        URLRequest(url: URL(string: "miller-avatar-local://app\(path)")!)
+        let scopedPath: String
+        if path.hasPrefix("/bundle/") {
+            scopedPath = "/session/\(sessionID.uuidString.lowercased())\(path)"
+        } else {
+            scopedPath = path
+        }
+        return URLRequest(url: URL(string: "miller-avatar-local://app\(scopedPath)")!)
     }
 
     private func bundleResources(

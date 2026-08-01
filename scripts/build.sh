@@ -139,10 +139,37 @@ binary_directory=$(
         --show-bin-path
 )
 
-mkdir -p "$generated_root" "$stage_app/Contents/MacOS" "$stage_app/Contents/Resources/Static"
+mkdir -p \
+    "$generated_root" \
+    "$stage_app/Contents/MacOS" \
+    "$stage_app/Contents/Resources/Static" \
+    "$stage_app/Contents/Resources/Web"
 cp "$repo_root/Config/Info.plist" "$stage_app/Contents/Info.plist"
 cp "$binary_directory/MillerAvatarApp" "$stage_app/Contents/MacOS/MillerAvatarApp"
 cp -R "$repo_root/Resources/Static/." "$stage_app/Contents/Resources/Static/"
+cp -R "$repo_root/Resources/Web/." "$stage_app/Contents/Resources/Web/"
+
+build_manifest="$stage_app/Contents/Resources/build-manifest.json"
+manifest_entries="$run_root/build-manifest-entries.txt"
+(
+    cd "$stage_app"
+    find Contents -type f ! -name build-manifest.json -print | LC_ALL=C sort |
+        while IFS= read -r relative_path; do
+            digest=$(shasum -a 256 "$relative_path" | awk '{print $1}')
+            byte_count=$(stat -f %z "$relative_path")
+            printf '%s\t%s\t%s\n' "$relative_path" "$byte_count" "$digest"
+        done
+) > "$manifest_entries"
+{
+    printf '{"schema":"miller-avatar.build-manifest/v1","files":['
+    separator=""
+    while IFS=$'\t' read -r relative_path byte_count digest; do
+        printf '%s{"path":"%s","byte_count":%s,"sha256":"%s"}' \
+            "$separator" "$relative_path" "$byte_count" "$digest"
+        separator=,
+    done < "$manifest_entries"
+    printf ']}\n'
+} > "$build_manifest"
 
 find "$stage_app" -exec touch -t 202001010000 {} +
 codesign \
@@ -165,6 +192,8 @@ fi
 
 mv "$stage_app" "$output_app"
 codesign --verify --deep --strict "$output_app"
+cp "$run_root/post-sign-receipt.txt" \
+    "$generated_root/Miller Avatar Alpha.post-sign.txt"
 
 rm -rf -- "$previous_app"
 publication_started=0

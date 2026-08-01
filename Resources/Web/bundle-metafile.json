@@ -1,5 +1,299 @@
 {
   "inputs": {
+    "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
+      "bytes": 988239,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/three/build/three.core.js": {
+      "bytes": 1403455,
+      "imports": [],
+      "format": "esm"
+    },
+    "node_modules/three/build/three.module.js": {
+      "bytes": 603113,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.core.js",
+          "kind": "import-statement",
+          "original": "./three.core.js"
+        },
+        {
+          "path": "node_modules/three/build/three.core.js",
+          "kind": "import-statement",
+          "original": "./three.core.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/three/examples/jsm/loaders/GLTFLoader.js": {
+      "bytes": 114739,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/examples/jsm/utils/BufferGeometryUtils.js",
+          "kind": "import-statement",
+          "original": "../utils/BufferGeometryUtils.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/three/examples/jsm/utils/BufferGeometryUtils.js": {
+      "bytes": 35539,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        }
+      ],
+      "format": "esm"
+    },
     "src/bridge.ts": {
       "bytes": 14506,
       "imports": [
@@ -42,8 +336,13 @@
       "format": "esm"
     },
     "src/index.ts": {
-      "bytes": 220,
+      "bytes": 327,
       "imports": [
+        {
+          "path": "src/runtime.ts",
+          "kind": "import-statement",
+          "original": "./runtime.js"
+        },
         {
           "path": "src/bridge.ts",
           "kind": "import-statement",
@@ -75,6 +374,11 @@
           "original": "./presentation.js"
         },
         {
+          "path": "src/runtime.ts",
+          "kind": "import-statement",
+          "original": "./runtime.js"
+        },
+        {
           "path": "src/validation.ts",
           "kind": "import-statement",
           "original": "./validation.js"
@@ -92,6 +396,32 @@
       "imports": [],
       "format": "esm"
     },
+    "src/runtime.ts": {
+      "bytes": 9369,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/examples/jsm/loaders/GLTFLoader.js",
+          "kind": "import-statement",
+          "original": "three/addons/loaders/GLTFLoader.js"
+        },
+        {
+          "path": "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js",
+          "kind": "import-statement",
+          "original": "@pixiv/three-vrm"
+        },
+        {
+          "path": "src/bridge.ts",
+          "kind": "import-statement",
+          "original": "./bridge.js"
+        }
+      ],
+      "format": "esm"
+    },
     "src/validation.ts": {
       "bytes": 19373,
       "imports": [
@@ -106,31 +436,49 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 38634,
+      "bytes": 739563,
       "inputs": {
+        "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
+          "bytesInOutput": 144009
+        },
+        "node_modules/three/build/three.core.js": {
+          "bytesInOutput": 203384
+        },
+        "node_modules/three/build/three.module.js": {
+          "bytesInOutput": 321207
+        },
+        "node_modules/three/examples/jsm/loaders/GLTFLoader.js": {
+          "bytesInOutput": 43051
+        },
+        "node_modules/three/examples/jsm/utils/BufferGeometryUtils.js": {
+          "bytesInOutput": 991
+        },
         "src/bridge.ts": {
-          "bytesInOutput": 11016
+          "bytesInOutput": 7010
         },
         "src/camera.ts": {
-          "bytesInOutput": 2322
+          "bytesInOutput": 977
         },
         "src/contract.ts": {
-          "bytesInOutput": 1112
+          "bytesInOutput": 830
         },
         "src/disposal.ts": {
-          "bytesInOutput": 728
+          "bytesInOutput": 402
         },
         "src/index.ts": {
-          "bytesInOutput": 0
+          "bytesInOutput": 5
         },
         "src/lifecycle.ts": {
-          "bytesInOutput": 950
+          "bytesInOutput": 594
         },
         "src/presentation.ts": {
-          "bytesInOutput": 4613
+          "bytesInOutput": 2824
+        },
+        "src/runtime.ts": {
+          "bytesInOutput": 4540
         },
         "src/validation.ts": {
-          "bytesInOutput": 17342
+          "bytesInOutput": 9232
         }
       }
     }

@@ -9,6 +9,7 @@ swift test
 scripts/test.sh
 scripts/build.sh
 codesign --verify --deep --strict ".generated/Miller Avatar Alpha.app"
+scripts/test-signed-boundary.sh
 scripts/clean.sh
 ```
 
@@ -18,9 +19,12 @@ scripts/clean.sh
 app builds do not regenerate it and do not require Node, npm, `Web/node_modules/`,
 or an npm cache. They consume repository resources as committed.
 
-The current standalone-alpha app has not yet wired native-host bridge
-transport or the live renderer. A clean app build therefore does not prove
-that the web bundle can be regenerated from a clean checkout.
+The assembled standalone-alpha app wires native-host bridge transport and its
+production web bootstrap into the signed bundle. `scripts/test-signed-boundary.sh`
+starts that freshly signed bundle and requires wrapper and renderer readiness;
+it also checks the exact entitlement set and rejects fault hooks and private
+model fixtures. A clean app build still does not prove that the web bundle can
+be regenerated from a clean checkout.
 
 `scripts/test.sh contracts` is different from the normal Swift test path. It
 runs the TypeScript contract suite and requires the exact web dependencies.

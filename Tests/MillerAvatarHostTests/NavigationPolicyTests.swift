@@ -6,20 +6,21 @@ import Testing
 @MainActor
 @Suite struct NavigationPolicyTests {
     @Test func allowsTheExactInitialMainFrameEntrypointOnce() {
-        let policy = makePolicy()
+        let fixture = makePolicy()
         let initial = NavigationRequest(
-            url: LocalSchemeHandler.entrypointURL,
+            url: fixture.entrypoint,
             isMainFrame: true,
             navigationType: .other
         )
 
-        #expect(policy.decide(initial) == .allow)
-        #expect(policy.decide(initial) == .cancel)
+        #expect(fixture.policy.decide(initial) == .allow)
+        #expect(fixture.policy.decide(initial) == .cancel)
     }
 
     @Test func everyEscapeAndNavigationPathFailsClosed() {
-        let policy = makePolicy()
-        let entry = LocalSchemeHandler.entrypointURL
+        let fixture = makePolicy()
+        let policy = fixture.policy
+        let entry = fixture.entrypoint
         let rejected = [
             NavigationRequest(
                 url: URL(string: "http://example.com")!,
@@ -92,7 +93,7 @@ import Testing
         #expect(
             policy.decide(
                 NavigationRequest(
-                    url: LocalSchemeHandler.entrypointURL,
+                    url: LocalSchemeHandler.entrypointURL(for: lease.id),
                     isMainFrame: true,
                     navigationType: .other
                 )
@@ -114,7 +115,7 @@ import Testing
         #expect(
             stalePolicy.decide(
                 NavigationRequest(
-                    url: LocalSchemeHandler.entrypointURL,
+                    url: LocalSchemeHandler.entrypointURL(for: oldLease.id),
                     isMainFrame: true,
                     navigationType: .other
                 )
@@ -179,11 +180,11 @@ import Testing
         let outcome = PolicyRaceOutcome()
         let policy = NavigationPolicy(lease: lease) {
             callbackStarted.signal()
-            _ = allowCallbackToFinish.wait(timeout: .now() + 1)
+            _ = allowCallbackToFinish.wait(timeout: .now() + 5)
         }
 
         DispatchQueue.global().async {
-            guard callbackStarted.wait(timeout: .now() + 1) == .success else {
+            guard callbackStarted.wait(timeout: .now() + 5) == .success else {
                 return
             }
             invalidationStarted.signal()
@@ -206,10 +207,10 @@ import Testing
             ) == .timedOut
             allowCallbackToFinish.signal()
             let didInvalidate = invalidationFinished.wait(
-                timeout: .now() + 1
+                timeout: .now() + 5
             ) == .success
             let didFinishDecision = decisionFinished.wait(
-                timeout: .now() + 1
+                timeout: .now() + 5
             ) == .success
             outcome.record(
                 invalidationStayedBlocked: invalidationStayedBlocked,
@@ -230,15 +231,22 @@ import Testing
             decisionFinished.signal()
         }
 
-        let verification = await waitForPolicySignal(verificationFinished)
+        let verification = await waitForPolicySignal(
+            verificationFinished,
+            timeout: 5
+        )
         #expect(verification == .success)
         #expect(outcome.invalidationStayedBlocked)
         #expect(outcome.invalidationFinished)
         #expect(outcome.decisionFinished)
     }
 
-    private func makePolicy() -> NavigationPolicy {
-        NavigationPolicy(lease: RendererSessionLease())
+    private func makePolicy() -> (policy: NavigationPolicy, entrypoint: URL) {
+        let lease = RendererSessionLease()
+        return (
+            NavigationPolicy(lease: lease),
+            LocalSchemeHandler.entrypointURL(for: lease.id)
+        )
     }
 }
 

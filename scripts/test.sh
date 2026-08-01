@@ -46,3 +46,4 @@ SWIFT_MODULECACHE_PATH="$swift_cache" \
     -Xswiftc "$swift_cache"
 
 "$repo_root/scripts/test-publication-rollback.sh"
+"$repo_root/Tests/ShellContracts/run-alpha-contract.sh"

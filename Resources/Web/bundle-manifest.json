@@ -21,12 +21,32 @@
   },
   "inputs": {
     "scripts/bundle-web.sh": {
-      "bytes": 7160,
-      "sha256": "6c14d1dcf0c4724ebc4bd6821d2da2a00d40f9010498b008ccb0f235dcb73d81"
+      "bytes": 8230,
+      "sha256": "1369d2d1635a8de897e5bebf965334feb2492e88780e105ac3365e0fb9284c5e"
     },
     "Web/.npmrc": {
       "bytes": 131,
       "sha256": "8b0d4e2dfc45e822e9c890717a5121e44cb465d1d1ed9e1d1aa0cde10e90808b"
+    },
+    "Web/node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
+      "bytes": 988239,
+      "sha256": "bfc0f3bd49ee5b706b3055d366759e881f20dee32be344c4c8f586600f223434"
+    },
+    "Web/node_modules/three/build/three.core.js": {
+      "bytes": 1403455,
+      "sha256": "eb077d2417f61d3e6d9264c317cabc4ea35769ed6b0ab533067292a550784c20"
+    },
+    "Web/node_modules/three/build/three.module.js": {
+      "bytes": 603113,
+      "sha256": "c8211c69345d2e9949dc7a8ac969380497aa0600a5a8ac6a459c8cd02dd9cb8a"
+    },
+    "Web/node_modules/three/examples/jsm/loaders/GLTFLoader.js": {
+      "bytes": 114739,
+      "sha256": "67ac5551fdafa6e349bd80c8f8e5e39c136d6b2fb1ad647db9abb21dc86f9e4a"
+    },
+    "Web/node_modules/three/examples/jsm/utils/BufferGeometryUtils.js": {
+      "bytes": 35539,
+      "sha256": "fda7e946b8e0b5ab39b779206589e7a1079a22eb24efb89d7223e03fdfb1f751"
     },
     "Web/package-lock.json": {
       "bytes": 33787,
@@ -57,8 +77,8 @@
       "sha256": "6897a1ef3c927f4f4d44c2e9a74a71b21bd562340ba1e24dba215cc1f7f19271"
     },
     "Web/src/index.ts": {
-      "bytes": 220,
-      "sha256": "91207849e798fdfef63be8de372be14ec001cc543cc0e38f9e61c10f0dcfe59c"
+      "bytes": 327,
+      "sha256": "cbf45f27ab61d4295a1130eb197748f340a7eb7c6955b0c4dc48c8b436611afb"
     },
     "Web/src/lifecycle.ts": {
       "bytes": 1592,
@@ -67,6 +87,10 @@
     "Web/src/presentation.ts": {
       "bytes": 6492,
       "sha256": "2af7163662d44c1be308a46bfe62c7a78af0c8b08ab9abb2209af2d89e4b63f3"
+    },
+    "Web/src/runtime.ts": {
+      "bytes": 9369,
+      "sha256": "cd4e8ce588e07804d5d204a15308c05fc9a7d82d76b91da91a31798b86d3fb8d"
     },
     "Web/src/styles.css": {
       "bytes": 176,
@@ -79,13 +103,13 @@
   },
   "files": {
     "app.js": {
-      "bytes": 38634,
-      "sha256": "072c944e6052d67e8a68d696d633f2a32550eb5cf9228b4c0325099daaa54d5a",
+      "bytes": 739563,
+      "sha256": "779b62c3b000666a6bd7a9cf23d17a4c2360f464d7ba308847b799d8bdd1945e",
       "mime": "text/javascript; charset=utf-8"
     },
     "bundle-metafile.json": {
-      "bytes": 3097,
-      "sha256": "45752905cd914aa27f0332db799b6ee7c8262ef23e8c682d6ed3e880cf08238f",
+      "bytes": 13462,
+      "sha256": "f160c58b49476d90c456cfcfe1aa45d4e667d58c971ccb098133fcd12d352576",
       "mime": "application/json; charset=utf-8"
     },
     "index.html": {
@@ -99,5 +123,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "9a578775d8e38e189d00737f6cd81d1e557fc4e09e8db7c15d1e2269148d4643"
+  "contract_sha256": "1140e7d7c92c29edba5dddb9b6bda031c55265b464e27c345010613196752a5d"
 }
