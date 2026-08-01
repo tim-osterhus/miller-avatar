@@ -1,0 +1,1 @@
+{"direction":"observation","session_id":"11111111-1111-4111-8111-111111111111","messages":[{"schema":"miller-avatar.presentation-observation/v1","session_id":"11111111-1111-4111-8111-111111111111","sequence":1,"caused_by_sequence":null,"type":"renderer_ready","payload":{"webgl":"webgl1"}}]}

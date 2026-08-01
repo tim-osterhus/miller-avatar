@@ -1,23 +1,39 @@
 # Miller Avatar
 
-Miller Avatar is the planned optional avatar-presentation package for Miller.
-It will let Miller project assistant lifecycle state through configurable
-visual renderers without making presentation authoritative for conversation,
-reasoning, speech, or tool state.
+Miller Avatar is the optional avatar-presentation package for Miller. It is
+kept separate so Miller remains usable when avatar presentation is absent,
+disabled, loading, or unavailable.
 
-The package is being developed in parallel with Miller and will not block the
-base assistant's first release. Miller must remain fully usable when this
-package is absent, disabled, loading, or unavailable.
+## Standalone alpha foundation
 
-## Initial scope
+The current repository milestone establishes a Swift 6.1 package targeting
+macOS 15, an isolated Command Line Tools build harness, sandbox configuration,
+and boundaries for the standalone alpha's core, native host, and app. It also
+defines the closed v1 Swift/TypeScript bridge contract with shared fixtures and
+implements renderer-neutral Swift reducers for lifecycle, semantic projection,
+mouth cues, Reduced Motion, and visibility coordination. It does not yet
+implement native-host bridge transport or the application UI. It includes a
+pinned, testable TypeScript local-web renderer core with closed bridge
+validation, lifecycle and presentation reducers, fake-backend coverage,
+finite camera fitting, and a deterministic closed-CSP bundle. The core keeps
+live Three.js/VRM loading behind an abort-aware backend seam; its generated
+five-file bundle has an atomic v2 MIME/hash manifest. It does implement bounded
+native preflight for the closed GLB-form VRM 1.0 envelope; see
+`docs/asset-policy.md`. The native host also provides a contained WebKit
+surface with a closed custom scheme, fail-closed navigation, nonpersistent
+data storage, session leases, and idempotent renderer teardown.
 
-The first live 3D compatibility target is VRM 1.0 with user-supplied models
-and animations. Legacy VRM 0.x compatibility is deferred until the VRM 1.0
-path is proven. The package name is intentionally renderer-neutral so later
-presentation formats can be added without renaming the product.
+Clean Swift tests and app builds use repository resources as committed. They
+do not run npm or regenerate `Resources/Web/`. Maintainer-only bundle
+regeneration requires the pinned Node/npm toolchain and an audited
+pre-populated offline cache; a clean checkout alone is insufficient.
 
-No renderer, implementation language, UI framework, model, animation pack, or
-example avatar has been selected yet.
+The first planned live compatibility target is VRM 1.0 with user-supplied
+models and animations. Legacy VRM 0.x compatibility is deferred until that
+path is proven.
+
+See `docs/architecture.md` and `docs/development.md` for the implemented
+foundation.
 
 ## Asset posture
 

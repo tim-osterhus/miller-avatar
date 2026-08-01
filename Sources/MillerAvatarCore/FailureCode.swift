@@ -1,0 +1,15 @@
+public enum FailureCode: String, CaseIterable, Codable, Equatable, Sendable {
+    case bridgeInvalid = "bridge_invalid"
+    case rendererUnavailable = "renderer_unavailable"
+    case webglUnavailable = "webgl_unavailable"
+    case wrapperTimeout = "wrapper_timeout"
+    case assetRejected = "asset_rejected"
+    case assetLoadFailed = "asset_load_failed"
+    case assetLoadTimeout = "asset_load_timeout"
+    case renderFailed = "render_failed"
+    case contextLost = "context_lost"
+    case schemeRejected = "scheme_rejected"
+    case policyViolation = "policy_violation"
+    case resourceLimit = "resource_limit"
+    case disposedDuringOperation = "disposed_during_operation"
+}

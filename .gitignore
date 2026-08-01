@@ -1,1 +1,4 @@
 .DS_Store
+.build/
+.generated/
+Web/node_modules/

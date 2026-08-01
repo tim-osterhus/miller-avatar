@@ -1,0 +1,1 @@
+{"direction":"command","session_id":"11111111-1111-4111-8111-111111111111","mutation":"add_depth_nine","messages":[{"schema":"miller-avatar.presentation-command/v1","session_id":"11111111-1111-4111-8111-111111111111","sequence":1,"type":"configure","payload":{"profile":"lightweight","reduced_motion":false}}]}

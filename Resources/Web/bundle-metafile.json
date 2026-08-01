@@ -1,0 +1,138 @@
+{
+  "inputs": {
+    "src/bridge.ts": {
+      "bytes": 14506,
+      "imports": [
+        {
+          "path": "src/contract.ts",
+          "kind": "import-statement",
+          "original": "./contract.js"
+        },
+        {
+          "path": "src/lifecycle.ts",
+          "kind": "import-statement",
+          "original": "./lifecycle.js"
+        },
+        {
+          "path": "src/presentation.ts",
+          "kind": "import-statement",
+          "original": "./presentation.js"
+        },
+        {
+          "path": "src/validation.ts",
+          "kind": "import-statement",
+          "original": "./validation.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/camera.ts": {
+      "bytes": 2794,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/contract.ts": {
+      "bytes": 3956,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/disposal.ts": {
+      "bytes": 920,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/index.ts": {
+      "bytes": 220,
+      "imports": [
+        {
+          "path": "src/bridge.ts",
+          "kind": "import-statement",
+          "original": "./bridge.js"
+        },
+        {
+          "path": "src/camera.ts",
+          "kind": "import-statement",
+          "original": "./camera.js"
+        },
+        {
+          "path": "src/contract.ts",
+          "kind": "import-statement",
+          "original": "./contract.js"
+        },
+        {
+          "path": "src/disposal.ts",
+          "kind": "import-statement",
+          "original": "./disposal.js"
+        },
+        {
+          "path": "src/lifecycle.ts",
+          "kind": "import-statement",
+          "original": "./lifecycle.js"
+        },
+        {
+          "path": "src/presentation.ts",
+          "kind": "import-statement",
+          "original": "./presentation.js"
+        },
+        {
+          "path": "src/validation.ts",
+          "kind": "import-statement",
+          "original": "./validation.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lifecycle.ts": {
+      "bytes": 1592,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/presentation.ts": {
+      "bytes": 6492,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/validation.ts": {
+      "bytes": 19373,
+      "imports": [
+        {
+          "path": "src/contract.ts",
+          "kind": "import-statement",
+          "original": "./contract.js"
+        }
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "app.js": {
+      "bytes": 38634,
+      "inputs": {
+        "src/bridge.ts": {
+          "bytesInOutput": 11016
+        },
+        "src/camera.ts": {
+          "bytesInOutput": 2322
+        },
+        "src/contract.ts": {
+          "bytesInOutput": 1112
+        },
+        "src/disposal.ts": {
+          "bytesInOutput": 728
+        },
+        "src/index.ts": {
+          "bytesInOutput": 0
+        },
+        "src/lifecycle.ts": {
+          "bytesInOutput": 950
+        },
+        "src/presentation.ts": {
+          "bytesInOutput": 4613
+        },
+        "src/validation.ts": {
+          "bytesInOutput": 17342
+        }
+      }
+    }
+  }
+}
