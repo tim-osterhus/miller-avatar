@@ -245,7 +245,6 @@ assert.equal(
 );
 const expectedNativeFiles = new Set([
   "Contents/Info.plist",
-  "Contents/MacOS/MillerAvatarApp",
   ...legalFiles.map(({ output }) => output),
   ...[...walkFiles(resolve(repositoryRoot, "Resources/Static")), ...walkFiles(resolve(repositoryRoot, "Resources/Web"))]
     .map((path) => `Contents/Resources/${relative(resolve(repositoryRoot, "Resources"), path).split(sep).join("/")}`),

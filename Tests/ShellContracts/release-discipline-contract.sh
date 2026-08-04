@@ -35,11 +35,18 @@ then
     exit 1
 fi
 
-"$node_command" --input-type=module - "$repository_root/Resources/build-manifest.json" <<'NODE'
+expected_source_revision=$(git -C "$repository_root" log -1 --format=%H -- \
+    Package.swift Config/Info.plist Config/MillerAvatarAlpha.entitlements \
+    LICENSE NOTICE THIRD_PARTY_NOTICES.md Sources Resources/Static \
+    Resources/Web scripts/build.sh scripts/verify-toolchain.sh)
+"$node_command" --input-type=module - \
+    "$repository_root/Resources/build-manifest.json" \
+    "$expected_source_revision" <<'NODE'
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const manifest = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const expectedSourceRevision = process.argv[3];
 assert.deepEqual(manifest.product, {
   name: "Miller Avatar Alpha",
   bundle_identifier: "ai.millrace.miller-avatar.alpha",
@@ -47,10 +54,22 @@ assert.deepEqual(manifest.product, {
   build_version: "1",
   deployment_target: "15.0",
 });
-assert.match(manifest.source_revision, /^[0-9a-f]{40}$/u);
+assert.equal(manifest.source_revision, expectedSourceRevision);
 assert.match(manifest.executable_input_sha256, /^[0-9a-f]{64}$/u);
 assert.match(manifest.web_bundle_manifest_sha256, /^[0-9a-f]{64}$/u);
+assert.equal(
+  manifest.files.some(({ path }) => path === "Contents/MacOS/MillerAvatarApp"),
+  false,
+  "compiled executable output must remain in the external post-sign receipt",
+);
 NODE
+
+if ! grep -A3 -F 'uses: actions/checkout@v4' "$repository_root/.github/workflows/ci.yml" |
+    grep -Fq 'fetch-depth: 0'
+then
+    printf 'CI checkout must retain source history for filtered revision evidence\n' >&2
+    exit 1
+fi
 
 if ! grep -q 'DARWIN_USER_CACHE_DIR' "$repository_root/scripts/test-release-discipline.sh"; then
     printf 'release discipline does not monitor the Darwin shared Clang cache\n' >&2
@@ -193,11 +212,15 @@ cp "$copy_root/Resources/build-manifest.json" "$temporary_root/build-manifest.js
 import { readFileSync, writeFileSync } from "node:fs";
 const path = process.argv[2];
 const manifest = JSON.parse(readFileSync(path, "utf8"));
-manifest.files = manifest.files.filter(({ path: filePath }) => filePath !== "Contents/MacOS/MillerAvatarApp");
+manifest.files.push({
+  path: "Contents/MacOS/MillerAvatarApp",
+  byte_count: 1,
+  sha256: "0".repeat(64),
+});
 writeFileSync(path, `${JSON.stringify(manifest)}\n`);
 NODE
 if "$node_command" "$copy_root/Web/scripts/verify-dependencies.mjs" --repository-root "$copy_root" >/dev/null 2>&1; then
-    printf 'dependency verifier accepted an incomplete native output manifest\n' >&2
+    printf 'dependency verifier accepted a machine-specific executable output hash\n' >&2
     exit 1
 fi
 mv "$temporary_root/build-manifest.json" "$copy_root/Resources/build-manifest.json"

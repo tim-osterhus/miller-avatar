@@ -227,7 +227,10 @@ executable_input_manifest_entries="$run_root/executable-input-manifest-entries.t
 ) > "$executable_input_manifest_entries"
 (
     cd "$stage_app"
-    find Contents -type f ! -name build-manifest.json -print | LC_ALL=C sort |
+    find Contents -type f \
+        ! -name build-manifest.json \
+        ! -path 'Contents/MacOS/MillerAvatarApp' \
+        -print | LC_ALL=C sort |
         while IFS= read -r relative_path; do
             digest=$(shasum -a 256 "$relative_path" | awk '{print $1}')
             byte_count=$(stat -f %z "$relative_path")

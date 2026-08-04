@@ -89,8 +89,9 @@ byte count and SHA-256. The deterministic `contract_sha256` covers the manifest
 contract without attempting the impossible self-hash of the manifest bytes.
 
 `Resources/build-manifest.json` is the deterministic pre-sign receipt. It
-records fixed product/toolchain identity plus every executable and resource
-hash while excluding itself and `_CodeSignature`. The build writes
+records fixed product/toolchain identity, the executable-input hash, and every
+portable resource hash while excluding itself, compiled executable output, and
+`_CodeSignature`. The build writes
 `.generated/Miller Avatar Alpha.post-sign.json` outside the app; that receipt
 records the pre-sign manifest hash and hashes the signed executable and sorted
 signed app tree, so it cannot include itself. The reproducibility check compares

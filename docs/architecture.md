@@ -31,12 +31,12 @@ ships no private model fixtures or test-only fault hooks.
 
 The normalized web metafile is the emitted-input authority, and the web bundle
 manifest hashes every declared source and payload. Native assembly creates a
-pre-sign manifest from the executable, Info.plist, legal notices, static
+pre-sign manifest from the executable inputs, Info.plist, legal notices, static
 resources, and web resources. The app embeds the reviewed `LICENSE`, `NOTICE`,
-and `THIRD_PARTY_NOTICES.md` under `Contents/Resources/Legal/`. Signing adds
-`_CodeSignature` only after that scope is closed; an external post-sign receipt
-then hashes the signed executable and complete signed tree. Neither manifest
-includes itself.
+and `THIRD_PARTY_NOTICES.md` under `Contents/Resources/Legal/`. Machine-specific
+executable output and `_CodeSignature` bytes stay outside the committed
+pre-sign manifest; an external post-sign receipt hashes the signed executable
+and complete signed tree. Neither receipt includes itself.
 
 Clean Swift and app workflows treat `Resources/Web/` as a committed offline
 artifact. They do not run npm or regenerate the bundle. Maintainer regeneration
