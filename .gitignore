@@ -2,3 +2,11 @@
 .build/
 .generated/
 Web/node_modules/
+*.glb
+*.vrm
+*.vrma
+*.heic
+*.jpeg
+*.jpg
+*.png
+*.webp

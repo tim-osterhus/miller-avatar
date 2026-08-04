@@ -29,6 +29,15 @@ payload manifest. Its native-host bootstrap installs the closed bridge and
 observation transport before renderer readiness is reported. The assembled app
 ships no private model fixtures or test-only fault hooks.
 
+The normalized web metafile is the emitted-input authority, and the web bundle
+manifest hashes every declared source and payload. Native assembly creates a
+pre-sign manifest from the executable, Info.plist, legal notices, static
+resources, and web resources. The app embeds the reviewed `LICENSE`, `NOTICE`,
+and `THIRD_PARTY_NOTICES.md` under `Contents/Resources/Legal/`. Signing adds
+`_CodeSignature` only after that scope is closed; an external post-sign receipt
+then hashes the signed executable and complete signed tree. Neither manifest
+includes itself.
+
 Clean Swift and app workflows treat `Resources/Web/` as a committed offline
 artifact. They do not run npm or regenerate the bundle. Maintainer regeneration
 requires the exact pinned Node/npm toolchain and an audited pre-populated npm
@@ -41,3 +50,11 @@ the prior valid bundle if a new build fails. The signed boundary uses exactly
 App Sandbox, read-only user-selected file access, and network client access so
 WebKit child processes can start; `scripts/test-signed-boundary.sh` verifies
 that the published bundle reaches wrapper and renderer readiness.
+
+Release automation uses run-private SwiftPM and module-cache roots. Independent
+builds must produce byte-identical pre-sign manifests and post-sign receipts.
+Cleanup accepts only repository-declared roots or externally marked build roots,
+and the release contract snapshots both Xcode's DerivedData module cache and
+the Darwin per-user Clang module cache before and after the gate. CI runs the
+same public checks with read-only repository permission and contains no upload,
+package, tag, or release step.

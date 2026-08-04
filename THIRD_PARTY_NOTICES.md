@@ -1,56 +1,75 @@
 # Third-party notices
 
-This checkpoint ledger covers the five direct packages declared by
-`Web/package.json`. It does not cover their full transitive dependency graph.
-A08 must close the transitive SBOM and emitted-code notice set before a live
-renderer ships.
+The runtime bundle contains portions of Three.js and pixiv three-vrm. Build
+tools are listed after the runtime notices and are not distributed in the app.
 
-## Direct package ledger
+## Three.js 0.180.0 — MIT License
 
-### TypeScript 7.0.2
+Copyright © 2010-2025 three.js authors
 
-- Repository: [microsoft/TypeScript](https://github.com/microsoft/TypeScript).
-- Inclusion: build-only compiler for TypeScript source and contract tests.
-- License: Apache License 2.0, Copyright Microsoft Corporation.
-- Notice obligation: a redistribution of TypeScript must include the Apache
-  2.0 license, retain applicable notices, identify modified files, and include
-  any upstream NOTICE material required by section 4.
-- Current distribution: TypeScript source and executables are not emitted into
-  `Resources/Web/`.
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
 
-### esbuild 0.28.1 and @esbuild/darwin-arm64 0.28.1
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-- Repository: [evanw/esbuild](https://github.com/evanw/esbuild).
-- Inclusion: build-only JavaScript package and pinned darwin-arm64 executable
-  used to produce the committed browser bundle.
-- License: MIT License, Copyright Evan Wallace.
-- Notice obligation: a redistribution of either package or a substantial
-  portion must retain the upstream copyright and MIT permission notice.
-- Current distribution: neither package nor the native executable is emitted
-  into `Resources/Web/`.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
-### three 0.180.0
+## pixiv three-vrm 3.5.5 package family — MIT License
 
-- Repository: [mrdoob/three.js](https://github.com/mrdoob/three.js).
-- Inclusion: pinned future dependency for the required renderer backend seam.
-  The current TypeScript entry point does not import it.
-- License: MIT License, Copyright three.js authors.
-- Notice obligation: a future redistribution of Three.js or a substantial
-  portion must retain the upstream copyright and MIT permission notice.
-- Current distribution: Three.js code, examples, fonts, decoders, and assets
-  are not emitted into `Resources/Web/`.
+Copyright © 2019-2026 pixiv Inc.
 
-### @pixiv/three-vrm 3.5.5
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
 
-- Repository: [pixiv/three-vrm](https://github.com/pixiv/three-vrm).
-- Inclusion: pinned future dependency for the VRM 1.0 backend seam. The
-  current TypeScript entry point does not import it.
-- License: MIT License, Copyright pixiv Inc.
-- Notice obligation: a future redistribution of three-vrm or a substantial
-  portion must retain the upstream copyright and MIT permission notice.
-- Current distribution: three-vrm code and its transitive packages are not
-  emitted into `Resources/Web/`.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-The current five-file bundle contains first-party testable-core code only. It
-contains no third-party runtime code or avatar asset. This statement does not
-approve the direct packages, transitive packages, or related assets for A08.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Mapbox Earcut 3.0.1 — ISC License
+
+Copyright © 2016 Mapbox
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+## Build-only tools
+
+TypeScript 7.0.2 and its platform packages use the Apache License 2.0,
+Copyright Microsoft Corporation. The package-supplied
+`NOTICE.txt` governs the tool installation; neither TypeScript nor its notice
+payload is emitted into Miller Avatar.
+
+esbuild 0.28.1 and its platform packages are licensed under the MIT License,
+Copyright © 2020 Evan Wallace. Neither esbuild nor its native executable is
+emitted into Miller Avatar.

@@ -26,3 +26,14 @@ if HOME="$fake_home" "$copy_root/scripts/clean.sh" "$unresolved_root"; then
     printf 'clean accepted an unresolved root\n' >&2
     exit 1
 fi
+
+mkdir -p \
+    "$copy_root/.generated" \
+    "$copy_root/.build" \
+    "$copy_root/Web/.build" \
+    "$copy_root/Web/node_modules"
+HOME="$fake_home" "$copy_root/scripts/clean.sh"
+test ! -e "$copy_root/.generated"
+test ! -e "$copy_root/.build"
+test ! -e "$copy_root/Web/.build"
+test ! -e "$copy_root/Web/node_modules"

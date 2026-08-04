@@ -21,8 +21,8 @@
   },
   "inputs": {
     "scripts/bundle-web.sh": {
-      "bytes": 8230,
-      "sha256": "1369d2d1635a8de897e5bebf965334feb2492e88780e105ac3365e0fb9284c5e"
+      "bytes": 10053,
+      "sha256": "5a7a0824cb1b95ca8e038da3cfef9a4b409c630ce3c4388ed72991286a6ed222"
     },
     "Web/.npmrc": {
       "bytes": 131,
@@ -131,5 +131,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "40898915927fcc57eb9330a35d01f1a903150d5861315526d622250a9e61d75d"
+  "contract_sha256": "ebe3703d0832939609682f1544fdd43864d0eae96f7e41242039ebe2db6f061e"
 }

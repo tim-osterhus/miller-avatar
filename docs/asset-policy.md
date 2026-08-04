@@ -1,5 +1,12 @@
 # Asset admission policy
 
+No avatar or private fixture is a repository resource. The public tree rejects
+`.vrm`, `.glb`, `.vrma`, `.png`, `.jpeg`, `.jpg`, `.heic`, and `.webp` files;
+the generated tree is scanned separately with the same extension policy.
+Private fixture roots or hashes are also rejected. Tests use synthetic JSON and
+programmatically constructed GLB bytes only. Private visual qualification is a
+separate manual activity and is not claimed by the public CI gate.
+
 Miller Avatar admits immutable in-memory bytes. The admission API does not
 accept or return a filesystem path. File selection and security-scoped access
 belong to the native host.

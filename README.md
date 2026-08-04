@@ -23,14 +23,20 @@ client entitlement required for WebKit child processes. `scripts/test-signed-bou
 verifies that freshly signed bundles reach wrapper and renderer readiness without
 shipping fault hooks or private model fixtures.
 
+The public automated gate verifies the complete npm lock graph and legal
+ledger, regenerates deterministic web resources, compares two independent
+native builds, checks pre-sign and post-sign hash boundaries, exercises failed
+publication rollback, proves cleanup stays within declared roots, and confirms
+the shared Clang module cache is unchanged. CI runs this gate but does not
+publish, notarize, or claim private-fixture visual qualification.
+
 Clean Swift tests and app builds use repository resources as committed. They
 do not run npm or regenerate `Resources/Web/`. Maintainer-only bundle
 regeneration requires the pinned Node/npm toolchain and an audited
 pre-populated offline cache; a clean checkout alone is insufficient.
 
-The first planned live compatibility target is VRM 1.0 with user-supplied
-models and animations. Legacy VRM 0.x compatibility is deferred until that
-path is proven.
+The live compatibility target is VRM 1.0 with user-supplied models. External
+animations and legacy VRM 0.x compatibility are deferred.
 
 See `docs/architecture.md` and `docs/development.md` for the implemented
 foundation.

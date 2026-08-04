@@ -44,8 +44,11 @@ declare module "three" {
     visible: boolean;
     dispose(): void;
   }
+  export class Source {
+    readonly data: unknown;
+  }
   export class Texture {
-    readonly source: { data: unknown };
+    readonly source: Source;
     dispose(): void;
   }
   export class BufferGeometry { dispose(): void; }

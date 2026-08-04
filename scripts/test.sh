@@ -35,6 +35,19 @@ if [[ ${1:-all} == contracts ]]; then
 fi
 
 PATH="$PATH:/usr/sbin" "$repo_root/scripts/verify-toolchain.sh"
+"$repo_root/scripts/verify-dependencies.sh"
+
+node_bin=/opt/homebrew/Cellar/node@22/22.22.0/bin
+if [[ ! -x "$node_bin/node" ]]; then
+    node_bin=$(dirname -- "$(command -v node)")
+fi
+PATH="$node_bin:$PATH"
+export PATH
+(
+    cd "$repo_root/Web"
+    npm test
+    npm run typecheck
+)
 
 CLANG_MODULE_CACHE_PATH="$clang_cache" \
 SWIFT_MODULECACHE_PATH="$swift_cache" \
@@ -45,5 +58,7 @@ SWIFT_MODULECACHE_PATH="$swift_cache" \
     -Xswiftc -module-cache-path \
     -Xswiftc "$swift_cache"
 
-"$repo_root/scripts/test-publication-rollback.sh"
-"$repo_root/Tests/ShellContracts/run-alpha-contract.sh"
+for contract in "$repo_root"/Tests/ShellContracts/*.sh; do
+    "$contract"
+done
+"$repo_root/scripts/test-release-discipline.sh"

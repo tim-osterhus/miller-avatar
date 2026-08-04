@@ -7,6 +7,23 @@ web_root="$repo_root/Web"
 generated_root="$repo_root/.generated"
 web_npm_cache="$generated_root/web-npm-cache"
 output="$repo_root/Resources/Web"
+expected_node_version="v22.22.0"
+expected_npm_version="10.9.4"
+pinned_node_bin="/opt/homebrew/Cellar/node@22/22.22.0/bin"
+
+if [[ -x "$pinned_node_bin/node" ]]; then
+    PATH="$pinned_node_bin:$PATH"
+    export PATH
+fi
+
+node_version=$(node --version 2>/dev/null || true)
+npm_version=$(npm --version 2>/dev/null || true)
+if [[ "$node_version" != "$expected_node_version" || "$npm_version" != "$expected_npm_version" ]]; then
+    printf 'Miller Avatar bundle toolchain mismatch: expected Node %s and npm %s; observed Node %s and npm %s\n' \
+        "$expected_node_version" "$expected_npm_version" "${node_version:-<unavailable>}" "${npm_version:-<unavailable>}" >&2
+    exit 1
+fi
+
 mkdir -p "$generated_root"
 stage=$(mktemp -d "$generated_root/web-stage.XXXXXX")
 backup=""
@@ -24,6 +41,9 @@ cleanup() {
     if [[ "$published" == "1" && -n "$backup" && -e "$backup" ]]; then
         rm -rf -- "$backup"
     fi
+    if [[ -d "$web_npm_cache/_logs" ]]; then
+        rm -rf -- "$web_npm_cache/_logs"
+    fi
     exit "$status"
 }
 trap cleanup EXIT
@@ -39,12 +59,17 @@ export NPM_CONFIG_OFFLINE=true
 export NPM_CONFIG_AUDIT=false
 export NPM_CONFIG_FUND=false
 export NPM_CONFIG_UPDATE_NOTIFIER=false
-npm_version=$(npm --version)
 
 (
     cd "$web_root"
     npm run toolchain:check
-    case "${MILLER_AVATAR_WEB_SKIP_INSTALL:-0}" in
+    install_mode=${MILLER_AVATAR_WEB_SKIP_INSTALL:-auto}
+    if [[ "$install_mode" == auto && -x "$web_root/node_modules/@esbuild/darwin-arm64/bin/esbuild" ]]; then
+        install_mode=1
+    elif [[ "$install_mode" == auto ]]; then
+        install_mode=0
+    fi
+    case "$install_mode" in
         0)
             npm ci --offline --ignore-scripts --no-audit --no-fund
             ;;
@@ -52,11 +77,12 @@ npm_version=$(npm --version)
             printf 'using existing Web/node_modules (offline skip-install mode)\n'
             ;;
         *)
-            printf 'MILLER_AVATAR_WEB_SKIP_INSTALL must be 0 or 1\n' >&2
+            printf 'MILLER_AVATAR_WEB_SKIP_INSTALL must be auto, 0, or 1\n' >&2
             exit 1
             ;;
     esac
-    node scripts/verify-dependencies.mjs
+    rm -rf -- "$web_npm_cache/_logs"
+    node scripts/verify-dependencies.mjs --skip-bundle
     "$web_root/node_modules/@esbuild/darwin-arm64/bin/esbuild" src/index.ts \
         --bundle \
         --format=esm \
@@ -154,6 +180,15 @@ const files = sortedRecord(Object.entries(payloadMimes).map(([name, mime]) => [n
   mime,
 }]));
 const binary = resolve(web, "node_modules/@esbuild/darwin-arm64/bin/esbuild");
+const reviewedBundleManifest = JSON.parse(readFileSync(resolve(repo, "Resources/Web/bundle-manifest.json"), "utf8"));
+const reviewedBinaryHash = reviewedBundleManifest.toolchain?.esbuild_binary_sha256;
+if (typeof reviewedBinaryHash !== "string" || !/^[0-9a-f]{64}$/u.test(reviewedBinaryHash)) {
+  throw new Error("reviewed bundle manifest has an invalid esbuild binary hash");
+}
+const installedBinaryHash = sha256(readFileSync(binary));
+if (installedBinaryHash !== reviewedBinaryHash) {
+  throw new Error("installed esbuild binary differs from the reviewed bundle hash");
+}
 const contract = {
   schema: "miller-avatar.web-bundle/v2",
   outputs: ["app.js", "bundle-manifest.json", "bundle-metafile.json", "index.html", "styles.css"],
@@ -166,7 +201,7 @@ const contract = {
     npm: npmVersion,
     esbuild: "0.28.1",
     esbuild_binary: "@esbuild/darwin-arm64@0.28.1",
-    esbuild_binary_sha256: sha256(readFileSync(binary)),
+    esbuild_binary_sha256: reviewedBinaryHash,
     package_lock_sha256: sha256(readFileSync(resolve(web, "package-lock.json"))),
   },
   inputs: inputRecords,
@@ -188,7 +223,7 @@ if [[ "$actual" != "$expected" ]]; then
     exit 1
 fi
 
-if find "$stage" -type f \( -name '*.map' -o -name '*.vrm' -o -name '*.glb' -o -name '*.vrma' -o -name '*.wasm' \) -print -quit | grep -q .; then
+if find "$stage" -type f \( -name '*.map' -o -name '*.vrm' -o -name '*.glb' -o -name '*.vrma' -o -name '*.wasm' -o -name '*.png' -o -name '*.jpeg' -o -name '*.jpg' -o -name '*.heic' -o -name '*.webp' \) -print -quit | grep -q .; then
     printf 'web bundle contains a forbidden asset\n' >&2
     exit 1
 fi
@@ -210,6 +245,11 @@ if [[ -n "$unexpected_urls" ]]; then
 fi
 if rg -n -F "$repo_root" "$stage"; then
     printf 'web bundle metadata contains an absolute repository path\n' >&2
+    exit 1
+fi
+
+if [[ "${MILLER_AVATAR_SIMULATE_BUNDLE_FAILURE:-}" == "1" ]]; then
+    printf 'simulated web bundle failure\n' >&2
     exit 1
 fi
 

@@ -3,9 +3,11 @@ Copyright 2026 Tim Osterhus
 
 This product is licensed under the Apache License, Version 2.0.
 
-Third-party attribution notices, when applicable, are recorded in
-THIRD_PARTY_NOTICES.md.
+The distributed web renderer contains Three.js, pixiv three-vrm, and Mapbox
+Earcut code. Required copyright, MIT, and ISC notices are retained in
+THIRD_PARTY_NOTICES.md and embedded unchanged at
+Contents/Resources/Legal/THIRD_PARTY_NOTICES.md. Build-only Apache License 2.0
+and MIT dependencies are also identified there.
 
-The current `Resources/Web/` bundle contains no third-party runtime code or
-avatar asset. Its direct dependency attribution ledger is a checkpoint record,
-not a full transitive SBOM closure.
+No avatar, animation, texture, font, sound, decoder binary, WebAssembly module,
+sample asset, or private fixture is distributed.

@@ -71,6 +71,7 @@ remove_declared_root() {
 
 remove_declared_root "$generated_root"
 remove_declared_root "$repo_root/.build"
+remove_declared_root "$repo_root/Web/.build"
 remove_declared_root "$repo_root/Web/node_modules"
 if [[ -n "$private_root" && "$private_root" != "$default_private_root" ]]; then
     remove_declared_root "$private_root"
