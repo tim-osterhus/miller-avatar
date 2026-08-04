@@ -28,6 +28,13 @@ done
 test -x "$repository_root/scripts/verify-dependencies.sh"
 test -x "$repository_root/scripts/test-release-discipline.sh"
 
+if grep -R -n -E '(^|[;&|[:space:]])rg([[:space:]]|$)' \
+    "$repository_root/.github" "$repository_root/scripts"
+then
+    printf 'public release paths depend on undeclared ripgrep tooling\n' >&2
+    exit 1
+fi
+
 "$node_command" --input-type=module - "$repository_root/Resources/build-manifest.json" <<'NODE'
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -45,7 +52,7 @@ assert.match(manifest.executable_input_sha256, /^[0-9a-f]{64}$/u);
 assert.match(manifest.web_bundle_manifest_sha256, /^[0-9a-f]{64}$/u);
 NODE
 
-if ! rg -q 'DARWIN_USER_CACHE_DIR' "$repository_root/scripts/test-release-discipline.sh"; then
+if ! grep -q 'DARWIN_USER_CACHE_DIR' "$repository_root/scripts/test-release-discipline.sh"; then
     printf 'release discipline does not monitor the Darwin shared Clang cache\n' >&2
     exit 1
 fi
@@ -56,7 +63,7 @@ for provenance_entry in \
     'lab/assist/research/spikes/avatar-contract-oracle/' \
     'Rewritten; no research-spike source file was copied into the public repository.'
 do
-    if ! rg -Fq "$provenance_entry" "$repository_root/PROVENANCE.md"; then
+    if ! grep -Fq "$provenance_entry" "$repository_root/PROVENANCE.md"; then
         printf 'PROVENANCE.md lacks first-party adaptation record: %s\n' "$provenance_entry" >&2
         exit 1
     fi
@@ -80,7 +87,7 @@ if find "$repository_root/.generated" -maxdepth 1 -type d -name 'web-stage.*' -p
     printf 'failed web bundle left a stage directory behind\n' >&2
     exit 1
 fi
-if rg -n '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' "$repository_root/.generated"; then
+if grep -R -n -E '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' "$repository_root/.generated"; then
     printf 'bundle-web retained a private path in generated output\n' >&2
     exit 1
 fi

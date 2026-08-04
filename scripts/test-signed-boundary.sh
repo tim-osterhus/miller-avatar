@@ -54,7 +54,7 @@ while IFS= read -r key; do
     fi
 done <<< "$expected_keys"
 
-if rg -n 'stall wrapper|stall scheme|context loss|fake web process|invalid observation' "$app_bundle"; then
+if grep -R -n -E 'stall wrapper|stall scheme|context loss|fake web process|invalid observation' "$app_bundle"; then
     printf 'forbidden fault-hook vocabulary found in signed app\n' >&2
     exit 1
 fi
@@ -69,16 +69,16 @@ probe_pid=$!
 
 deadline=$((SECONDS + 12))
 while kill -0 "$probe_pid" 2>/dev/null && (( SECONDS < deadline )); do
-    if rg -q '^MILLER_AVATAR_SIGNED_BOUNDARY wrapper_ready$' "$probe_log" &&
-        rg -q '^MILLER_AVATAR_SIGNED_BOUNDARY renderer_ready$' "$probe_log"; then
+    if grep -q '^MILLER_AVATAR_SIGNED_BOUNDARY wrapper_ready$' "$probe_log" &&
+        grep -q '^MILLER_AVATAR_SIGNED_BOUNDARY renderer_ready$' "$probe_log"; then
         break
     fi
     sleep 0.1
 done
 
-if ! rg -q '^MILLER_AVATAR_SIGNED_BOUNDARY wrapper_ready$' "$probe_log" ||
-    ! rg -q '^MILLER_AVATAR_SIGNED_BOUNDARY renderer_ready$' "$probe_log" ||
-    rg -q '^MILLER_AVATAR_SIGNED_BOUNDARY failed ' "$probe_log"; then
+if ! grep -q '^MILLER_AVATAR_SIGNED_BOUNDARY wrapper_ready$' "$probe_log" ||
+    ! grep -q '^MILLER_AVATAR_SIGNED_BOUNDARY renderer_ready$' "$probe_log" ||
+    grep -q '^MILLER_AVATAR_SIGNED_BOUNDARY failed ' "$probe_log"; then
     printf 'signed production boundary did not reach renderer readiness:\n' >&2
     cat "$probe_log" >&2
     exit 1

@@ -227,11 +227,11 @@ if find "$stage" -type f \( -name '*.map' -o -name '*.vrm' -o -name '*.glb' -o -
     printf 'web bundle contains a forbidden asset\n' >&2
     exit 1
 fi
-if rg -n 'WebSocket|EventSource|new Worker|serviceWorker' "$stage"; then
+if grep -R -n -E 'WebSocket|EventSource|new Worker|serviceWorker' "$stage"; then
     printf 'web bundle contains a forbidden capability\n' >&2
     exit 1
 fi
-observed_urls=$(rg --no-filename -o 'https?://[^"[:space:]\\]+' "$stage" || true)
+observed_urls=$(grep -R -h -o -E 'https?://[^"[:space:]\\]+' "$stage" || true)
 unexpected_urls=""
 while IFS= read -r url; do
     case "$url" in
@@ -243,7 +243,7 @@ if [[ -n "$unexpected_urls" ]]; then
     printf 'web bundle contains an unexpected external URL\n%s\n' "$unexpected_urls" >&2
     exit 1
 fi
-if rg -n -F "$repo_root" "$stage"; then
+if grep -R -n -F "$repo_root" "$stage"; then
     printf 'web bundle metadata contains an absolute repository path\n' >&2
     exit 1
 fi
