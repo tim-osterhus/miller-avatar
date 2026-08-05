@@ -35,8 +35,14 @@ do not run npm or regenerate `Resources/Web/`. Maintainer-only bundle
 regeneration requires the pinned Node/npm toolchain and an audited
 pre-populated offline cache; a clean checkout alone is insufficient.
 
-The live compatibility target is VRM 1.0 with user-supplied models. External
-animations and legacy VRM 0.x compatibility are deferred.
+The live compatibility target is VRM 1.0 with user-supplied models. The narrow
+v0.1 scope for admitted user-supplied VRMA remains to be closed; legacy VRM 0.x
+compatibility is deferred.
+
+The v0.1 product does not bundle a default character model or default animation
+pack. It launches into its native static/no-avatar presentation until the user
+selects an admitted local asset. Internal fixtures and asset-authoring studies
+are qualification evidence only and are not release content.
 
 See `docs/architecture.md` and `docs/development.md` for the implemented
 foundation.
@@ -44,9 +50,8 @@ foundation.
 ## Asset posture
 
 Miller Avatar will not assume that a permissive renderer license clears
-models, textures, animations, fonts, sounds, or other distributed assets.
-Every bundled example asset must have independently verified commercial-use
-and redistribution rights, provenance, attribution requirements, and hashes.
+models, textures, animations, fonts, sounds, or other assets. The v0.1 release
+distributes no character model or motion asset.
 
 User-supplied assets remain separate from Miller Avatar's own license.
 
