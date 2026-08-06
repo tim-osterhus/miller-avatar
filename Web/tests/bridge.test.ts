@@ -148,6 +148,44 @@ test("timed out loads abort, dispose the backend, and retain command correlation
   assertFailureDisposal(messages.slice(terminalStart), "asset_load_timeout", 2);
 });
 
+test("resume-only reconciliation restores the native snapshot after Web suspension", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  const generation = "33333333-3333-4333-8333-333333333333";
+  const playback = "44444444-4444-4444-8444-444444444444";
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(2, "load_asset", { asset_token: asset }));
+  await core.accept(command(3, "project_phase", {
+    projection_sequence: 1,
+    generation_id: generation,
+    phase: "speaking",
+    playback_id: playback,
+  }));
+  await core.accept(command(4, "set_visibility", { visibility: "occluded" }));
+  await core.accept(command(5, "set_visibility", { visibility: "visible" }));
+  await core.accept(command(6, "reconcile_presentation", {
+    last_projection_sequence: 1,
+    generation_id: generation,
+    phase: "speaking",
+    playback_id: playback,
+    reduced_motion: true,
+  }));
+
+  assert.deepEqual(core.snapshot().presentation, {
+    lastProjectionSequence: 1,
+    generationID: generation,
+    phase: "speaking",
+    playbackID: playback,
+    mouthScalar: 0,
+    reducedMotion: true,
+    suspended: false,
+    terminated: false,
+  });
+});
+
 class FakeScheduler implements FrameScheduler {
   private next = 1;
   private callbacks = new Map<number, (timestamp: number) => void>();

@@ -183,6 +183,38 @@ import Testing
         #expect(reduce(ProjectionState(), .project(invalidListening)).state == ProjectionState())
     }
 
+    @Test func typedPayloadsRejectUnsafeProjectionAndCueIntegers() {
+        let unsafeProjection = ProjectPhasePayload(
+            projectionSequence: BridgeContract.maximumSafeInteger + 1,
+            generationID: nil,
+            phase: .idle,
+            playbackID: nil
+        )
+        #expect(reduce(ProjectionState(), .project(unsafeProjection)).state == ProjectionState())
+
+        let speakingState = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        let unsafeCueIndex = SetMouthPayload(
+            generationID: generationA,
+            playbackID: playbackP,
+            cueIndex: BridgeContract.maximumSafeInteger + 1,
+            playbackOffsetMilliseconds: 100,
+            scalar: 0.5
+        )
+        let unsafeOffset = SetMouthPayload(
+            generationID: generationA,
+            playbackID: playbackP,
+            cueIndex: 1,
+            playbackOffsetMilliseconds: BridgeContract.maximumSafeInteger + 1,
+            scalar: 0.5
+        )
+
+        #expect(reduce(speakingState, .mouth(unsafeCueIndex)).state == speakingState)
+        #expect(reduce(speakingState, .mouth(unsafeOffset)).state == speakingState)
+    }
+
     @Test func everyRevocationPathClearsMouthOutput() {
         let revocations: [ProjectionInput] = [
             .project(speaking(
@@ -216,6 +248,63 @@ import Testing
         }
     }
 
+    @Test func validNeutralFixtureFeedsEveryOperationThroughTheReducer() throws {
+        let raw = try fixtureRaw(
+            at: "Tests/IntegrationFixtures/valid/miller-owned-presentation.json"
+        )
+        #expect(!raw.contains("MillerAvatar"))
+        #expect(!raw.contains("Sources/"))
+        #expect(!raw.contains("/Users/"))
+        let root = try fixtureObject(
+            at: "Tests/IntegrationFixtures/valid/miller-owned-presentation.json"
+        )
+        #expect(root["schema"] as? String == "miller-avatar.integration-fixture/v1")
+        let operations = try arrayOfObjects(root["operations"])
+        #expect(operations.count == 17)
+
+        var state = ProjectionState()
+        for operation in operations {
+            let input = try fixtureInput(operation["input"])
+            let result = reduce(state, input)
+            try expectFixtureState(result.state, effects: result.effects, from: operation["expected"])
+            state = result.state
+        }
+    }
+
+    @Test func invalidNeutralFixtureCasesAreIndependentAndLeaveStateUntouched() throws {
+        let raw = try fixtureRaw(
+            at: "Tests/IntegrationFixtures/invalid/stale-miller-owned-presentation.json"
+        )
+        #expect(!raw.contains("MillerAvatar"))
+        #expect(!raw.contains("Sources/"))
+        #expect(!raw.contains("/Users/"))
+        let root = try fixtureObject(
+            at: "Tests/IntegrationFixtures/invalid/stale-miller-owned-presentation.json"
+        )
+        #expect(root["schema"] as? String == "miller-avatar.integration-fixture/v1")
+        let cases = try arrayOfObjects(root["cases"])
+        #expect(cases.count == 8)
+
+        for testCase in cases {
+            var state = ProjectionState()
+            for prelude in try arrayOfObjects(testCase["prelude"]) {
+                state = reduce(state, try fixtureInput(prelude)).state
+            }
+            let before = state
+            let result: ReducerResult<ProjectionState, ProjectionEffect>
+            do {
+                result = reduce(state, try fixtureInput(testCase["input"]))
+            } catch {
+                #expect(testCase["name"] as? String == "nonfinite-equivalent-scalar-type")
+                try expectFixtureState(before, effects: [], from: testCase["expected"])
+                continue
+            }
+            #expect(result.state == before)
+            #expect(result.effects.isEmpty)
+            try expectFixtureState(result.state, effects: result.effects, from: testCase["expected"])
+        }
+    }
+
     private func reduce(
         _ state: ProjectionState,
         _ input: ProjectionInput
@@ -245,4 +334,144 @@ import Testing
             scalar: 0.5
         )
     }
+
+    private func fixtureObject(at path: String) throws -> [String: Any] {
+        let data = try fixtureRaw(at: path).data(using: .utf8)!
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw FixtureError.invalid
+        }
+        return object
+    }
+
+    private func fixtureRaw(at path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent(path))
+        guard let raw = String(data: data, encoding: .utf8) else { throw FixtureError.invalid }
+        return raw
+    }
+
+    private func arrayOfObjects(_ value: Any?) throws -> [[String: Any]] {
+        guard let values = value as? [Any] else { throw FixtureError.invalid }
+        return try values.map {
+            guard let object = $0 as? [String: Any] else { throw FixtureError.invalid }
+            return object
+        }
+    }
+
+    private func fixtureInput(_ value: Any?) throws -> ProjectionInput {
+        guard let input = value as? [String: Any],
+              let type = input["type"] as? String
+        else { throw FixtureError.invalid }
+
+        switch type {
+        case "project":
+            guard let sequence = safeUInt(input["projection_sequence"]),
+                  let phaseString = input["phase"] as? String,
+                  let phase = PresentationPhase(rawValue: phaseString)
+            else { throw FixtureError.invalid }
+            return .project(ProjectPhasePayload(
+                projectionSequence: sequence,
+                generationID: try optionalUUID(input["generation_id"]),
+                phase: phase,
+                playbackID: try optionalUUID(input["playback_id"])
+            ))
+        case "mouth":
+            guard let cueIndex = safeUInt(input["cue_index"]),
+                  let offset = safeUInt(input["playback_offset_ms"]),
+                  let scalar = input["scalar"] as? NSNumber,
+                  let generationID = try optionalUUID(input["generation_id"]),
+                  let playbackID = try optionalUUID(input["playback_id"])
+            else { throw FixtureError.invalid }
+            return .mouth(SetMouthPayload(
+                generationID: generationID,
+                playbackID: playbackID,
+                cueIndex: cueIndex,
+                playbackOffsetMilliseconds: offset,
+                scalar: scalar.doubleValue
+            ))
+        case "set_reduced_motion":
+            guard let enabled = input["enabled"] as? Bool else { throw FixtureError.invalid }
+            return .setReducedMotion(enabled)
+        case "suspend":
+            guard let visibility = input["visibility"] as? String,
+                  visibility == "occluded" || visibility == "hidden"
+            else { throw FixtureError.invalid }
+            return .suspend
+        case "resume":
+            guard input["visibility"] as? String == "visible" else { throw FixtureError.invalid }
+            return .resume
+        case "reset":
+            guard let reasonString = input["reason"] as? String,
+                  let reason = ResetReason(rawValue: reasonString)
+            else { throw FixtureError.invalid }
+            return .reset(
+                generationID: try optionalUUID(input["generation_id"]),
+                reason: reason
+            )
+        default:
+            throw FixtureError.invalid
+        }
+    }
+
+    private func optionalUUID(_ value: Any?) throws -> UUID? {
+        if value is NSNull { return nil }
+        guard let string = value as? String, let uuid = UUID(uuidString: string) else {
+            throw FixtureError.invalid
+        }
+        return uuid
+    }
+
+    private func safeUInt(_ value: Any?) -> UInt64? {
+        guard let number = value as? NSNumber,
+              number.doubleValue.isFinite,
+              number.doubleValue.rounded(.towardZero) == number.doubleValue,
+              number.doubleValue >= 0,
+              number.doubleValue <= Double(UInt64.max)
+        else { return nil }
+        return number.uint64Value
+    }
+
+    private func expectFixtureState(
+        _ state: ProjectionState,
+        effects: [ProjectionEffect],
+        from value: Any?
+    ) throws {
+        guard let expected = value as? [String: Any] else { throw FixtureError.invalid }
+        #expect(state.lastProjectionSequence == optionalUInt(expected["last_projection_sequence"]))
+        #expect(state.generationID == (try optionalUUID(expected["generation_id"])))
+        #expect(state.phase.rawValue == expected["phase"] as? String)
+        #expect(state.playbackID == (try optionalUUID(expected["playback_id"])))
+        #expect(state.lastCueIndex == optionalUInt(expected["last_cue_index"]))
+        #expect(state.lastPlaybackOffsetMilliseconds == optionalUInt(expected["last_playback_offset_ms"]))
+        #expect(state.mouthScalar == (expected["mouth_scalar"] as? NSNumber)?.doubleValue)
+        #expect(state.reducedMotion == (expected["reduced_motion"] as? Bool))
+        #expect(state.isSuspended == (expected["is_suspended"] as? Bool))
+        #expect(state.isTerminated == (expected["is_terminated"] as? Bool))
+        guard let names = expected["effects"] as? [String] else { throw FixtureError.invalid }
+        #expect(names == effects.map(effectName))
+    }
+
+    private func optionalUInt(_ value: Any?) -> UInt64? {
+        if value is NSNull || value == nil { return nil }
+        return safeUInt(value)
+    }
+
+    private func effectName(_ effect: ProjectionEffect) -> String {
+        switch effect {
+        case .applyProjection: "apply_projection"
+        case .applyMouth: "apply_mouth"
+        case .setReducedMotion: "set_reduced_motion"
+        case .stopContinuousMotion: "stop_continuous_motion"
+        case .reset: "reset"
+        case .clearMouth: "clear_mouth"
+        case .reconcile: "reconcile"
+        }
+    }
+}
+
+private enum FixtureError: Error {
+    case invalid
 }

@@ -16,7 +16,8 @@ let package = Package(
         .target(name: "MillerAvatarCore"),
         .target(
             name: "MillerAvatarHost",
-            dependencies: ["MillerAvatarCore"]
+            dependencies: ["MillerAvatarCore"],
+            resources: [.copy("Resources/Web")]
         ),
         .executableTarget(
             name: "MillerAvatarApp",

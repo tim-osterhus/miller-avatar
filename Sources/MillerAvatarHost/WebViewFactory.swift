@@ -1,5 +1,21 @@
+import AppKit
 import Foundation
 @preconcurrency import WebKit
+
+@MainActor
+internal final class NoninteractiveAvatarWebView: WKWebView {
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func accessibilityIsIgnored() -> Bool { true }
+
+    override func accessibilityChildren() -> [Any]? { [] }
+
+    override var registeredDraggedTypes: [NSPasteboard.PasteboardType] { [] }
+
+    override func registerForDraggedTypes(_ types: [NSPasteboard.PasteboardType]) {}
+}
 
 @MainActor
 public struct RendererWebViewAssembly {
@@ -42,7 +58,7 @@ public enum WebViewFactory {
         navigationPolicy: NavigationPolicy,
         observationHandler: RendererObservationHandler
     ) -> RendererWebViewAssembly {
-        let webView = WKWebView(
+        let webView = NoninteractiveAvatarWebView(
             frame: .zero,
             configuration: makeConfiguration(
                 schemeHandler: schemeHandler,

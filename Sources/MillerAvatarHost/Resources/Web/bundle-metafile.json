@@ -295,7 +295,7 @@
       "format": "esm"
     },
     "src/bridge.ts": {
-      "bytes": 14531,
+      "bytes": 15255,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -326,7 +326,7 @@
       "format": "esm"
     },
     "src/contract.ts": {
-      "bytes": 3956,
+      "bytes": 4222,
       "imports": [],
       "format": "esm"
     },
@@ -418,7 +418,7 @@
       "format": "esm"
     },
     "src/presentation.ts": {
-      "bytes": 6719,
+      "bytes": 8664,
       "imports": [],
       "format": "esm"
     },
@@ -460,7 +460,7 @@
       "format": "esm"
     },
     "src/validation.ts": {
-      "bytes": 19373,
+      "bytes": 21051,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -473,7 +473,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 743330,
+      "bytes": 745837,
       "inputs": {
         "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
           "bytesInOutput": 144009
@@ -491,7 +491,7 @@
           "bytesInOutput": 991
         },
         "src/bridge.ts": {
-          "bytesInOutput": 7012
+          "bytesInOutput": 7495
         },
         "src/camera.ts": {
           "bytesInOutput": 977
@@ -512,7 +512,7 @@
           "bytesInOutput": 755
         },
         "src/presentation.ts": {
-          "bytesInOutput": 2924
+          "bytesInOutput": 4114
         },
         "src/renderer.ts": {
           "bytesInOutput": 6693
@@ -521,7 +521,7 @@
           "bytesInOutput": 545
         },
         "src/validation.ts": {
-          "bytesInOutput": 9232
+          "bytesInOutput": 10066
         }
       }
     }

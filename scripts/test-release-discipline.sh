@@ -27,6 +27,8 @@ if [[ -z "$node_command" ]] || [[ $("$node_command" --version) != "v22.22.0" ]];
     printf 'Node 22.22.0 is required for release-discipline verification\n' >&2
     exit 1
 fi
+test -d "$repo_root/Sources/MillerAvatarHost/Resources/Web"
+test ! -e "$repo_root/Resources/Web"
 
 remove_test_root() {
     local target=$1
@@ -78,6 +80,8 @@ snapshot_cache() {
 
 snapshot_cache "$cache_before"
 "$repo_root/scripts/build.sh" "$build_a"
+test ! -e "$output_app/Contents/Resources/Web"
+test -d "$output_app/Contents/Resources/MillerAvatar_MillerAvatarHost.bundle/Web"
 cp "$repo_root/Resources/build-manifest.json" "$temporary_root/build-manifest-a.json"
 cp "$receipt" "$temporary_root/post-sign-a.json"
 

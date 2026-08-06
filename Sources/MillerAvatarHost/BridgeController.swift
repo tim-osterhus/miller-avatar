@@ -16,6 +16,7 @@ public enum BridgeCommand: Equatable, Sendable {
         phase: PresentationPhase,
         playbackID: UUID?
     )
+    case reconcilePresentation(ReconcilePresentationPayload)
     case setVisibility(PresentationVisibility)
     case setPolicy(reducedMotion: Bool)
     case setMouth(
@@ -131,6 +132,14 @@ public final class BridgeController {
         case .loadAsset(let token):
             return ("load_asset", ["asset_token": token.uuidString.lowercased()])
         case .projectPhase(let sequence, let generationID, let phase, let playbackID):
+            guard sequence > 0,
+                  sequence <= BridgeContract.maximumSafeInteger,
+                  validPhaseIdentities(
+                      phase: phase,
+                      generationID: generationID,
+                      playbackID: playbackID
+                  )
+            else { throw BridgeControllerError.invalidCommand }
             return ("project_phase", [
                 "projection_sequence": sequence,
                 "generation_id": generationID.map {
@@ -140,6 +149,29 @@ public final class BridgeController {
                 "playback_id": playbackID.map {
                     $0.uuidString.lowercased()
                 } ?? NSNull(),
+            ])
+        case .reconcilePresentation(let payload):
+            guard payload.lastProjectionSequence == nil
+                    || (payload.lastProjectionSequence! > 0
+                        && payload.lastProjectionSequence! <= BridgeContract.maximumSafeInteger),
+                  validPhaseIdentities(
+                      phase: payload.phase,
+                      generationID: payload.generationID,
+                      playbackID: payload.playbackID
+                  )
+            else { throw BridgeControllerError.invalidCommand }
+            return ("reconcile_presentation", [
+                "last_projection_sequence": payload.lastProjectionSequence.map {
+                    $0
+                } ?? NSNull(),
+                "generation_id": payload.generationID.map {
+                    $0.uuidString.lowercased()
+                } ?? NSNull(),
+                "phase": payload.phase.rawValue,
+                "playback_id": payload.playbackID.map {
+                    $0.uuidString.lowercased()
+                } ?? NSNull(),
+                "reduced_motion": payload.reducedMotion,
             ])
         case .setVisibility(let visibility):
             return ("set_visibility", ["visibility": visibility.rawValue])
@@ -152,7 +184,13 @@ public final class BridgeController {
             let playbackOffsetMilliseconds,
             let scalar
         ):
-            guard scalar.isFinite else { throw BridgeControllerError.invalidCommand }
+            guard cueIndex > 0,
+                  cueIndex <= BridgeContract.maximumSafeInteger,
+                  playbackOffsetMilliseconds <= BridgeContract.maximumSafeInteger,
+                  playbackOffsetMilliseconds <= 86_400_000,
+                  scalar.isFinite,
+                  (0...1).contains(scalar)
+            else { throw BridgeControllerError.invalidCommand }
             return ("set_mouth", [
                 "generation_id": generationID.uuidString.lowercased(),
                 "playback_id": playbackID.uuidString.lowercased(),
@@ -161,6 +199,9 @@ public final class BridgeController {
                 "scalar": scalar,
             ])
         case .reset(let generationID, let reason):
+            guard generationID != nil || reason == .operator else {
+                throw BridgeControllerError.invalidCommand
+            }
             return ("reset", [
                 "generation_id": generationID.map {
                     $0.uuidString.lowercased()
@@ -169,6 +210,21 @@ public final class BridgeController {
             ])
         case .dispose(let reason):
             return ("dispose", ["reason": reason.rawValue])
+        }
+    }
+
+    private static func validPhaseIdentities(
+        phase: PresentationPhase,
+        generationID: UUID?,
+        playbackID: UUID?
+    ) -> Bool {
+        switch phase {
+        case .speaking:
+            generationID != nil && playbackID != nil
+        case .thinking, .responding, .stopped, .failed:
+            generationID != nil && playbackID == nil
+        case .idle, .listening, .transcribing:
+            generationID == nil && playbackID == nil
         }
     }
 

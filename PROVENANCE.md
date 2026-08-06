@@ -48,7 +48,7 @@ source. Rewritten; no research-spike source file was copied into the public repo
   system-cache cleanup. Build-root, clean-root, rollback, interruption, and
   shared-cache comparisons protect that boundary.
 
-Generated `Resources/Web/` files come only from `scripts/bundle-web.sh` and the
+Generated `Sources/MillerAvatarHost/Resources/Web/` files come only from `scripts/bundle-web.sh` and the
 exact locked npm graph. `Resources/build-manifest.json` comes only from
 `scripts/build.sh`. Their normalized manifests identify and hash the source
 inputs; neither generated tree contains research assets or private fixtures.
@@ -63,8 +63,8 @@ artifact URL, SHA-512 integrity, and SPDX license. Its SHA-256 is
 ranges, changed integrity or license data, unapproved lifecycle scripts, and
 installed-tree drift.
 
-`Resources/Web/bundle-metafile.json` names every source that contributes bytes
-to `app.js`. `Resources/Web/bundle-manifest.json` hashes those inputs and every
+`Sources/MillerAvatarHost/Resources/Web/bundle-metafile.json` names every source that contributes bytes
+to `app.js`. `Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json` hashes those inputs and every
 emitted payload. The manifest uses a canonical contract hash and excludes its
 own bytes. `Resources/build-manifest.json` records the native toolchain, product
 identity, pre-sign executable, and resource hashes; it excludes itself and all
@@ -86,7 +86,7 @@ compares the embedded files with the reviewed repository sources.
 - License and copyright: MIT; Copyright © 2010-2025 three.js authors.
 - Inclusion: WebGL scene/runtime code, `GLTFLoader`, and
   `BufferGeometryUtils`. The exact emitted files and byte contributions are in
-  `Resources/Web/bundle-metafile.json`.
+  `Sources/MillerAvatarHost/Resources/Web/bundle-metafile.json`.
 - Embedded code: `three.core.js` contains Mapbox Earcut 3.0.1, Copyright © 2016
   Mapbox, under the ISC License. Its notice is retained in
   `THIRD_PARTY_NOTICES.md`.

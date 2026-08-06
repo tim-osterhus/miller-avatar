@@ -18,7 +18,8 @@ for (let index = 2; index < process.argv.length; index += 1) {
 
 const repositoryRoot = resolve(requestedRoot ?? resolve(import.meta.dirname, "../.."));
 const webRoot = resolve(repositoryRoot, "Web");
-const bundleRoot = resolve(repositoryRoot, "Resources/Web");
+const bundleRoot = resolve(repositoryRoot, "Sources/MillerAvatarHost/Resources/Web");
+const staticRoot = resolve(repositoryRoot, "Resources/Static");
 const installedRoot = resolve(webRoot, "node_modules");
 const installedTreePresent = existsSync(installedRoot);
 const manifest = readJSON(resolve(webRoot, "package.json"));
@@ -36,6 +37,12 @@ const legalFiles = [
   { source: "NOTICE", output: "Contents/Resources/Legal/NOTICE" },
   { source: "THIRD_PARTY_NOTICES.md", output: "Contents/Resources/Legal/THIRD_PARTY_NOTICES.md" },
 ];
+assert.equal(existsSync(resolve(repositoryRoot, "Resources/Web")), false, "loose renderer source tree must not exist");
+assert.deepEqual(
+  walkFiles(bundleRoot).map((path) => relative(bundleRoot, path).split(sep).join("/")).sort(),
+  ["app.js", "bundle-manifest.json", "bundle-metafile.json", "index.html", "styles.css"],
+  "renderer resource bundle must contain exactly the committed five files",
+);
 
 const exactDependencies = {
   dependencies: {
@@ -107,7 +114,7 @@ const generatedCacheRoot = resolve(generatedRoot, "web-npm-cache");
 assertNoForbiddenAssets(walkFiles(repositoryRoot, publicExcludedRoots), "public tree");
 assertNoForbiddenAssets(walkFiles(generatedRoot), "generated tree");
 
-for (const root of [bundleRoot, resolve(repositoryRoot, "Resources/Static"), resolve(repositoryRoot, "Fixtures"), generatedRoot]) {
+for (const root of [bundleRoot, staticRoot, resolve(repositoryRoot, "Fixtures"), generatedRoot]) {
   const excludedRoots = root === generatedRoot ? [generatedCacheRoot] : [];
   for (const path of walkFiles(root, excludedRoots)) {
     const bytes = readFileSync(path);
@@ -119,6 +126,11 @@ for (const root of [bundleRoot, resolve(repositoryRoot, "Resources/Static"), res
 
 const publishedApp = resolve(repositoryRoot, ".generated/Miller Avatar Alpha.app");
 if (existsSync(publishedApp)) {
+  assert.equal(existsSync(resolve(publishedApp, "Contents/Resources/Web")), false, "signed app must not contain a loose Web resource tree");
+  assert.ok(
+    existsSync(resolve(publishedApp, "Contents/Resources/MillerAvatar_MillerAvatarHost.bundle/Web")),
+    "signed app must contain the SwiftPM host resource bundle",
+  );
   const actualLegalFiles = walkFiles(resolve(publishedApp, "Contents/Resources/Legal"))
     .map((path) => relative(publishedApp, path).split(sep).join("/"));
   assert.deepEqual(new Set(actualLegalFiles), new Set(legalFiles.map(({ output }) => output)), "signed app legal files differ from the release contract");
@@ -221,8 +233,8 @@ const expectedNativeInputs = new Set([
   "scripts/build.sh",
   "scripts/verify-toolchain.sh",
   ...walkFiles(resolve(repositoryRoot, "Sources")).filter((path) => path.endsWith(".swift")).map(repositoryPath),
-  ...walkFiles(resolve(repositoryRoot, "Resources/Static")).map(repositoryPath),
-  ...walkFiles(resolve(repositoryRoot, "Resources/Web")).map(repositoryPath),
+  ...walkFiles(staticRoot).map(repositoryPath),
+  ...walkFiles(bundleRoot).map(repositoryPath),
 ]);
 assert.deepEqual(new Set(buildManifest.inputs.map((record) => record.path)), expectedNativeInputs, "native manifest has unknown or missing inputs");
 for (const record of buildManifest.inputs) {
@@ -233,7 +245,7 @@ const executableInputRecords = buildManifest.inputs.filter(({ path }) =>
   path === "Package.swift"
   || path === "scripts/build.sh"
   || path === "scripts/verify-toolchain.sh"
-  || path.startsWith("Sources/"));
+  || (path.startsWith("Sources/") && path.endsWith(".swift")));
 const executableInputBytes = Buffer.from(executableInputRecords
   .map(({ path, byte_count: byteCount, sha256: digest }) => `${path}\t${byteCount}\t${digest}\n`)
   .join(""));
@@ -246,8 +258,10 @@ assert.equal(
 const expectedNativeFiles = new Set([
   "Contents/Info.plist",
   ...legalFiles.map(({ output }) => output),
-  ...[...walkFiles(resolve(repositoryRoot, "Resources/Static")), ...walkFiles(resolve(repositoryRoot, "Resources/Web"))]
-    .map((path) => `Contents/Resources/${relative(resolve(repositoryRoot, "Resources"), path).split(sep).join("/")}`),
+  ...walkFiles(staticRoot)
+    .map((path) => `Contents/Resources/Static/${relative(staticRoot, path).split(sep).join("/")}`),
+  ...walkFiles(bundleRoot)
+    .map((path) => `Contents/Resources/MillerAvatar_MillerAvatarHost.bundle/Web/${relative(bundleRoot, path).split(sep).join("/")}`),
 ]);
 assert.deepEqual(new Set(buildManifest.files.map((record) => record.path)), expectedNativeFiles, "native manifest has unknown or missing outputs");
 for (const record of buildManifest.files) {
@@ -257,7 +271,10 @@ for (const record of buildManifest.files) {
   let sourcePath;
   if (record.path === "Contents/Info.plist") sourcePath = resolve(repositoryRoot, "Config/Info.plist");
   else if (record.path.startsWith("Contents/Resources/Legal/")) sourcePath = resolve(repositoryRoot, record.path.slice("Contents/Resources/Legal/".length));
-  else if (record.path.startsWith("Contents/Resources/")) sourcePath = resolve(repositoryRoot, "Resources", record.path.slice("Contents/Resources/".length));
+  else if (record.path.startsWith("Contents/Resources/Static/")) sourcePath = resolve(staticRoot, record.path.slice("Contents/Resources/Static/".length));
+  else if (record.path.startsWith("Contents/Resources/MillerAvatar_MillerAvatarHost.bundle/Web/")) {
+    sourcePath = resolve(bundleRoot, record.path.slice("Contents/Resources/MillerAvatar_MillerAvatarHost.bundle/Web/".length));
+  }
   if (sourcePath) {
     const bytes = readFileSync(sourcePath);
     assert.equal(record.byte_count, bytes.byteLength, `stale native resource size: ${record.path}`);

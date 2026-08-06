@@ -25,7 +25,10 @@ export type PresentationEffect =
   | { type: "clear_mouth" }
   | {
     type: "reconcile";
+    lastProjectionSequence: number | null;
+    generationID: string | null;
     phase: PresentationPhase;
+    playbackID: string | null;
     mouthScalar: number;
     reducedMotion: boolean;
   };
@@ -57,6 +60,7 @@ export function reducePresentation(
   input: PresentationInput,
 ): PresentationResult {
   if (state.terminated) return unchanged(state);
+  if (input.type === "reconcile_presentation") return reconcile(state, input);
   if (input.type === "project_phase") return project(state, input);
   if (input.type === "set_mouth") return mouth(state, input);
   if (input.type === "set_policy") return policy(state, input.payload.reduced_motion);
@@ -74,7 +78,10 @@ export function reducePresentation(
     const next = { ...state, suspended: false, mouthScalar: 0 };
     return changed(next, [{
       type: "reconcile",
+      lastProjectionSequence: next.lastProjectionSequence ?? null,
+      generationID: next.generationID,
       phase: next.phase,
+      playbackID: next.playbackID,
       mouthScalar: next.mouthScalar,
       reducedMotion: next.reducedMotion,
     }]);
@@ -91,7 +98,12 @@ function project(
 ): PresentationResult {
   const value = command.payload;
   if (!validPhase(value.phase, value.generation_id, value.playback_id)) return unchanged(state);
-  if (value.projection_sequence <= (state.lastProjectionSequence ?? 0)) return unchanged(state);
+  if (
+    !Number.isSafeInteger(value.projection_sequence)
+    || value.projection_sequence < 1
+    || value.projection_sequence > Number.MAX_SAFE_INTEGER
+    || value.projection_sequence <= (state.lastProjectionSequence ?? 0)
+  ) return unchanged(state);
   const replacesLease = value.generation_id !== state.generationID
     || value.playback_id !== state.playbackID
     || value.phase === "stopped"
@@ -110,6 +122,46 @@ function project(
   return changed(next, effects);
 }
 
+function reconcile(
+  state: PresentationState,
+  command: Extract<PresentationCommand, { type: "reconcile_presentation" }>,
+): PresentationResult {
+  const value = command.payload;
+  if (
+    (value.last_projection_sequence !== null
+      && (!Number.isSafeInteger(value.last_projection_sequence)
+        || value.last_projection_sequence < 1
+        || value.last_projection_sequence > Number.MAX_SAFE_INTEGER))
+    || (state.lastProjectionSequence !== undefined
+      && (value.last_projection_sequence === null
+        || value.last_projection_sequence < state.lastProjectionSequence))
+    || !validPhase(value.phase, value.generation_id, value.playback_id)
+  ) return unchanged(state);
+
+  const next = clearLeaseOutput({
+    ...state,
+    generationID: value.generation_id,
+    phase: value.phase,
+    playbackID: value.playback_id,
+    reducedMotion: value.reduced_motion,
+    suspended: false,
+  });
+  if (value.last_projection_sequence === null) {
+    delete next.lastProjectionSequence;
+  } else {
+    next.lastProjectionSequence = value.last_projection_sequence;
+  }
+  return changed(next, [{
+    type: "reconcile",
+    lastProjectionSequence: value.last_projection_sequence,
+    generationID: value.generation_id,
+    phase: value.phase,
+    playbackID: value.playback_id,
+    mouthScalar: 0,
+    reducedMotion: value.reduced_motion,
+  }]);
+}
+
 function mouth(
   state: PresentationState,
   command: Extract<PresentationCommand, { type: "set_mouth" }>,
@@ -117,8 +169,10 @@ function mouth(
   const cue = command.payload;
   if (!Number.isSafeInteger(cue.cue_index)
     || cue.cue_index < 1
+    || cue.cue_index > Number.MAX_SAFE_INTEGER
     || !Number.isSafeInteger(cue.playback_offset_ms)
     || cue.playback_offset_ms < 0
+    || cue.playback_offset_ms > Number.MAX_SAFE_INTEGER
     || cue.playback_offset_ms > 86_400_000
     || !Number.isFinite(cue.scalar)
     || cue.scalar < 0

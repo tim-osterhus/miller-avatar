@@ -224,6 +224,49 @@ assert.throws(() =>
   /invalid_sequence/,
 );
 
+const reconcileDecoder = commandDecoder();
+reconcileDecoder.decode(JSON.stringify(commandAt(1, "project_phase", {
+  projection_sequence: 4,
+  generation_id: generationID,
+  phase: "speaking",
+  playback_id: playbackID,
+})));
+reconcileDecoder.decode(JSON.stringify(commandAt(2, "set_visibility", { visibility: "hidden" })));
+const reconciled = reconcileDecoder.decode(JSON.stringify(commandAt(3, "reconcile_presentation", {
+  last_projection_sequence: 4,
+  generation_id: generationID,
+  phase: "speaking",
+  playback_id: playbackID,
+  reduced_motion: true,
+})));
+assert.equal(reconciled.command.type, "reconcile_presentation");
+reconcileDecoder.decode(JSON.stringify(commandAt(4, "project_phase", {
+  projection_sequence: 5,
+  generation_id: null,
+  phase: "idle",
+  playback_id: null,
+})));
+assert.throws(() =>
+  commandDecoder().decode(JSON.stringify(command("reconcile_presentation", {
+    last_projection_sequence: Number.MAX_SAFE_INTEGER + 1,
+    generation_id: null,
+    phase: "idle",
+    playback_id: null,
+    reduced_motion: false,
+  }))),
+  /invalid_value/,
+);
+assert.throws(() =>
+  reconcileDecoder.decode(JSON.stringify(commandAt(5, "reconcile_presentation", {
+    last_projection_sequence: 3,
+    generation_id: generationID,
+    phase: "speaking",
+    playback_id: playbackID,
+    reduced_motion: false,
+  }))),
+  /invalid_sequence/,
+);
+
 console.log(
   `contract fixtures: ${validNames.length} valid accepted, ${invalidNames.length} invalid rejected`,
 );

@@ -79,6 +79,18 @@ public struct ProjectPhasePayload: Codable, Equatable, Sendable {
     public let generationID: UUID?
     public let phase: PresentationPhase
     public let playbackID: UUID?
+
+    public init(
+        projectionSequence: UInt64,
+        generationID: UUID?,
+        phase: PresentationPhase,
+        playbackID: UUID?
+    ) {
+        self.projectionSequence = projectionSequence
+        self.generationID = generationID
+        self.phase = phase
+        self.playbackID = playbackID
+    }
 }
 
 public struct SetVisibilityPayload: Codable, Equatable, Sendable {
@@ -95,6 +107,50 @@ public struct SetMouthPayload: Codable, Equatable, Sendable {
     public let cueIndex: UInt64
     public let playbackOffsetMilliseconds: UInt64
     public let scalar: Double
+
+    public init(
+        generationID: UUID,
+        playbackID: UUID,
+        cueIndex: UInt64,
+        playbackOffsetMilliseconds: UInt64,
+        scalar: Double
+    ) {
+        self.generationID = generationID
+        self.playbackID = playbackID
+        self.cueIndex = cueIndex
+        self.playbackOffsetMilliseconds = playbackOffsetMilliseconds
+        self.scalar = scalar
+    }
+}
+
+public struct ReconcilePresentationPayload: Codable, Equatable, Sendable {
+    public let lastProjectionSequence: UInt64?
+    public let generationID: UUID?
+    public let phase: PresentationPhase
+    public let playbackID: UUID?
+    public let reducedMotion: Bool
+
+    public init(
+        lastProjectionSequence: UInt64?,
+        generationID: UUID?,
+        phase: PresentationPhase,
+        playbackID: UUID?,
+        reducedMotion: Bool
+    ) {
+        self.lastProjectionSequence = lastProjectionSequence
+        self.generationID = generationID
+        self.phase = phase
+        self.playbackID = playbackID
+        self.reducedMotion = reducedMotion
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastProjectionSequence = "last_projection_sequence"
+        case generationID = "generation_id"
+        case phase
+        case playbackID = "playback_id"
+        case reducedMotion = "reduced_motion"
+    }
 }
 
 public struct ResetPayload: Codable, Equatable, Sendable {
@@ -110,6 +166,7 @@ public enum PresentationCommand: Equatable, Sendable {
     case configure(ConfigurePayload)
     case loadAsset(LoadAssetPayload)
     case projectPhase(ProjectPhasePayload)
+    case reconcilePresentation(ReconcilePresentationPayload)
     case setVisibility(SetVisibilityPayload)
     case setPolicy(SetPolicyPayload)
     case setMouth(SetMouthPayload)
@@ -258,6 +315,23 @@ public final class PresentationCommandDecoder {
                 lastCueIndex = nil
                 lastPlaybackOffsetMilliseconds = nil
             }
+        case let .reconcilePresentation(reconciliation):
+            if let lastProjectionSequence,
+               let incoming = reconciliation.lastProjectionSequence,
+               incoming < lastProjectionSequence
+            {
+                throw BridgeContractError.invalidSequence
+            }
+            if lastProjectionSequence != nil,
+               reconciliation.lastProjectionSequence == nil
+            {
+                throw BridgeContractError.invalidSequence
+            }
+            lastProjectionSequence = reconciliation.lastProjectionSequence
+            activeGenerationID = reconciliation.generationID
+            activePlaybackID = reconciliation.playbackID
+            lastCueIndex = nil
+            lastPlaybackOffsetMilliseconds = nil
         case let .setMouth(cue):
             guard cue.generationID == activeGenerationID,
                   cue.playbackID == activePlaybackID,
@@ -416,6 +490,34 @@ private extension PresentationCommand {
                 phase: phase,
                 playbackID: playbackID
             ))
+        case "reconcile_presentation":
+            try payload.requireKeys([
+                "last_projection_sequence", "generation_id", "phase", "playback_id",
+                "reduced_motion",
+            ])
+            let lastProjectionSequence = try payload.optionalInteger(
+                "last_projection_sequence",
+                minimum: 1
+            )
+            let generationID = try payload.optionalUUID("generation_id")
+            guard let phase = PresentationPhase(rawValue: try payload.string("phase")) else {
+                throw BridgeContractError.invalidValue
+            }
+            let playbackID = try payload.optionalUUID("playback_id")
+            guard validPhaseIdentities(
+                phase: phase,
+                generationID: generationID,
+                playbackID: playbackID
+            ) else {
+                throw BridgeContractError.invalidValue
+            }
+            return .reconcilePresentation(ReconcilePresentationPayload(
+                lastProjectionSequence: lastProjectionSequence,
+                generationID: generationID,
+                phase: phase,
+                playbackID: playbackID,
+                reducedMotion: try payload.boolean("reduced_motion")
+            ))
         case "set_visibility":
             try payload.requireKeys(["visibility"])
             guard let visibility = PresentationVisibility(rawValue: try payload.string("visibility")) else {
@@ -459,6 +561,21 @@ private extension PresentationCommand {
             return .dispose(DisposePayload(reason: reason))
         default:
             throw BridgeContractError.invalidValue
+        }
+    }
+
+    private static func validPhaseIdentities(
+        phase: PresentationPhase,
+        generationID: UUID?,
+        playbackID: UUID?
+    ) -> Bool {
+        switch phase {
+        case .speaking:
+            generationID != nil && playbackID != nil
+        case .thinking, .responding, .stopped, .failed:
+            generationID != nil && playbackID == nil
+        case .idle, .listening, .transcribing:
+            generationID == nil && playbackID == nil
         }
     }
 }

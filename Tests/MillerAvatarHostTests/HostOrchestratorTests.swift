@@ -103,6 +103,21 @@ import MillerAvatarCore
         #expect(driver.commands.isEmpty)
     }
 
+    @Test func sessionValidatedObservationsForwardBeforeLifecycleFiltering() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        var observations: [HostObservation] = []
+        host.onObservation = { observations.append($0) }
+
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(UUID(), .wrapperReady)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .wrapperReady)
+
+        #expect(observations == [.wrapperReady, .wrapperReady])
+    }
+
     @Test func reducedMotionAndVisibilityFlowThroughPureReducerCommands() {
         let driver = RecordingHostDriver()
         let host = HostOrchestrator(driver: driver)
@@ -134,9 +149,22 @@ import MillerAvatarCore
         host.load(assetToken: assetToken)
         driver.observe(session, .firstFrame(assetToken: assetToken, counters: .zero))
 
-        host.setPhase(.speaking)
-        host.setMouthScalar(0.75)
-        host.resetPresentation()
+        let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        host.project(.init(
+            projectionSequence: 1,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback
+        ))
+        host.setMouth(.init(
+            generationID: generation,
+            playbackID: playback,
+            cueIndex: 1,
+            playbackOffsetMilliseconds: 0,
+            scalar: 0.75
+        ))
+        host.reset(generationID: nil, reason: .operator)
 
         #expect(driver.commands.contains { command in
             if case .projectPhase(_, let generation, .speaking, let playback) = command {
@@ -153,10 +181,122 @@ import MillerAvatarCore
         #expect(host.snapshot.lifecycle == .failed(.renderFailed))
         #expect(host.snapshot.retryAvailable)
     }
+
+    @Test func callerOwnedProjectionReconcilesAuthoritativeStateAfterResume() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        host.load(assetToken: UUID())
+        let token = try! #require(driver.installedTokens.last)
+        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+
+        let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        host.project(.init(
+            projectionSequence: 1,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback
+        ))
+        driver.observe(session, .suspended(visibility: .occluded, counters: .zero))
+        host.reset(generationID: generation, reason: .cancelled)
+        host.setReducedMotion(true)
+        driver.observe(session, .resumed(counters: .zero))
+
+        #expect(driver.commands.last == .reconcilePresentation(.init(
+            lastProjectionSequence: 1,
+            generationID: nil,
+            phase: .idle,
+            playbackID: nil,
+            reducedMotion: true
+        )))
+        #expect(host.snapshot.phase == .idle)
+    }
+
+    @Test func suspendedCallerOwnedProjectionAndCueReconcileWithoutReplayingMouth() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        host.load(assetToken: UUID())
+        let token = try! #require(driver.installedTokens.last)
+        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+
+        let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        host.project(.init(
+            projectionSequence: 1,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback
+        ))
+        driver.observe(session, .suspended(visibility: .occluded, counters: .zero))
+        host.project(.init(
+            projectionSequence: 2,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback
+        ))
+        host.setMouth(.init(
+            generationID: generation,
+            playbackID: playback,
+            cueIndex: 4,
+            playbackOffsetMilliseconds: 400,
+            scalar: 0.8
+        ))
+        driver.observe(session, .resumed(counters: .zero))
+
+        #expect(driver.commands.last == .reconcilePresentation(.init(
+            lastProjectionSequence: 2,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback,
+            reducedMotion: false
+        )))
+        #expect(driver.commands.filter {
+            if case .setMouth = $0 { return true }
+            return false
+        }.isEmpty)
+    }
+
+    @Test func unchangedPolicyAndSemanticEffectsDoNotEmitDuplicateCommands() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        host.load(assetToken: UUID())
+        let token = try! #require(driver.installedTokens.last)
+        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+
+        host.setReducedMotion(false)
+        host.project(.init(
+            projectionSequence: 1,
+            generationID: nil,
+            phase: .idle,
+            playbackID: nil
+        ))
+        host.reset(generationID: nil, reason: .operator)
+
+        #expect(driver.commands.filter {
+            if case .setPolicy = $0 { return true }
+            return false
+        }.isEmpty)
+        #expect(driver.commands.filter {
+            if case .reset = $0 { return true }
+            return false
+        }.count == 1)
+    }
 }
 
 @MainActor
-private final class RecordingHostDriver: HostRendererDriving {
+private final class RecordingHostDriver: HostRendererDriving, HostTestAssetLoading {
     private var receive: ((UUID, HostObservation) -> Void)?
     private(set) var startedSessions: [UUID] = []
     private(set) var commands: [BridgeCommand] = []
@@ -172,7 +312,11 @@ private final class RecordingHostDriver: HostRendererDriving {
         commands.append(command)
     }
 
-    func install(assetToken: UUID, bytes: Data) {
+    func install(_ asset: AdmittedAsset) {
+        installedTokens.append(asset.token)
+    }
+
+    func installForTesting(assetToken: UUID, bytes: Data) {
         installedTokens.append(assetToken)
     }
 

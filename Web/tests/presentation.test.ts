@@ -40,7 +40,10 @@ test("suspension and reduced motion match native reducer behavior", () => {
   const resumed = reducePresentation(policy.state, { type: "resume" });
   assert.deepEqual(resumed.effects, [{
     type: "reconcile",
+    lastProjectionSequence: 1,
+    generationID: generation,
     phase: "speaking",
+    playbackID: playbackP,
     mouthScalar: 0,
     reducedMotion: true,
   }]);
@@ -70,7 +73,10 @@ test("reset and resume carry enough state to restore renderer presentation", () 
   const resumed = reducePresentation(suspended, { type: "resume" });
   assert.deepEqual(resumed.effects, [{
     type: "reconcile",
+    lastProjectionSequence: 1,
+    generationID: generation,
     phase: "stopped",
+    playbackID: null,
     mouthScalar: 0,
     reducedMotion: false,
   }]);
@@ -144,6 +150,74 @@ test("mouth reducer rejects hostile numeric values before state mutation", () =>
     assert.deepEqual(result.state, state, JSON.stringify(values));
     assert.deepEqual(result.effects, [], JSON.stringify(values));
   }
+});
+
+test("resume reconciliation replaces the snapshot while retaining caller sequencing", () => {
+  let state = reducePresentation(initialPresentationState(), speaking(7, playbackP)).state;
+  state = reducePresentation(state, mouth(playbackP, 1)).state;
+  state = reducePresentation(state, { type: "suspend", visibility: "occluded" }).state;
+
+  const result = reducePresentation(state, {
+    type: "reconcile_presentation",
+    payload: {
+      last_projection_sequence: 9,
+      generation_id: generation,
+      phase: "speaking",
+      playback_id: playbackQ,
+      reduced_motion: true,
+    },
+  });
+
+  assert.deepEqual(result.state, {
+    lastProjectionSequence: 9,
+    generationID: generation,
+    phase: "speaking",
+    playbackID: playbackQ,
+    mouthScalar: 0,
+    reducedMotion: true,
+    suspended: false,
+    terminated: false,
+  });
+  assert.deepEqual(result.effects, [{
+    type: "reconcile",
+    lastProjectionSequence: 9,
+    generationID: generation,
+    phase: "speaking",
+    playbackID: playbackQ,
+    mouthScalar: 0,
+    reducedMotion: true,
+  }]);
+});
+
+test("presentation reducer rejects unsafe projection sequences", () => {
+  const state = initialPresentationState();
+  const result = reducePresentation(state, {
+    type: "project_phase",
+    payload: {
+      projection_sequence: Number.MAX_SAFE_INTEGER + 1,
+      generation_id: null,
+      phase: "idle",
+      playback_id: null,
+    },
+  });
+  assert.deepEqual(result.state, state);
+  assert.deepEqual(result.effects, []);
+});
+
+test("reconciliation cannot lower the retained projection sequence", () => {
+  const state = reducePresentation(initialPresentationState(), speaking(7, playbackP)).state;
+  const result = reducePresentation(state, {
+    type: "reconcile_presentation",
+    payload: {
+      last_projection_sequence: 6,
+      generation_id: generation,
+      phase: "speaking",
+      playback_id: playbackP,
+      reduced_motion: false,
+    },
+  });
+  assert.deepEqual(result.state, state);
+  assert.deepEqual(result.effects, []);
 });
 
 function speaking(sequence: number, playbackID: string) {

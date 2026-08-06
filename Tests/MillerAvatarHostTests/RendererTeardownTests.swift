@@ -161,6 +161,52 @@ import MillerAvatarCore
         #expect(actions.events.contains("return to fallback") == false)
     }
 
+    @Test func teardownReleasesQueuedAssetBytes() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin()
+        var scheduled: (() -> Void)?
+        let resources = closedBundleResources()
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: resources,
+            resourceRecords: resources.keys.sorted().map {
+                LocalSchemeResourceRecord.make(path: $0, data: resources[$0]!)
+            },
+            assetToken: UUID(),
+            assetData: Data([1, 2, 3, 4]),
+            scheduleDelivery: { scheduled = $0 }
+        )
+        let sink = TeardownAssetSink(request: URLRequest(url: handler.activeAssetURL))
+        handler.start(sink)
+        #expect(handler.retainedAssetByteCount == 4)
+
+        let actions = WebKitRendererTeardownActions(
+            webView: WebViewFactory.make(
+                schemeHandler: handler,
+                navigationPolicy: NavigationPolicy(lease: lease),
+                observationHandler: RendererObservationHandler(
+                    lease: lease,
+                    sessionController: controller
+                )
+            ).webView,
+            schemeHandler: handler,
+            scriptHandlerNames: WebViewFactory.scriptMessageHandlerNames,
+            fallback: {}
+        )
+        let teardown = RendererTeardown(
+            lease: lease,
+            sessionController: controller,
+            actions: actions
+        )
+
+        teardown.run()
+        scheduled?()
+
+        #expect(handler.retainedAssetByteCount == 0)
+        #expect(sink.events == ["failure"])
+    }
+
     @Test func webViewConfigurationIsNonpersistentAndClosed() throws {
         let controller = RendererSessionController()
         let lease = controller.begin()
@@ -259,5 +305,30 @@ private final class RecordingTeardownActions: RendererTeardownActions {
 
     func returnToFallback() {
         events.append("return to fallback")
+    }
+}
+
+private final class TeardownAssetSink: LocalSchemeTaskSink {
+    let request: URLRequest
+    private(set) var events: [String] = []
+
+    init(request: URLRequest) {
+        self.request = request
+    }
+
+    func receive(response: URLResponse) {
+        events.append("response")
+    }
+
+    func receive(data: Data) {
+        events.append("data")
+    }
+
+    func finish() {
+        events.append("finish")
+    }
+
+    func fail(with error: any Error) {
+        events.append("failure")
     }
 }

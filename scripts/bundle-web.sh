@@ -6,7 +6,7 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 web_root="$repo_root/Web"
 generated_root="$repo_root/.generated"
 web_npm_cache="$generated_root/web-npm-cache"
-output="$repo_root/Resources/Web"
+output="$repo_root/Sources/MillerAvatarHost/Resources/Web"
 expected_node_version="v22.22.0"
 expected_npm_version="10.9.4"
 pinned_node_bin="/opt/homebrew/Cellar/node@22/22.22.0/bin"
@@ -180,7 +180,7 @@ const files = sortedRecord(Object.entries(payloadMimes).map(([name, mime]) => [n
   mime,
 }]));
 const binary = resolve(web, "node_modules/@esbuild/darwin-arm64/bin/esbuild");
-const reviewedBundleManifest = JSON.parse(readFileSync(resolve(repo, "Resources/Web/bundle-manifest.json"), "utf8"));
+const reviewedBundleManifest = JSON.parse(readFileSync(resolve(repo, "Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json"), "utf8"));
 const reviewedBinaryHash = reviewedBundleManifest.toolchain?.esbuild_binary_sha256;
 if (typeof reviewedBinaryHash !== "string" || !/^[0-9a-f]{64}$/u.test(reviewedBinaryHash)) {
   throw new Error("reviewed bundle manifest has an invalid esbuild binary hash");

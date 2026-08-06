@@ -150,8 +150,10 @@ public enum ProjectionReducer {
               cue.generationID == state.generationID,
               cue.playbackID == state.playbackID,
               cue.cueIndex > (state.lastCueIndex ?? 0),
+              cue.cueIndex <= BridgeContract.maximumSafeInteger,
               cue.playbackOffsetMilliseconds
                   >= (state.lastPlaybackOffsetMilliseconds ?? 0),
+              cue.playbackOffsetMilliseconds <= BridgeContract.maximumSafeInteger,
               cue.playbackOffsetMilliseconds <= 86_400_000,
               cue.scalar.isFinite,
               (0...1).contains(cue.scalar)
@@ -230,7 +232,11 @@ public enum ProjectionReducer {
     }
 
     private static func isValid(_ projection: ProjectPhasePayload) -> Bool {
-        switch projection.phase {
+        guard projection.projectionSequence > 0,
+              projection.projectionSequence <= BridgeContract.maximumSafeInteger
+        else { return false }
+
+        return switch projection.phase {
         case .speaking:
             projection.generationID != nil && projection.playbackID != nil
         case .thinking, .responding, .stopped, .failed:

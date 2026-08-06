@@ -27,6 +27,8 @@ done
 
 test -x "$repository_root/scripts/verify-dependencies.sh"
 test -x "$repository_root/scripts/test-release-discipline.sh"
+test -d "$repository_root/Sources/MillerAvatarHost/Resources/Web"
+test ! -e "$repository_root/Resources/Web"
 
 if grep -R -n -E '(^|[;&|[:space:]])rg([[:space:]]|$)' \
     "$repository_root/.github" "$repository_root/scripts"
@@ -38,7 +40,7 @@ fi
 expected_source_revision=$(git -C "$repository_root" log -1 --format=%H -- \
     Package.swift Config/Info.plist Config/MillerAvatarAlpha.entitlements \
     LICENSE NOTICE THIRD_PARTY_NOTICES.md Sources Resources/Static \
-    Resources/Web scripts/build.sh scripts/verify-toolchain.sh)
+    Sources/MillerAvatarHost/Resources/Web scripts/build.sh scripts/verify-toolchain.sh)
 "$node_command" --input-type=module - \
     "$repository_root/Resources/build-manifest.json" \
     "$expected_source_revision" <<'NODE'
@@ -93,14 +95,14 @@ if ! "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle.out" 2>"$
     printf 'bundle-web did not select the exact release toolchain\n' >&2
     exit 1
 fi
-bundle_before=$(shasum -a 256 "$repository_root/Resources/Web/bundle-manifest.json" | awk '{print $1}')
+bundle_before=$(shasum -a 256 "$repository_root/Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json" | awk '{print $1}')
 if MILLER_AVATAR_SIMULATE_BUNDLE_FAILURE=1 \
     "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle-failure.out" 2>"$temporary_root/bundle-failure.err"
 then
     printf 'simulated web bundle failure unexpectedly succeeded\n' >&2
     exit 1
 fi
-bundle_after=$(shasum -a 256 "$repository_root/Resources/Web/bundle-manifest.json" | awk '{print $1}')
+bundle_after=$(shasum -a 256 "$repository_root/Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json" | awk '{print $1}')
 test "$bundle_before" = "$bundle_after"
 if find "$repository_root/.generated" -maxdepth 1 -type d -name 'web-stage.*' -print -quit | grep -q .; then
     printf 'failed web bundle left a stage directory behind\n' >&2
@@ -225,7 +227,7 @@ if "$node_command" "$copy_root/Web/scripts/verify-dependencies.mjs" --repository
 fi
 mv "$temporary_root/build-manifest.json" "$copy_root/Resources/build-manifest.json"
 
-printf '//# sourceMappingURL=private.map\n' >> "$copy_root/Resources/Web/app.js"
+printf '//# sourceMappingURL=private.map\n' >> "$copy_root/Sources/MillerAvatarHost/Resources/Web/app.js"
 if "$node_command" "$copy_root/Web/scripts/verify-dependencies.mjs" --repository-root "$copy_root" >/dev/null 2>&1; then
     printf 'dependency verifier accepted a source map reference\n' >&2
     exit 1

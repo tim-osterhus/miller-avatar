@@ -73,6 +73,16 @@ export type PresentationCommand =
         playback_id: string | null;
       };
     }
+  | {
+      type: "reconcile_presentation";
+      payload: {
+        last_projection_sequence: number | null;
+        generation_id: string | null;
+        phase: PresentationPhase;
+        playback_id: string | null;
+        reduced_motion: boolean;
+      };
+    }
   | { type: "set_visibility"; payload: { visibility: PresentationVisibility } }
   | { type: "set_policy"; payload: { reduced_motion: boolean } }
   | {

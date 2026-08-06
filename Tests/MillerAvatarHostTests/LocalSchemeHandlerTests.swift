@@ -1,6 +1,7 @@
 import Foundation
 import Dispatch
 import Testing
+@preconcurrency import WebKit
 @testable import MillerAvatarHost
 
 @MainActor
@@ -24,10 +25,224 @@ import Testing
 
         handler.installAsset(token: replacementToken, data: Data([1, 2, 3]))
 
+        #expect(handler.retainedAssetByteCount == 3)
         let response = try handler.response(for: URLRequest(url: handler.activeAssetURL))
         #expect(response.data == Data([1, 2, 3]))
         #expect(!handler.activeAssetURL.absoluteString.contains(initialToken.uuidString.lowercased()))
     }
+
+    @Test func assetBytesStayRetainedUntilSuccessfulSinkCompletion() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        let assetData = Data([1, 2, 3, 4])
+        var scheduled: (() -> Void)?
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            assetToken: assetToken,
+            assetData: assetData,
+            scheduleDelivery: { scheduled = $0 }
+        )
+        var byteCountWhenData = 0
+        var byteCountWhenFinish = 0
+        let sink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: handler.activeAssetURL),
+            receiveData: { _ in
+                byteCountWhenData = handler.retainedAssetByteCount
+            },
+            finish: {
+                byteCountWhenFinish = handler.retainedAssetByteCount
+            }
+        )
+
+        handler.start(sink)
+
+        #expect(handler.retainedAssetByteCount == assetData.count)
+        scheduled?()
+        #expect(sink.events == ["response", "data", "finish"])
+        #expect(byteCountWhenData == assetData.count)
+        #expect(byteCountWhenFinish == assetData.count)
+        #expect(handler.retainedAssetByteCount == 0)
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(for: URLRequest(url: handler.activeAssetURL))
+        }
+    }
+
+    @Test func cancellationReleasesAssetBytesAfterTheFailureSinkReturns() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            assetToken: assetToken,
+            assetData: Data([1, 2, 3, 4])
+        )
+        var byteCountWhenFailure = 0
+        let sink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: handler.activeAssetURL),
+            receiveResponse: { handler.cancelAll() },
+            failure: {
+                byteCountWhenFailure = handler.retainedAssetByteCount
+            }
+        )
+
+        handler.start(sink)
+
+        #expect(sink.events == ["response", "failure"])
+        #expect(byteCountWhenFailure == 4)
+        #expect(handler.retainedAssetByteCount == 0)
+    }
+
+    @Test func bundleDeliveryDoesNotReleaseTheActiveAssetBytes() throws {
+        let handler = makeHandler()
+        let sink = RecordingSchemeTaskSink(request: request("/bundle/index.html"))
+
+        handler.start(sink)
+
+        #expect(handler.retainedAssetByteCount == 4)
+    }
+
+    @Test func queuedOldAssetReplacementKeepsReplacementActiveUntilItsDeliveryCompletes() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        let oldToken = assetToken
+        let replacementToken = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let oldData = Data([1, 2])
+        let replacementData = Data([3, 4, 5, 6])
+        var scheduled: [() -> Void] = []
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            assetToken: oldToken,
+            assetData: oldData,
+            scheduleDelivery: { scheduled.append($0) }
+        )
+        let oldURL = handler.activeAssetURL
+        var oldDeliveredData: Data?
+        let oldSink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: oldURL),
+            receiveData: { data in oldDeliveredData = data }
+        )
+
+        handler.start(oldSink)
+        #expect(scheduled.count == 1)
+        #expect(handler.installAsset(token: replacementToken, data: replacementData))
+        let replacementURL = handler.activeAssetURL
+
+        #expect(replacementURL != oldURL)
+        #expect(handler.retainedAssetByteCount == replacementData.count)
+
+        scheduled[0]()
+
+        #expect(oldSink.events == ["response", "data", "finish"])
+        #expect(oldDeliveredData == oldData)
+        #expect(handler.activeAssetURL == replacementURL)
+        #expect(handler.retainedAssetByteCount == replacementData.count)
+        #expect(
+            try handler.response(for: URLRequest(url: replacementURL)).data
+                == replacementData
+        )
+
+        var replacementByteCountWhenFinish = 0
+        let replacementSink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: replacementURL),
+            finish: {
+                replacementByteCountWhenFinish = handler.retainedAssetByteCount
+            }
+        )
+        handler.start(replacementSink)
+        #expect(scheduled.count == 2)
+        #expect(handler.retainedAssetByteCount == replacementData.count)
+
+        scheduled[1]()
+
+        #expect(replacementSink.events == ["response", "data", "finish"])
+        #expect(replacementByteCountWhenFinish == replacementData.count)
+        #expect(handler.retainedAssetByteCount == 0)
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(for: URLRequest(url: replacementURL))
+        }
+    }
+
+    @Test func queuedOldAssetWithSameTokenCannotReleaseReplacementBytes() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        let oldData = Data([1, 2])
+        let replacementData = Data([3, 4, 5, 6])
+        var scheduled: [() -> Void] = []
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            assetToken: assetToken,
+            assetData: oldData,
+            scheduleDelivery: { scheduled.append($0) }
+        )
+        let assetURL = handler.activeAssetURL
+        var oldDeliveredData: Data?
+        let oldSink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: assetURL),
+            receiveData: { oldDeliveredData = $0 }
+        )
+
+        handler.start(oldSink)
+        #expect(scheduled.count == 1)
+        #expect(handler.installAsset(token: assetToken, data: replacementData))
+        #expect(handler.activeAssetURL == assetURL)
+        #expect(
+            try handler.response(for: URLRequest(url: assetURL)).data
+                == replacementData
+        )
+
+        scheduled[0]()
+
+        #expect(oldDeliveredData == oldData)
+        #expect(handler.retainedAssetByteCount == replacementData.count)
+        #expect(
+            try handler.response(for: URLRequest(url: assetURL)).data
+                == replacementData
+        )
+    }
+
+    @Test func stoppingOneWebKitTaskDoesNotCancelAnotherPendingDelivery() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        var scheduled: [() -> Void] = []
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            assetToken: assetToken,
+            assetData: Data(),
+            scheduleDelivery: { scheduled.append($0) }
+        )
+        let webView = WKWebView()
+        let first = RecordingWKURLSchemeTask(request: request("/bundle/index.html"))
+        let second = RecordingWKURLSchemeTask(request: request("/bundle/index.html"))
+
+        handler.webView(webView, start: first)
+        handler.webView(webView, start: second)
+        #expect(scheduled.count == 2)
+
+        handler.webView(webView, stop: first)
+
+        #expect(first.events == ["failure"])
+        #expect(second.events.isEmpty)
+        scheduled[0]()
+        #expect(second.events.isEmpty)
+        scheduled[1]()
+
+        #expect(second.events == ["response", "data", "finish"])
+    }
+
     private let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     private let assetToken = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
 
@@ -569,6 +784,74 @@ private final class RecordingSchemeTaskSink: LocalSchemeTaskSink {
 
     func fail(with error: any Error) {
         events.append("failure")
+    }
+}
+
+private final class RecordingWKURLSchemeTask: NSObject, WKURLSchemeTask {
+    let request: URLRequest
+    private(set) var events: [String] = []
+
+    init(request: URLRequest) {
+        self.request = request
+    }
+
+    func didReceive(_ response: URLResponse) {
+        events.append("response")
+    }
+
+    func didReceive(_ data: Data) {
+        events.append("data")
+    }
+
+    func didFinish() {
+        events.append("finish")
+    }
+
+    func didFailWithError(_ error: Error) {
+        events.append("failure")
+    }
+}
+
+private final class AssetLifetimeSchemeTaskSink: LocalSchemeTaskSink {
+    let request: URLRequest
+    private let receiveResponseHandler: () -> Void
+    private let receiveDataHandler: (Data) -> Void
+    private let finishHandler: () -> Void
+    private let failureHandler: () -> Void
+    private(set) var events: [String] = []
+
+    init(
+        request: URLRequest,
+        receiveResponse: @escaping () -> Void = {},
+        receiveData: @escaping (Data) -> Void = { _ in },
+        finish: @escaping () -> Void = {},
+        failure: @escaping () -> Void = {}
+    ) {
+        self.request = request
+        receiveResponseHandler = receiveResponse
+        receiveDataHandler = receiveData
+        finishHandler = finish
+        failureHandler = failure
+    }
+
+    func receive(response: URLResponse) {
+        events.append("response")
+        receiveResponseHandler()
+    }
+
+    func receive(data: Data) {
+        events.append("data")
+        receiveDataHandler(data)
+    }
+
+    func finish() {
+        events.append("finish")
+        finishHandler()
+    }
+
+    func fail(with error: any Error) {
+        events.append("failure")
+        failureHandler()
     }
 }
 

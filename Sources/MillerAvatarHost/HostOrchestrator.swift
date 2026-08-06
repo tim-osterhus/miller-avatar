@@ -28,19 +28,25 @@ public enum HostObservation: Equatable, Sendable {
 @MainActor
 public protocol HostRendererDriving: AnyObject {
     func start(sessionID: UUID, receive: @escaping (UUID, HostObservation) -> Void)
-    func install(assetToken: UUID, bytes: Data)
+    func install(_ asset: AdmittedAsset)
     func send(_ command: BridgeCommand)
     func dispose(reason: DisposalReason)
 }
 
-public extension HostRendererDriving {
-    func install(assetToken: UUID, bytes: Data) {}
+@MainActor
+internal protocol HostTestAssetLoading {
+    func installForTesting(assetToken: UUID, bytes: Data)
 }
 
 public enum HostAdmissionStatus: Equatable, Sendable {
     case none
     case admitted
     case rejected(FailureCode)
+}
+
+public enum AssetLoadDisposition: Equatable, Sendable {
+    case accepted
+    case notReady
 }
 
 public struct HostSnapshot: Equatable, Sendable {
@@ -59,6 +65,7 @@ public struct HostSnapshot: Equatable, Sendable {
 @MainActor
 public final class HostOrchestrator {
     public var onChange: ((HostSnapshot) -> Void)?
+    public var onObservation: ((HostObservation) -> Void)?
 
     public private(set) var snapshot: HostSnapshot
     private let driver: any HostRendererDriving
@@ -66,8 +73,6 @@ public final class HostOrchestrator {
     private var deadline: Deadline?
     private var activeAssetToken: UUID?
     private var consecutiveFailures = 0
-    private var projectionSequence: UInt64 = 0
-    private var mouthCueIndex: UInt64 = 0
     private var projectionState = ProjectionState()
     private var visibilityState = VisibilityCoordinatorState(
         sessionID: nil,
@@ -108,14 +113,26 @@ public final class HostOrchestrator {
         beginRenderer(preservingFailureCount: true)
     }
 
-    public func load(_ asset: AdmittedAsset) {
-        load(assetToken: asset.token, bytes: asset.bytes)
+    @discardableResult
+    public func load(_ asset: AdmittedAsset) -> AssetLoadDisposition {
+        guard snapshot.lifecycle == .rendererReady else { return .notReady }
+        driver.install(asset)
+        beginAssetLoad(assetToken: asset.token)
+        return .accepted
     }
 
-    public func load(assetToken: UUID, bytes: Data = Data()) {
-        guard snapshot.lifecycle == .rendererReady else { return }
+    @discardableResult
+    internal func load(assetToken: UUID, bytes: Data = Data()) -> AssetLoadDisposition {
+        guard snapshot.lifecycle == .rendererReady,
+              let testDriver = driver as? any HostTestAssetLoading
+        else { return .notReady }
+        testDriver.installForTesting(assetToken: assetToken, bytes: bytes)
+        beginAssetLoad(assetToken: assetToken)
+        return .accepted
+    }
+
+    private func beginAssetLoad(assetToken: UUID) {
         activeAssetToken = assetToken
-        driver.install(assetToken: assetToken, bytes: bytes)
         applyLifecycle(.beginAssetLoad)
         update(admission: .admitted)
         driver.send(.loadAsset(token: assetToken))
@@ -133,81 +150,37 @@ public final class HostOrchestrator {
         )
         projectionState = result.state
         update(reducedMotion: result.state.reducedMotion)
-        if isBridgeReady {
-            driver.send(.setPolicy(reducedMotion: result.state.reducedMotion))
-        }
+        execute(result.effects)
     }
 
-    public func setPhase(_ phase: PresentationPhase) {
-        guard isBridgeReady,
-              projectionSequence < BridgeContract.maximumSafeInteger
-        else { return }
-        projectionSequence += 1
-        let generationID: UUID?
-        let playbackID: UUID?
-        switch phase {
-        case .idle, .listening, .transcribing:
-            generationID = nil
-            playbackID = nil
-        case .speaking:
-            generationID = UUID()
-            playbackID = UUID()
-        case .thinking, .responding, .stopped, .failed:
-            generationID = UUID()
-            playbackID = nil
-        }
-        projectionState.lastProjectionSequence = projectionSequence
-        projectionState.generationID = generationID
-        projectionState.phase = phase
-        projectionState.playbackID = playbackID
-        projectionState.lastCueIndex = nil
-        projectionState.lastPlaybackOffsetMilliseconds = nil
-        projectionState.mouthScalar = 0
-        mouthCueIndex = 0
-        driver.send(.projectPhase(
-            sequence: projectionSequence,
-            generationID: generationID,
-            phase: phase,
-            playbackID: playbackID
-        ))
+    public func project(_ payload: ProjectPhasePayload) {
+        let result = ProjectionReducer.reduce(
+            state: projectionState,
+            input: .project(payload)
+        )
+        projectionState = result.state
         update()
+        execute(result.effects)
     }
 
-    public func setMouthScalar(_ scalar: Double) {
-        guard snapshot.lifecycle == .live,
-              projectionState.phase == .speaking,
-              !projectionState.reducedMotion,
-              scalar.isFinite,
-              (0...1).contains(scalar),
-              let generationID = projectionState.generationID,
-              let playbackID = projectionState.playbackID,
-              mouthCueIndex < BridgeContract.maximumSafeInteger
-        else { return }
-        mouthCueIndex += 1
-        projectionState.mouthScalar = scalar
-        projectionState.lastCueIndex = mouthCueIndex
-        projectionState.lastPlaybackOffsetMilliseconds = 0
-        driver.send(.setMouth(
-            generationID: generationID,
-            playbackID: playbackID,
-            cueIndex: mouthCueIndex,
-            playbackOffsetMilliseconds: 0,
-            scalar: scalar
-        ))
+    public func setMouth(_ payload: SetMouthPayload) {
+        let result = ProjectionReducer.reduce(
+            state: projectionState,
+            input: .mouth(payload)
+        )
+        projectionState = result.state
         update()
+        execute(result.effects)
     }
 
-    public func resetPresentation() {
-        guard isBridgeReady else { return }
-        projectionState.generationID = nil
-        projectionState.phase = .idle
-        projectionState.playbackID = nil
-        projectionState.lastCueIndex = nil
-        projectionState.lastPlaybackOffsetMilliseconds = nil
-        projectionState.mouthScalar = 0
-        mouthCueIndex = 0
-        driver.send(.reset(generationID: nil, reason: .operator))
+    public func reset(generationID: UUID?, reason: ResetReason) {
+        let result = ProjectionReducer.reduce(
+            state: projectionState,
+            input: .reset(generationID: generationID, reason: reason)
+        )
+        projectionState = result.state
         update()
+        execute(result.effects)
     }
 
     public func simulateRendererFailure() {
@@ -221,6 +194,9 @@ public final class HostOrchestrator {
     public func dispose(reason: DisposalReason = .operator) {
         guard snapshot.sessionID != nil else { return }
         deadline = nil
+        let result = ProjectionReducer.reduce(state: projectionState, input: .dispose)
+        projectionState = result.state
+        execute(result.effects)
         applyLifecycle(.dispose(reason))
         driver.dispose(reason: reason)
         finishDisposal()
@@ -247,8 +223,6 @@ public final class HostOrchestrator {
         }
         let sessionID = UUID()
         activeAssetToken = nil
-        projectionSequence = 0
-        mouthCueIndex = 0
         projectionState = ProjectionState(reducedMotion: snapshot.reducedMotion)
         applyLifecycleFromAbsent(.startRenderer)
         update(
@@ -271,6 +245,7 @@ public final class HostOrchestrator {
 
     private func receive(sessionID: UUID, observation: HostObservation) {
         guard sessionID == snapshot.sessionID else { return }
+        onObservation?(observation)
         switch observation {
         case .wrapperReady:
             guard snapshot.lifecycle == .startingRenderer,
@@ -295,18 +270,22 @@ public final class HostOrchestrator {
                 sessionID: sessionID,
                 visibility: effective(visibility)
             ))
-            projectionState = ProjectionReducer.reduce(
+            let result = ProjectionReducer.reduce(
                 state: projectionState,
                 input: .suspend
-            ).state
+            )
+            projectionState = result.state
             update(counters: counters)
+            execute(result.effects)
         case .resumed(let counters):
             driveVisibility(.observed(sessionID: sessionID, visibility: .visible))
-            projectionState = ProjectionReducer.reduce(
+            let result = ProjectionReducer.reduce(
                 state: projectionState,
                 input: .resume
-            ).state
+            )
+            projectionState = result.state
             update(counters: counters)
+            execute(result.effects)
         case .failed(let code):
             fail(code)
         case .disposed:
@@ -318,10 +297,12 @@ public final class HostOrchestrator {
         guard snapshot.sessionID != nil else { return }
         deadline = nil
         consecutiveFailures += 1
-        projectionState = ProjectionReducer.reduce(
+        let result = ProjectionReducer.reduce(
             state: projectionState,
             input: .rendererFailed
-        ).state
+        )
+        projectionState = result.state
+        execute(result.effects)
         applyLifecycle(.fail(code))
         driver.dispose(reason: .failure)
         update(
@@ -365,6 +346,43 @@ public final class HostOrchestrator {
                 driver.send(.setVisibility(presentation(visibility)))
             case .requestDisposal(_, let reason):
                 dispose(reason: reason)
+            }
+        }
+    }
+
+    private func execute(_ effects: [ProjectionEffect]) {
+        guard isBridgeReady else { return }
+        for effect in effects {
+            switch effect {
+            case .applyProjection(let payload):
+                driver.send(.projectPhase(
+                    sequence: payload.projectionSequence,
+                    generationID: payload.generationID,
+                    phase: payload.phase,
+                    playbackID: payload.playbackID
+                ))
+            case .applyMouth(let payload):
+                driver.send(.setMouth(
+                    generationID: payload.generationID,
+                    playbackID: payload.playbackID,
+                    cueIndex: payload.cueIndex,
+                    playbackOffsetMilliseconds: payload.playbackOffsetMilliseconds,
+                    scalar: payload.scalar
+                ))
+            case .setReducedMotion(let enabled):
+                driver.send(.setPolicy(reducedMotion: enabled))
+            case .reset(let generationID, let reason):
+                driver.send(.reset(generationID: generationID, reason: reason))
+            case .reconcile:
+                driver.send(.reconcilePresentation(ReconcilePresentationPayload(
+                    lastProjectionSequence: projectionState.lastProjectionSequence,
+                    generationID: projectionState.generationID,
+                    phase: projectionState.phase,
+                    playbackID: projectionState.playbackID,
+                    reducedMotion: projectionState.reducedMotion
+                )))
+            case .clearMouth, .stopContinuousMotion:
+                break
             }
         }
     }

@@ -148,6 +148,55 @@ import Testing
         #expect(decoded == payload)
     }
 
+    @Test func reconcilePayloadRetainsProjectionSequenceAndClearsWebLeaseHistory() throws {
+        let decoder = commandDecoder()
+        _ = try decoder.decode(command(
+            sequence: 1,
+            type: "project_phase",
+            payload: [
+                "projection_sequence": 4,
+                "generation_id": Self.generationID,
+                "phase": "speaking",
+                "playback_id": Self.playbackID,
+            ]
+        ))
+        _ = try decoder.decode(command(
+            sequence: 2,
+            type: "set_visibility",
+            payload: ["visibility": "hidden"]
+        ))
+        let envelope = try decoder.decode(command(
+            sequence: 3,
+            type: "reconcile_presentation",
+            payload: [
+                "last_projection_sequence": 4,
+                "generation_id": Self.generationID,
+                "phase": "speaking",
+                "playback_id": Self.playbackID,
+                "reduced_motion": true,
+            ]
+        ))
+        #expect(envelope.command == .reconcilePresentation(.init(
+            lastProjectionSequence: 4,
+            generationID: UUID(uuidString: Self.generationID),
+            phase: .speaking,
+            playbackID: UUID(uuidString: Self.playbackID),
+            reducedMotion: true
+        )))
+        #expect(throws: BridgeContractError.invalidSequence) {
+            try decoder.decode(command(
+                sequence: 4,
+                type: "project_phase",
+                payload: [
+                    "projection_sequence": 4,
+                    "generation_id": NSNull(),
+                    "phase": "idle",
+                    "playback_id": NSNull(),
+                ]
+            ))
+        }
+    }
+
     @Test func allClosedCommandVocabulariesAreAccepted() throws {
         for phase in PresentationPhase.allCases {
             let generationID: Any

@@ -99,6 +99,23 @@ export class PresentationCommandDecoder {
         if (replacesLease) this.clearCueLease();
         return;
       }
+      case "reconcile_presentation": {
+        const reconciliation = command.payload;
+        if (
+          (this.lastProjectionSequence !== undefined
+            && reconciliation.last_projection_sequence === null)
+          || (this.lastProjectionSequence !== undefined
+            && reconciliation.last_projection_sequence !== null
+            && reconciliation.last_projection_sequence < this.lastProjectionSequence)
+        ) {
+          fail("invalid_sequence");
+        }
+        this.lastProjectionSequence = reconciliation.last_projection_sequence ?? undefined;
+        this.activeGenerationID = reconciliation.generation_id;
+        this.activePlaybackID = reconciliation.playback_id;
+        this.clearCueLease();
+        return;
+      }
       case "set_mouth": {
         const cue = command.payload;
         if (
@@ -238,6 +255,32 @@ function decodeCommand(type: string, payload: BridgeObject): PresentationCommand
           generation_id: generationID,
           phase,
           playback_id: playbackID,
+        },
+      };
+    }
+    case "reconcile_presentation": {
+      requireKeys(payload, [
+        "last_projection_sequence",
+        "generation_id",
+        "phase",
+        "playback_id",
+        "reduced_motion",
+      ]);
+      const lastProjectionSequence = payload.last_projection_sequence === null
+        ? null
+        : requireInteger(payload.last_projection_sequence, 1);
+      const generationID = requireOptionalUUID(payload.generation_id);
+      const phase = requireVocabulary(payload.phase, presentationPhases);
+      const playbackID = requireOptionalUUID(payload.playback_id);
+      requirePhaseIdentities(phase, generationID, playbackID);
+      return {
+        type,
+        payload: {
+          last_projection_sequence: lastProjectionSequence,
+          generation_id: generationID,
+          phase,
+          playback_id: playbackID,
+          reduced_motion: requireBoolean(payload.reduced_motion),
         },
       };
     }

@@ -1,27 +1,42 @@
 # Miller Avatar
 
-Miller Avatar is the optional avatar-presentation package for Miller. It is
-kept separate so Miller remains usable when avatar presentation is absent,
-disabled, loading, or unavailable.
+Miller Avatar is a reusable offline Swift package plus a standalone diagnostic
+app for noninteractive avatar presentation. It is not a bundled assistant or
+asset pack.
+
+The package targets macOS 15 with Swift 6.1 and exposes `MillerAvatarCore` and
+`MillerAvatarHost`; `MillerAvatarApp` is a thin diagnostic consumer of those
+public APIs. Miller source integration is explicitly deferred. This approved
+preintegration tranche does not edit Miller or claim that Miller is wired to
+the package.
+
+The caller owns its session, request, generation, playback, projection, and cue
+identity values. It supplies the semantic payloads used for projection and
+mouth cues; the package validates ordering and fences stale renderer callbacks
+but does not synthesize Miller assistant state. The standalone diagnostic app
+creates synthetic values only for its controls. The renderer session UUID
+exposed in `HostSnapshot` is an internal callback-fencing value, not Miller's
+request or session state.
 
 ## Standalone alpha
 
 The current repository milestone assembles a Swift 6.1 macOS 15 diagnostic
 application with a native-first fallback UI and contained WebKit renderer. It
 captures a selected VRM as bounded in-memory bytes, performs native admission,
-and keeps file paths out of the bridge, diagnostics, and persistence. A strict
-ordered Swift/TypeScript bridge drives the renderer; the host keeps the fallback
-visible until a valid first frame, closes startup and load deadlines, and permits
-only one explicit retry.
+and keeps source paths out of the bridge and profile metadata. A strict ordered
+Swift/TypeScript bridge drives the renderer; the host keeps the fallback visible
+until a valid first frame, closes startup and load deadlines, and permits only
+one explicit retry.
 
 The app uses the existing pure reducers for lifecycle, semantic presentation,
 mouth cues, Reduced Motion, and visibility. Its local web bundle has a closed
 CSP and scheme boundary, fail-closed navigation, nonpersistent data storage,
 session fencing, and idempotent renderer teardown. The release bundle is ad-hoc
 signed with App Sandbox, read-only user-selected file access, and the network
-client entitlement required for WebKit child processes. `scripts/test-signed-boundary.sh`
-verifies that freshly signed bundles reach wrapper and renderer readiness without
-shipping fault hooks or private model fixtures.
+client entitlement required for WebKit child processes; it has no network
+runtime dependency. `scripts/test-signed-boundary.sh` defines an automated
+signed-boundary check for wrapper and renderer readiness without fault hooks or
+private model fixtures.
 
 The public automated gate verifies the complete npm lock graph and legal
 ledger, regenerates deterministic web resources, compares two independent
@@ -31,18 +46,45 @@ the shared Clang module cache is unchanged. CI runs this gate but does not
 publish, notarize, or claim private-fixture visual qualification.
 
 Clean Swift tests and app builds use repository resources as committed. They
-do not run npm or regenerate `Resources/Web/`. Maintainer-only bundle
+do not run npm or regenerate `Sources/MillerAvatarHost/Resources/Web/`.
+Maintainer-only bundle
 regeneration requires the pinned Node/npm toolchain and an audited
 pre-populated offline cache; a clean checkout alone is insufficient.
 
-The live compatibility target is VRM 1.0 with user-supplied models. The narrow
-v0.1 scope for admitted user-supplied VRMA remains to be closed; legacy VRM 0.x
-compatibility is deferred.
+The admitted asset envelope is VRM 1.0 with user-supplied models. VRMA and
+animation-pack support are not bundled or claimed; legacy VRM 0.x compatibility
+is deferred.
 
-The v0.1 product does not bundle a default character model or default animation
-pack. It launches into its native static/no-avatar presentation until the user
-selects an admitted local asset. Internal fixtures and asset-authoring studies
-are qualification evidence only and are not release content.
+The package bundles no default avatar, VRMA, animation pack, model cache, or
+user-file copy. It launches into its native static/no-avatar presentation until
+the caller supplies an admitted asset. Internal fixtures and asset-authoring
+studies are qualification evidence only and are not release content.
+
+## Public package boundary
+
+`AvatarSurfaceController` is the main `@MainActor` surface. Embed its `view`,
+call `start()` after the owner has installed the view, and observe
+`onObservation` and `onSnapshot` for renderer events and lifecycle state. Its
+renderer surface is deliberately noninteractive: it does not accept focus,
+hit testing, accessibility children, or drag-and-drop input. `load(_:)` accepts
+only an `AdmittedAsset`; raw bytes and file paths are not renderer inputs. Call
+`dispose(reason:)` when the owner tears down the surface. Start and disposal are
+idempotent; a disposed controller is not restarted.
+
+`WebKitAvatarRendererDriver` is the package's single renderer driver. The
+`MillerAvatarHost` SwiftPM target owns exactly one renderer resource bundle,
+assembled from `Sources/MillerAvatarHost/Resources/Web/`. An assembled `.app`
+resolves the fixed `MillerAvatar_MillerAvatarHost.bundle`; ordinary SwiftPM
+contexts use `Bundle.module` as the fallback. No alternate renderer bundle or
+asset pack is selected at runtime.
+
+`AvatarProfileStore` is the optional owner-only local persistence boundary. It
+stores `profiles-v1.json` metadata and a security-scoped bookmark, not a copied
+model file or source path. Import and load re-capture, re-admit, and SHA-256
+check the source bytes. Three consecutive load or renderer failures quarantine a
+profile; recovery requires an explicit success reset or explicit reselection.
+The original user file remains untouched. See `docs/architecture.md` for the
+schema and lifecycle details.
 
 See `docs/architecture.md` and `docs/development.md` for the implemented
 foundation.
@@ -50,12 +92,20 @@ foundation.
 ## Asset posture
 
 Miller Avatar will not assume that a permissive renderer license clears
-models, textures, animations, fonts, sounds, or other assets. The v0.1 release
-distributes no character model or motion asset.
+models, textures, animations, fonts, sounds, or other assets. This tranche
+distributes no character model, VRMA, motion asset, model cache, or user-file
+copy.
 
-User-supplied assets remain separate from Miller Avatar's own license.
+User-supplied assets remain separate from Miller Avatar's own license and are
+admitted only from bounded in-memory bytes.
 
 See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
+
+## Qualification status
+
+The repository contains automated contract, build, cleanup, and signed-boundary
+checks. This documentation does not claim Miller integration or manual visual,
+signing, or release qualification results before that work is completed.
 
 ## License
 

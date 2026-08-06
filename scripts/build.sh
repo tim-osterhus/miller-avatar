@@ -174,8 +174,7 @@ mkdir -p \
     "$generated_root" \
     "$stage_app/Contents/MacOS" \
     "$stage_app/Contents/Resources/Legal" \
-    "$stage_app/Contents/Resources/Static" \
-    "$stage_app/Contents/Resources/Web"
+    "$stage_app/Contents/Resources/Static"
 cp "$repo_root/Config/Info.plist" "$stage_app/Contents/Info.plist"
 cp "$binary_directory/MillerAvatarApp" "$stage_app/Contents/MacOS/MillerAvatarApp"
 strip -S -x "$stage_app/Contents/MacOS/MillerAvatarApp"
@@ -183,7 +182,7 @@ cp "$repo_root/LICENSE" "$stage_app/Contents/Resources/Legal/LICENSE"
 cp "$repo_root/NOTICE" "$stage_app/Contents/Resources/Legal/NOTICE"
 cp "$repo_root/THIRD_PARTY_NOTICES.md" "$stage_app/Contents/Resources/Legal/THIRD_PARTY_NOTICES.md"
 cp -R "$repo_root/Resources/Static/." "$stage_app/Contents/Resources/Static/"
-cp -R "$repo_root/Resources/Web/." "$stage_app/Contents/Resources/Web/"
+cp -R "$binary_directory/MillerAvatar_MillerAvatarHost.bundle" "$stage_app/Contents/Resources/"
 
 build_manifest="$stage_app/Contents/Resources/build-manifest.json"
 manifest_entries="$run_root/build-manifest-entries.txt"
@@ -202,7 +201,7 @@ executable_input_manifest_entries="$run_root/executable-input-manifest-entries.t
             scripts/verify-toolchain.sh \
             THIRD_PARTY_NOTICES.md
         find Sources -type f -name '*.swift' -print
-        find Resources/Static Resources/Web -type f -print
+        find Resources/Static Sources/MillerAvatarHost/Resources/Web -type f -print
     } | LC_ALL=C sort -u |
         while IFS= read -r relative_path; do
             digest=$(shasum -a 256 "$relative_path" | awk '{print $1}')
@@ -247,7 +246,7 @@ source_revision=$(
         THIRD_PARTY_NOTICES.md \
         Sources \
         Resources/Static \
-        Resources/Web \
+        Sources/MillerAvatarHost/Resources/Web \
         scripts/build.sh \
         scripts/verify-toolchain.sh
 )
@@ -256,7 +255,7 @@ if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]]; then
     exit 1
 fi
 executable_input_sha256=$(shasum -a 256 "$executable_input_manifest_entries" | awk '{print $1}')
-web_bundle_manifest_sha256=$(shasum -a 256 "$repo_root/Resources/Web/bundle-manifest.json" | awk '{print $1}')
+web_bundle_manifest_sha256=$(shasum -a 256 "$repo_root/Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json" | awk '{print $1}')
 {
     printf '%s' '{"schema":"miller-avatar.build-manifest/v1"'
     printf '%s' ',"product":{"name":"Miller Avatar Alpha","bundle_identifier":"ai.millrace.miller-avatar.alpha","short_version":"0.0.1","build_version":"1","deployment_target":"15.0"}'

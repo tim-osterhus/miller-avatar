@@ -1,22 +1,110 @@
 # Architecture
 
-The standalone alpha is a Swift 6.1 package targeting macOS 15.
-`MillerAvatarCore` owns shared contracts, `MillerAvatarHost` is the native-host
-boundary, and `MillerAvatarApp` is the executable assembly target.
+Miller Avatar is a reusable offline Swift package plus a standalone diagnostic
+app. It is a presentation boundary, not a bundled assistant or asset pack. The
+package targets macOS 15 with Swift 6.1. `MillerAvatarCore` owns shared
+contracts and renderer-neutral policy, `MillerAvatarHost` is the public native
+host boundary, and `MillerAvatarApp` is a thin diagnostic consumer of that
+public API. Miller source integration is explicitly deferred; this tranche does
+not edit Miller.
 
-The core defines the closed v1 Swift/TypeScript bridge contract and shared
-fixture corpus. It also implements pure, renderer-neutral reducers for the
-native lifecycle, semantic presentation projection, mouth-cue revocation and
-Reduced Motion, suspension/resume reconciliation, and serialized visibility
-commands. It also owns bounded native admission of immutable in-memory bytes
-for the closed GLB-form VRM 1.0 envelope; the full policy is in
-`asset-policy.md`. The native host provides bounded selected-file capture,
-ordered bridge transport, a reducer-backed orchestrator, and a contained WebKit
-surface with a closed local scheme, fail-closed navigation, nonpersistent data
-storage, session leases that fence stale callbacks, and idempotent unified
-teardown. The AppKit assembly exposes native diagnostics and fallback controls;
-the fallback remains visible until a valid first frame, and startup/load failure
-retains usable native controls with one explicit retry.
+## Package boundary and identity ownership
+
+The core defines the closed Swift/TypeScript bridge contract. Its pure,
+renderer-neutral reducers cover native lifecycle, semantic presentation,
+mouth-cue revocation, Reduced Motion, suspension/resume reconciliation, and
+serialized visibility commands. It also admits immutable in-memory bytes for the
+closed GLB-form VRM 1.0 envelope; the full policy is in `asset-policy.md`.
+
+The caller owns semantic session, request, generation, playback, projection,
+and cue identity values. `ProjectPhasePayload` carries the caller's projection
+sequence, generation ID, phase, and playback ID. `SetMouthPayload` carries the
+caller's generation/playback IDs, cue index, playback offset, and scalar. The
+package validates ordering, lease matching, and safe bounds; it does not derive
+these values from Miller assistant state. The standalone diagnostic app creates
+synthetic values for its controls. The host also allocates an internal renderer
+session UUID for callback fencing and exposes it in `HostSnapshot`; that value
+is not Miller's request or session identity.
+
+## Public host surface
+
+`AvatarSurfaceController` is `@MainActor` and owns the renderer surface's
+lifecycle. Its public contract is:
+
+| Surface | Contract |
+| --- | --- |
+| `view` | A container for the renderer. The container and installed WebKit view are noninteractive: no focus, hit testing, accessibility children, or drag-and-drop input. |
+| `start()` | Starts the package renderer and deadline timer once. Repeated calls do not create another renderer or timer. |
+| `load(_:)` | Accepts only an `AdmittedAsset` and returns `AssetLoadDisposition`; raw bytes, URLs, and paths are not accepted by the renderer surface. |
+| `onObservation` | Receives session-validated `HostObservation` values on the main actor. |
+| `onSnapshot` / `snapshot` | Exposes lifecycle, fallback, admission, visibility, identity, counters, failure, and retry state. |
+| `dispose(reason:)` | Stops the renderer, detaches its view, invalidates the deadline timer, and permanently closes the controller. It is idempotent. |
+
+The owner should embed `view`, then call `start()` after its view hierarchy is
+ready, and call `dispose(reason:)` from window or application teardown. A
+disposed controller is not restarted. `retry()` is the explicit single retry
+path after a renderer failure.
+
+`WebKitAvatarRendererDriver` is the single package renderer driver. It owns the
+contained WebKit bridge, local scheme, session lease, observation transport, and
+unified teardown used by `AvatarSurfaceController`; the standalone app does not
+provide a second renderer implementation.
+
+## Offline renderer resources
+
+The `MillerAvatarHost` SwiftPM target has exactly one package-owned renderer
+resource bundle. Its source directory is
+`Sources/MillerAvatarHost/Resources/Web/`, declared as the target's
+`.copy("Resources/Web")` resource. SwiftPM produces
+`MillerAvatar_MillerAvatarHost.bundle`; the assembled app places that fixed
+bundle at `Contents/Resources/MillerAvatar_MillerAvatarHost.bundle`.
+
+`WebKitAvatarRendererDriver` resolves that fixed embedded bundle when
+`Bundle.main` is an `.app`. In ordinary SwiftPM contexts, including tests, it
+falls back to `Bundle.module`. Both paths must expose exactly the reviewed five
+resources under `Web/`: `index.html`, `app.js`, `styles.css`,
+`bundle-manifest.json`, and `bundle-metafile.json`. There is no alternate
+package-owned renderer bundle.
+
+The local web renderer uses a closed CSP and local scheme, fail-closed
+navigation, nonpersistent WebKit data storage, session fencing, and idempotent
+teardown. It has no network runtime dependency. The signed app's network-client
+entitlement exists for WebKit child-process startup, not for fetching avatar
+content.
+
+## Asset admission and profile persistence
+
+Asset admission accepts bounded immutable in-memory bytes and returns an
+`AdmittedAsset` capability. File selection and security-scoped access belong to
+the host or caller. No default avatar, VRMA, animation pack, model cache, or
+user-file copy is packaged. The native fallback is a static/no-avatar state
+until an admitted user-supplied asset is loaded.
+
+`AvatarProfileStore` is a public actor for optional local profile metadata. It
+uses a caller-provided root and the owner-only `profiles-v1.json` file. The
+envelope is schema version 1 with a `profiles` array. Each `AvatarProfile`
+record contains exactly:
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | Profile schema version, currently `1`. |
+| `id` / `displayName` | Stable profile identity and bounded display label. |
+| `modelBookmark` | Security-scoped bookmark data; no source path is stored. |
+| `modelSHA256` / `capturedByteCount` | Digest and captured-byte metadata for revalidation. |
+| `rightsLabel` / `performanceProfile` | Fixed metadata: `local_user_supplied` and `lightweight`. |
+| `consecutiveLoadFailures` | Persisted failure count from `0` through `3`; quarantine is derived at `3`. |
+
+Import captures the selected source inside a balanced security scope, admits
+the bytes, records the bookmark and digest, and persists metadata. Load resolves
+the bookmark, refreshes stale bookmark data, captures and re-admits the current
+source, and updates the digest and byte count when they changed. Bookmark,
+capture, admission, and renderer failures increment the profile's failure
+count. Three consecutive failures quarantine the profile; a quarantined profile
+is not loaded automatically. Explicit success reset or explicit reselection is
+required. Removing a profile removes only local metadata and leaves the
+original user file untouched. The store creates its root with mode `0700` and
+its profile file with mode `0600`; persistence is owner-only and path-free in
+its error surface.
 
 `Web/` contains the pinned TypeScript local-web renderer core and production
 bootstrap. It rejects
@@ -38,10 +126,11 @@ executable output and `_CodeSignature` bytes stay outside the committed
 pre-sign manifest; an external post-sign receipt hashes the signed executable
 and complete signed tree. Neither receipt includes itself.
 
-Clean Swift and app workflows treat `Resources/Web/` as a committed offline
-artifact. They do not run npm or regenerate the bundle. Maintainer regeneration
-requires the exact pinned Node/npm toolchain and an audited pre-populated npm
-cache that satisfies `Web/package-lock.json` without registry access.
+Clean Swift and app workflows treat `Sources/MillerAvatarHost/Resources/Web/`
+as a committed offline artifact. They do not run npm or regenerate the bundle.
+Maintainer regeneration requires the exact pinned Node/npm toolchain and an
+audited pre-populated npm cache that satisfies `Web/package-lock.json` without
+registry access.
 
 The build harness assembles an ad-hoc-signed local app from reviewed source
 inputs. It uses repository-owned or explicitly supplied private SwiftPM and
@@ -58,3 +147,10 @@ and the release contract snapshots both Xcode's DerivedData module cache and
 the Darwin per-user Clang module cache before and after the gate. CI runs the
 same public checks with read-only repository permission and contains no upload,
 package, tag, or release step.
+
+The standalone app is a diagnostic consumer, not an alternate host or renderer
+implementation. Its controls generate synthetic presentation payloads and use
+the public surface to exercise lifecycle, visibility, admission, and teardown.
+The repository documents automated checks and command paths; it does not claim
+Miller integration or manual visual, signing, or release qualification results
+before qualification is complete.

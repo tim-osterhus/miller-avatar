@@ -76,6 +76,7 @@ export class WebRendererCore {
   private counters: RendererCounters = { frames: 0, updates: 0, renders: 0 };
   private activeLoad: AbortController | null = null;
   private backendReleased = false;
+  private awaitingReconciliation = false;
   private readonly loadTimeoutMilliseconds: number;
   private readonly loadTimeoutScheduler: LoadTimeoutScheduler;
 
@@ -160,6 +161,14 @@ export class WebRendererCore {
       case "reset":
         this.applyPresentation(command);
         return;
+      case "reconcile_presentation":
+        if (!this.awaitingReconciliation) {
+          this.fail("bridge_invalid", "resume", sequence);
+          return;
+        }
+        this.applyPresentation(command);
+        this.awaitingReconciliation = false;
+        return;
     }
   }
 
@@ -209,6 +218,7 @@ export class WebRendererCore {
 
   private visibility(visibility: "visible" | "occluded" | "hidden", sequence: number): void {
     if (visibility !== "visible") {
+      this.awaitingReconciliation = false;
       if (this.state === "live") {
         this.cancelFrame();
         this.backend.stopClock();
@@ -223,6 +233,7 @@ export class WebRendererCore {
     }
     this.backend.startClock();
     this.applyPresentationInput({ type: "resume" });
+    this.awaitingReconciliation = true;
     this.state = reduceLifecycle(this.state, { type: "resume" }).state;
     if (!this.advanceCounters(1, this.presentation.reducedMotion ? 0 : 1, 1, "resume", sequence)) return;
     if (!this.presentation.reducedMotion) {
@@ -329,6 +340,7 @@ export class WebRendererCore {
   }
 
   private terminatePresentation(): void {
+    this.awaitingReconciliation = false;
     const result = reducePresentation(this.presentation, { type: "renderer_failed" });
     this.presentation = result.state;
     for (const effect of result.effects) {
@@ -377,9 +389,13 @@ export class WebRendererCore {
   }
 
   private commandIsLegal(command: PresentationCommand): boolean {
+    if (this.awaitingReconciliation && command.type !== "reconcile_presentation") return false;
     if (command.type === "configure") return this.state === "booting";
     if (command.type === "load_asset") return this.state === "ready";
     if (command.type === "set_mouth") return this.state === "live";
+    if (command.type === "reconcile_presentation") {
+      return this.awaitingReconciliation && this.state === "live";
+    }
     if (command.type === "set_visibility") {
       return command.payload.visibility === "visible"
         ? this.state === "suspended"
@@ -405,6 +421,7 @@ function operationFor(command: PresentationCommand): Extract<PresentationObserva
   if (command.type === "load_asset") return "load";
   if (command.type === "set_visibility") return command.payload.visibility === "visible" ? "resume" : "suspend";
   if (command.type === "set_policy") return "policy";
+  if (command.type === "reconcile_presentation") return "resume";
   if (command.type === "dispose") return "dispose";
   return "render";
 }

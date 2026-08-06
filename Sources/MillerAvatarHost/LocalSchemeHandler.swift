@@ -43,7 +43,7 @@ public struct LocalSchemeResourceRecord: Equatable, Sendable {
     }
 }
 
-private enum LocalSchemeBundlePolicy {
+enum LocalSchemeBundlePolicy {
     static let mimeTypes: [String: String] = [
         "/bundle/index.html": "text/html; charset=utf-8",
         "/bundle/app.js": "text/javascript; charset=utf-8",
@@ -58,6 +58,93 @@ private enum LocalSchemeBundlePolicy {
 
     static func sha256(of data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private struct LocalSchemeAssetIdentity: Equatable {
+    let token: UUID
+    let generation: UInt64
+}
+
+private final class LocalSchemeAssetStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var token: UUID
+    private var url: URL
+    private var data: Data?
+    private var generation: UInt64 = 0
+    private var servingEnabled = true
+
+    init(token: UUID, url: URL, data: Data) {
+        self.token = token
+        self.url = url
+        self.data = data
+    }
+
+    var activeURL: URL {
+        lock.withLock { url }
+    }
+
+    var retainedByteCount: Int {
+        lock.withLock { data?.count ?? 0 }
+    }
+
+    func replace(token: UUID, url: URL, data: Data) {
+        lock.withLock {
+            precondition(generation < UInt64.max, "asset generation exhausted")
+            generation += 1
+            releaseLocked()
+            self.token = token
+            self.url = url
+            self.data = data
+            servingEnabled = true
+        }
+    }
+
+    func isActiveURL(_ candidate: URL) -> Bool {
+        lock.withLock { candidate == url }
+    }
+
+    func data(for candidate: URL) -> Data? {
+        lock.withLock {
+            guard servingEnabled, candidate == url else { return nil }
+            return data
+        }
+    }
+
+    func identity(for candidate: URL) -> LocalSchemeAssetIdentity? {
+        lock.withLock {
+            guard servingEnabled, candidate == url, data != nil else { return nil }
+            return LocalSchemeAssetIdentity(token: token, generation: generation)
+        }
+    }
+
+    func revokeServing() {
+        lock.withLock {
+            servingEnabled = false
+        }
+    }
+
+    func releaseBytes() {
+        lock.withLock {
+            releaseLocked()
+        }
+    }
+
+    func release(identity: LocalSchemeAssetIdentity?) {
+        lock.withLock {
+            guard let identity,
+                  identity.token == token,
+                  identity.generation == generation
+            else {
+                return
+            }
+            releaseLocked()
+        }
+    }
+
+    private func releaseLocked() {
+        servingEnabled = false
+        data = nil
     }
 }
 
@@ -89,9 +176,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     base-uri 'none'; form-action 'none'; navigate-to 'none'
     """
 
-    public var activeAssetURL: URL {
-        lock.withLock { storedAssetURL }
-    }
+    public var activeAssetURL: URL { assetStore.activeURL }
 
     public var entrypointURL: URL {
         Self.entrypointURL(for: lease.id)
@@ -100,8 +185,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     private let lease: RendererSessionLease
     private let sessionController: RendererSessionController
     private let bundledResources: [String: Data]
-    private var storedAssetURL: URL
-    private var assetData: Data?
+    private let assetStore: LocalSchemeAssetStore
     private let scheduleDelivery: (@escaping () -> Void) -> Void
     private let lock = NSLock()
     private let deliveryGate = SerializedCallbackGate(
@@ -109,9 +193,14 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     )
     // Access is confined to sessionController.synchronize -> deliveryGate.
     private nonisolated(unsafe) var deliveries: [UUID: LocalSchemeDelivery] = [:]
-    private var assetServingEnabled = true
+    private nonisolated(unsafe) var deliveryIDsByTask: [ObjectIdentifier: UUID] = [:]
+    private nonisolated(unsafe) var taskIDsByDelivery: [UUID: ObjectIdentifier] = [:]
 
-    public init(
+    internal var retainedAssetByteCount: Int {
+        assetStore.retainedByteCount
+    }
+
+    package init(
         lease: RendererSessionLease,
         sessionController: RendererSessionController,
         bundledResources: [String: Data],
@@ -130,18 +219,21 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         self.lease = lease
         self.sessionController = sessionController
         self.bundledResources = bundledResources
-        self.assetData = assetData
         self.scheduleDelivery = scheduleDelivery
         let assetPath = "/session/\(lease.id.uuidString.lowercased())/"
             + "\(assetToken.uuidString.lowercased()).vrm"
         guard let activeAssetURL = URL(string: Self.origin + assetPath) else {
             throw LocalSchemeError.invalidInventory
         }
-        storedAssetURL = activeAssetURL
+        assetStore = LocalSchemeAssetStore(
+            token: assetToken,
+            url: activeAssetURL,
+            data: assetData
+        )
     }
 
     @discardableResult
-    public func installAsset(token: UUID, data: Data) -> Bool {
+    package func installAsset(token: UUID, data: Data) -> Bool {
         guard let url = URL(string: Self.origin + "/session/"
             + lease.id.uuidString.lowercased() + "/"
             + token.uuidString.lowercased() + ".vrm")
@@ -149,11 +241,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
             return false
         }
         return sessionController.perform(for: lease) {
-            lock.withLock {
-                storedAssetURL = url
-                assetData = data
-                assetServingEnabled = true
-            }
+            assetStore.replace(token: token, url: url, data: data)
         }
     }
 
@@ -194,10 +282,8 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
 
         let data: Data
         let mimeType: String
-        if url == activeAssetURL {
-            guard let activeAssetData = lock.withLock({
-                assetServingEnabled ? assetData : nil
-            }) else {
+        if assetStore.isActiveURL(url) {
+            guard let activeAssetData = assetStore.data(for: url) else {
                 throw LocalSchemeError.staleSession
             }
             data = activeAssetData
@@ -230,19 +316,33 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     public func start(_ sink: any LocalSchemeTaskSink) {
+        start(sink, taskIdentity: nil)
+    }
+
+    private func start(
+        _ sink: any LocalSchemeTaskSink,
+        taskIdentity: ObjectIdentifier?
+    ) {
         let id = UUID()
         var scheduled = false
         var failure: (any Error)?
         let admitted = sessionController.perform(for: lease) {
             do {
                 let response = try responseUnchecked(for: sink.request)
+                let assetIdentity = assetStore.identity(for: response.url)
                 let pendingDelivery = LocalSchemeDelivery(
                     response: response,
-                    sink: sink
+                    sink: sink,
+                    assetIdentity: assetIdentity,
+                    releaseAsset: assetStore.release
                 )
                 deliveryGate.sync {
                     lock.withLock {
                         deliveries[id] = pendingDelivery
+                        if let taskIdentity {
+                            deliveryIDsByTask[taskIdentity] = id
+                            taskIDsByDelivery[id] = taskIdentity
+                        }
                     }
                 }
                 scheduleDelivery { [weak self, pendingDelivery] in
@@ -265,6 +365,8 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
                 let pending = lock.withLock {
                     let pending = Array(deliveries.values)
                     deliveries.removeAll()
+                    deliveryIDsByTask.removeAll()
+                    taskIDsByDelivery.removeAll()
                     return pending
                 }
                 pending.forEach { $0.cancel() }
@@ -273,29 +375,40 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     public func revokeAssetServing() {
-        lock.withLock {
-            assetServingEnabled = false
-        }
+        assetStore.revokeServing()
     }
 
     public func releaseAssetBytes() {
-        lock.withLock {
-            assetData = nil
-        }
+        assetStore.releaseBytes()
     }
 
     public func webView(
         _ webView: WKWebView,
         start urlSchemeTask: any WKURLSchemeTask
     ) {
-        start(WebKitSchemeTaskSink(task: urlSchemeTask))
+        start(
+            WebKitSchemeTaskSink(task: urlSchemeTask),
+            taskIdentity: ObjectIdentifier(urlSchemeTask)
+        )
     }
 
     public func webView(
         _ webView: WKWebView,
         stop urlSchemeTask: any WKURLSchemeTask
     ) {
-        cancelAll()
+        let taskIdentity = ObjectIdentifier(urlSchemeTask)
+        sessionController.synchronize {
+            deliveryGate.sync {
+                let pending: LocalSchemeDelivery? = lock.withLock {
+                    guard let id = deliveryIDsByTask.removeValue(forKey: taskIdentity) else {
+                        return nil
+                    }
+                    taskIDsByDelivery.removeValue(forKey: id)
+                    return deliveries.removeValue(forKey: id)
+                }
+                pending?.cancel()
+            }
+        }
     }
 
     private func complete(id: UUID, delivery: LocalSchemeDelivery) {
@@ -315,8 +428,13 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private func removeDelivery(_ id: UUID) {
-        _ = lock.withLock {
+        lock.withLock {
             deliveries.removeValue(forKey: id)
+            if let taskIdentity = taskIDsByDelivery.removeValue(forKey: id) {
+                if deliveryIDsByTask[taskIdentity] == id {
+                    deliveryIDsByTask.removeValue(forKey: taskIdentity)
+                }
+            }
         }
     }
 
@@ -405,16 +523,25 @@ private final class LocalSchemeDelivery {
     private var response: LocalSchemeResponse?
     private var sink: (any LocalSchemeTaskSink)?
     private var cancelled = false
+    private var finishing = false
+    private var assetReleased = false
+    private let assetIdentity: LocalSchemeAssetIdentity?
+    private let releaseAsset: (LocalSchemeAssetIdentity?) -> Void
 
     init(
         response: LocalSchemeResponse,
-        sink: any LocalSchemeTaskSink
+        sink: any LocalSchemeTaskSink,
+        assetIdentity: LocalSchemeAssetIdentity?,
+        releaseAsset: @escaping (LocalSchemeAssetIdentity?) -> Void
     ) {
         self.response = response
         self.sink = sink
+        self.assetIdentity = assetIdentity
+        self.releaseAsset = releaseAsset
     }
 
     func cancel() {
+        guard !finishing else { return }
         failAsStale()
     }
 
@@ -450,21 +577,31 @@ private final class LocalSchemeDelivery {
             failAsStale()
             return
         }
+        finishing = true
+        pendingSink.finish()
+        cancelled = true
+        releaseAssetIfNeeded()
         sink = nil
         self.response = nil
-        pendingSink.finish()
     }
 
     private var canContinue: Bool {
-        !cancelled && sink != nil && response != nil
+        !cancelled && !finishing && sink != nil && response != nil
     }
 
     private func failAsStale() {
-        guard let pendingSink = sink else { return }
+        guard !cancelled, !finishing, let pendingSink = sink else { return }
         cancelled = true
+        pendingSink.fail(with: LocalSchemeError.staleSession)
+        releaseAssetIfNeeded()
         sink = nil
         response = nil
-        pendingSink.fail(with: LocalSchemeError.staleSession)
+    }
+
+    private func releaseAssetIfNeeded() {
+        guard !assetReleased else { return }
+        assetReleased = true
+        releaseAsset(assetIdentity)
     }
 
 }

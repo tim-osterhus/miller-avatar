@@ -1,7 +1,6 @@
 import AppKit
 import MillerAvatarCore
 import MillerAvatarHost
-@preconcurrency import WebKit
 
 private final class FocusableButton: NSButton {
     override var acceptsFirstResponder: Bool { isEnabled && !isHidden }
@@ -15,12 +14,81 @@ private final class FocusableSlider: NSSlider {
     override var acceptsFirstResponder: Bool { isEnabled && !isHidden }
 }
 
+private struct SyntheticProjectionState {
+    private static let offsetStepMilliseconds: UInt64 = 100
+
+    var projectionSequence: UInt64 = 0
+    var phase: PresentationPhase = .idle
+    var generationID: UUID?
+    var playbackID: UUID?
+    var cueIndex: UInt64 = 0
+    var playbackOffsetMilliseconds: UInt64 = 0
+
+    mutating func project(phase: PresentationPhase) -> ProjectPhasePayload? {
+        guard projectionSequence < BridgeContract.maximumSafeInteger else { return nil }
+        projectionSequence += 1
+        resetLease()
+        self.phase = phase
+
+        switch phase {
+        case .idle, .listening, .transcribing:
+            break
+        case .speaking:
+            generationID = UUID()
+            playbackID = UUID()
+        case .thinking, .responding, .stopped, .failed:
+            generationID = UUID()
+        }
+
+        return ProjectPhasePayload(
+            projectionSequence: projectionSequence,
+            generationID: generationID,
+            phase: phase,
+            playbackID: playbackID
+        )
+    }
+
+    mutating func mouth(scalar: Double) -> SetMouthPayload? {
+        guard phase == .speaking,
+              scalar.isFinite,
+              (0...1).contains(scalar),
+              let generationID,
+              let playbackID,
+              cueIndex < BridgeContract.maximumSafeInteger,
+              playbackOffsetMilliseconds
+                  <= 86_400_000 - Self.offsetStepMilliseconds
+        else { return nil }
+
+        cueIndex += 1
+        playbackOffsetMilliseconds += Self.offsetStepMilliseconds
+        return SetMouthPayload(
+            generationID: generationID,
+            playbackID: playbackID,
+            cueIndex: cueIndex,
+            playbackOffsetMilliseconds: playbackOffsetMilliseconds,
+            scalar: scalar
+        )
+    }
+
+    mutating func reset() {
+        resetLease()
+        phase = .idle
+    }
+
+    private mutating func resetLease() {
+        generationID = nil
+        playbackID = nil
+        cueIndex = 0
+        playbackOffsetMilliseconds = 0
+    }
+}
+
 @MainActor
 final class DiagnosticsViewController: NSViewController {
     var onSnapshotChange: ((HostSnapshot) -> Void)?
     var initialFocusView: NSView { startButton }
 
-    private let host: HostOrchestrator
+    private let surfaceController: AvatarSurfaceController
     private let selector = AssetSelectionController()
     private let statusLabel = NSTextField(labelWithString: "")
     private let fallbackView = NSView()
@@ -37,12 +105,12 @@ final class DiagnosticsViewController: NSViewController {
     )
     private let disposeButton = FocusableButton(title: "Dispose", target: nil, action: nil)
     private var nativeFocusViews: [NSView] = []
-    private weak var rendererView: WKWebView?
+    private var syntheticProjection = SyntheticProjectionState()
 
-    init(host: HostOrchestrator) {
-        self.host = host
+    init(surface: AvatarSurfaceController) {
+        surfaceController = surface
         super.init(nibName: nil, bundle: nil)
-        host.onChange = { [weak self] snapshot in
+        surface.onSnapshot = { [weak self] snapshot in
             self?.render(snapshot)
             self?.onSnapshotChange?(snapshot)
         }
@@ -52,29 +120,10 @@ final class DiagnosticsViewController: NSViewController {
         nil
     }
 
-    func installRendererView(_ webView: WKWebView?) {
-        rendererView?.removeFromSuperview()
-        rendererView = webView
-        guard let webView else {
-            disposeButton.nextKeyView = startButton
-            return
-        }
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        liveView.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: liveView.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: liveView.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: liveView.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: liveView.bottomAnchor),
-        ])
-        disposeButton.nextKeyView = webView
-        webView.nextKeyView = startButton
-    }
-
     override func loadView() {
         view = NSView()
         buildInterface()
-        render(host.snapshot)
+        render(surfaceController.snapshot)
     }
 
     override func viewDidAppear() {
@@ -90,10 +139,7 @@ final class DiagnosticsViewController: NSViewController {
 
     func moveFocus(backward: Bool) -> Bool {
         guard let window = view.window else { return false }
-        var candidates = nativeFocusViews
-        if let rendererView, viewIsVisible(rendererView) {
-            candidates.append(rendererView)
-        }
+        let candidates = nativeFocusViews
         let enabled = candidates.map(focusEligible)
         let current = candidates.firstIndex {
             responder(window.firstResponder, belongsTo: $0)
@@ -135,7 +181,6 @@ final class DiagnosticsViewController: NSViewController {
         let occludeButton = button("Simulate Occluded", #selector(simulateOccluded))
         let resumeButton = button("Resume Visible", #selector(resumeVisible))
         let resetButton = button("Reset", #selector(resetRenderer))
-        let failButton = button("Simulate Render Failure", #selector(simulateFailure))
         disposeButton.target = self
         disposeButton.action = #selector(disposeRenderer)
         disposeButton.bezelStyle = .rounded
@@ -144,7 +189,7 @@ final class DiagnosticsViewController: NSViewController {
             [startButton, selectButton, phasePopup],
             [reducedMotion, mouthSlider, resetButton],
             [hideButton, occludeButton, resumeButton],
-            [failButton, disposeButton, NSView()],
+            [disposeButton, NSView(), NSView()],
         ])
         controls.rowSpacing = 8
         controls.columnSpacing = 8
@@ -170,6 +215,14 @@ final class DiagnosticsViewController: NSViewController {
         liveView.wantsLayer = true
         liveView.layer?.backgroundColor = NSColor.black.cgColor
         liveView.isHidden = true
+        surfaceController.view.translatesAutoresizingMaskIntoConstraints = false
+        liveView.addSubview(surfaceController.view)
+        NSLayoutConstraint.activate([
+            surfaceController.view.leadingAnchor.constraint(equalTo: liveView.leadingAnchor),
+            surfaceController.view.trailingAnchor.constraint(equalTo: liveView.trailingAnchor),
+            surfaceController.view.topAnchor.constraint(equalTo: liveView.topAnchor),
+            surfaceController.view.bottomAnchor.constraint(equalTo: liveView.bottomAnchor),
+        ])
 
         phaseBadgeLabel.wantsLayer = true
         phaseBadgeLabel.drawsBackground = true
@@ -228,13 +281,11 @@ final class DiagnosticsViewController: NSViewController {
         hideButton.nextKeyView = occludeButton
         occludeButton.nextKeyView = resumeButton
         resumeButton.nextKeyView = resetButton
-        resetButton.nextKeyView = failButton
-        failButton.nextKeyView = disposeButton
+        resetButton.nextKeyView = disposeButton
         disposeButton.nextKeyView = startButton
         nativeFocusViews = [
             startButton, selectButton, phasePopup, mouthSlider, reducedMotion,
-            hideButton, occludeButton, resumeButton, resetButton, failButton,
-            disposeButton,
+            hideButton, occludeButton, resumeButton, resetButton, disposeButton,
         ]
     }
 
@@ -318,10 +369,10 @@ final class DiagnosticsViewController: NSViewController {
     }
 
     @objc private func startRenderer() {
-        if host.snapshot.retryAvailable {
-            host.retry()
+        if surfaceController.snapshot.retryAvailable {
+            surfaceController.retry()
         } else {
-            host.startRenderer()
+            surfaceController.start()
         }
     }
 
@@ -331,36 +382,44 @@ final class DiagnosticsViewController: NSViewController {
             case .cancelled:
                 return
             case .rejected(let code):
-                host.rejectAsset(code)
+                surfaceController.rejectAsset(code)
             case .captured(let bytes):
                 switch await AssetAdmission().admit(bytes) {
                 case .admitted(let asset):
-                    host.load(asset)
+                    surfaceController.load(asset)
                 case .rejected(let code):
-                    host.rejectAsset(code)
+                    surfaceController.rejectAsset(code)
                 }
             }
         }
     }
 
     @objc private func changeReducedMotion() {
-        host.setReducedMotion(reducedMotion.state == .on)
+        surfaceController.setReducedMotion(reducedMotion.state == .on)
     }
 
-    @objc private func simulateHidden() { host.setVisibility(.hidden) }
-    @objc private func simulateOccluded() { host.setVisibility(.occluded) }
-    @objc private func resumeVisible() { host.setVisibility(.visible) }
-    @objc private func resetRenderer() { host.resetPresentation() }
+    @objc private func simulateHidden() { surfaceController.setVisibility(.hidden) }
+    @objc private func simulateOccluded() { surfaceController.setVisibility(.occluded) }
+    @objc private func resumeVisible() { surfaceController.setVisibility(.visible) }
+    @objc private func resetRenderer() {
+        syntheticProjection.reset()
+        surfaceController.reset(generationID: nil, reason: .operator)
+    }
     @objc private func changePhase() {
         guard let phase = PresentationPhase(rawValue: phasePopup.titleOfSelectedItem ?? "") else {
             return
         }
-        host.setPhase(phase)
+        guard let payload = syntheticProjection.project(phase: phase) else { return }
+        surfaceController.project(payload)
     }
 
-    @objc private func changeMouth() { host.setMouthScalar(mouthSlider.doubleValue) }
-    @objc private func simulateFailure() { host.simulateRendererFailure() }
-    @objc private func disposeRenderer() { host.dispose() }
+    @objc private func changeMouth() {
+        guard let payload = syntheticProjection.mouth(scalar: mouthSlider.doubleValue) else {
+            return
+        }
+        surfaceController.setMouth(payload)
+    }
+    @objc private func disposeRenderer() { surfaceController.dispose() }
 
     private func describe(_ state: RendererSessionState) -> String {
         switch state {

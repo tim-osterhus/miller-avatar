@@ -60,6 +60,34 @@ import MillerAvatarCore
         #expect(sequences == [1, 2])
     }
 
+    @Test func serializesResumeReconciliationWithoutMintingAProjectionSequence() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let sessionID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let bridge = BridgeController(sessionID: sessionID, caller: caller)
+
+        try await bridge.send(.reconcilePresentation(.init(
+            lastProjectionSequence: 17,
+            generationID: UUID(uuidString: "33333333-3333-4333-8333-333333333333"),
+            phase: .speaking,
+            playbackID: UUID(uuidString: "44444444-4444-4444-8444-444444444444"),
+            reducedMotion: true
+        )))
+
+        let call = try #require(caller.calls.last)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(call.commandJSON.utf8))
+                as? [String: Any]
+        )
+        #expect(object["sequence"] as? Int == 1)
+        #expect(object["type"] as? String == "reconcile_presentation")
+        let payload = try #require(object["payload"] as? [String: Any])
+        #expect(payload["last_projection_sequence"] as? Int == 17)
+        #expect(payload["generation_id"] as? String == "33333333-3333-4333-8333-333333333333")
+        #expect(payload["phase"] as? String == "speaking")
+        #expect(payload["playback_id"] as? String == "44444444-4444-4444-8444-444444444444")
+        #expect(payload["reduced_motion"] as? Bool == true)
+    }
+
 }
 
 @MainActor

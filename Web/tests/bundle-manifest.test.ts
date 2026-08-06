@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const bundleRoot = resolve(process.cwd(), "../Resources/Web");
+const bundleRoot = resolve(process.cwd(), "../Sources/MillerAvatarHost/Resources/Web");
 const repositoryRoot = resolve(process.cwd(), "..");
+const looseBundleRoot = resolve(repositoryRoot, "Resources/Web");
 const payloadMimes = {
   "app.js": "text/javascript; charset=utf-8",
   "bundle-metafile.json": "application/json; charset=utf-8",
   "index.html": "text/html; charset=utf-8",
   "styles.css": "text/css; charset=utf-8",
 } as const;
+
+test("renderer bundle has one package-owned canonical source location", () => {
+  assert.equal(existsSync(bundleRoot), true);
+  assert.equal(existsSync(looseBundleRoot), false);
+});
 
 test("committed web bundle has a complete non-self-referential v2 manifest", () => {
   const manifest = JSON.parse(readFileSync(resolve(bundleRoot, "bundle-manifest.json"), "utf8")) as {

@@ -64,7 +64,7 @@ public struct AssetAdmission: Sendable {
         }
     }
 
-    private func admitSynchronously(_ capturedBytes: Data) -> AssetAdmissionResult {
+    package func admitSynchronously(_ capturedBytes: Data) -> AssetAdmissionResult {
         let start = monotonicNow()
         let (deadline, overflow) = start.addingReportingOverflow(timeoutNanoseconds)
         guard !overflow else { return .rejected(.resourceLimit) }

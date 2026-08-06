@@ -15,12 +15,12 @@ public protocol SecurityScopedAccess: AnyObject, Sendable {
     func stopAccessing(_ url: URL)
 }
 
-private final class SystemSecurityScopedAccess: SecurityScopedAccess, @unchecked Sendable {
-    func startAccessing(_ url: URL) -> Bool {
+package final class SystemSecurityScopedAccess: SecurityScopedAccess, @unchecked Sendable {
+    package func startAccessing(_ url: URL) -> Bool {
         url.startAccessingSecurityScopedResource()
     }
 
-    func stopAccessing(_ url: URL) {
+    package func stopAccessing(_ url: URL) {
         url.stopAccessingSecurityScopedResource()
     }
 }
@@ -49,14 +49,20 @@ public final class AssetSelectionController {
         securityScope: (any SecurityScopedAccess)? = nil
     ) -> AssetCaptureResult {
         let securityScope = securityScope ?? SystemSecurityScopedAccess()
-        let scoped = securityScope.startAccessing(url)
-        defer {
-            if scoped {
-                securityScope.stopAccessing(url)
-            }
+        guard securityScope.startAccessing(url) else {
+            return .rejected(.assetRejected)
         }
+        defer { securityScope.stopAccessing(url) }
 
-        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        return captureScoped(url: url, maximumBytes: maximumBytes)
+    }
+
+    package nonisolated static func captureScoped(
+        url: URL,
+        maximumBytes: UInt64 = AssetBudget.alpha.capturedBytes
+    ) -> AssetCaptureResult {
+
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else {
             return .rejected(.assetRejected)
         }

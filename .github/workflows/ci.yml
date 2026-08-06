@@ -39,10 +39,10 @@ jobs:
         run: |
           ! find . \( -path './.git' -o -path './.build' -o -path './.generated' -o -path './Web/node_modules' \) -prune -o -type f \( -name '*.vrm' -o -name '*.glb' -o -name '*.vrma' -o -name '*.png' -o -name '*.jpeg' -o -name '*.jpg' -o -name '*.heic' -o -name '*.webp' \) -print -quit | grep -q .
           ! find .generated -type f \( -name '*.vrm' -o -name '*.glb' -o -name '*.vrma' -o -name '*.png' -o -name '*.jpeg' -o -name '*.jpg' -o -name '*.heic' -o -name '*.webp' \) -print -quit | grep -q .
-          ! grep -R -n -E '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' Resources .generated
+          ! grep -R -n -E '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' Resources Sources/MillerAvatarHost/Resources/Web .generated
       - name: Verify reproducible source outputs and bounded cleanup
         run: |
-          git diff --exit-code -- Resources/Web Resources/build-manifest.json
+          git diff --exit-code -- Sources/MillerAvatarHost/Resources/Web Resources/build-manifest.json
           scripts/clean.sh
           test ! -e .build
           test ! -e .generated

@@ -1,26 +1,57 @@
 # Development
 
-Miller Avatar requires the pinned Command Line Tools toolchain; full Xcode is
-not required.
+Miller Avatar is a reusable offline Swift package plus a thin standalone
+diagnostic app, not a bundled assistant or asset pack. It requires the pinned
+Command Line Tools toolchain; full Xcode is not required. Miller source
+integration is explicitly deferred, and this tranche does not edit Miller.
 
 ```bash
 scripts/verify-toolchain.sh
+scripts/test.sh contracts
 scripts/test.sh
 scripts/verify-dependencies.sh
-scripts/bundle-web.sh
 scripts/build.sh
+scripts/run-alpha.sh
 codesign --verify --deep --strict ".generated/Miller Avatar Alpha.app"
 codesign -d --entitlements :- ".generated/Miller Avatar Alpha.app"
 scripts/test-signed-boundary.sh ".generated/Miller Avatar Alpha.app"
 scripts/clean.sh
 ```
 
+`scripts/test.sh contracts` is the narrow cross-language bridge contract path.
+Plain `scripts/test.sh` is the complete public automated gate. `scripts/build.sh`
+assembles `.generated/Miller Avatar Alpha.app`; `scripts/run-alpha.sh` starts
+that already-built diagnostic app and prints its process ID. The signed-boundary
+command accepts an optional app-bundle path.
+
+## Package and integration boundary
+
+The caller owns session/request correlation and generation, playback, projection,
+and cue identity values. The package validates the payloads and fences stale
+renderer callbacks; its internal renderer session UUID is only a lifecycle
+fencing value, not Miller session state. `AvatarSurfaceController` is the public
+`@MainActor` surface: embed `view`, call `start()` after installation, pass only
+`AdmittedAsset` values to `load(_:)`, observe `onObservation` or `onSnapshot`,
+and call idempotent `dispose(reason:)` during teardown. The surface is
+noninteractive. `MillerAvatarApp` consumes this API for diagnostics and is not
+an alternate renderer or host implementation.
+
+The package bundles no default model, VRMA, animation pack, model cache, or
+user-file copy, and has no network runtime dependency. User-supplied assets
+remain separate from the package and are admitted from bounded in-memory bytes.
+No Miller integration or manual visual, signing, or release qualification result
+is claimed by these development instructions.
+
 ## Committed bundle and clean builds
 
-`Resources/Web/` is the committed offline web bundle. App builds consume it as
-committed and do not regenerate it. Runtime execution requires neither Node nor
-npm. The complete public test gate requires the exact Node/npm toolchain and an
-installed dependency tree so it can run web tests and verify provenance.
+`Sources/MillerAvatarHost/Resources/Web/` is the committed offline web bundle.
+The `MillerAvatarHost` SwiftPM target owns exactly one renderer resource bundle,
+`MillerAvatar_MillerAvatarHost.bundle`. An assembled app resolves that fixed
+bundle under `Contents/Resources/`; ordinary SwiftPM use falls back to
+`Bundle.module`. App builds consume the committed bundle and do not regenerate
+it. Runtime execution requires neither Node nor npm. The complete public test
+gate requires the exact Node/npm toolchain and an installed dependency tree so
+it can run web tests and verify provenance.
 
 The assembled standalone-alpha app wires native-host bridge transport and its
 production web bootstrap into the signed bundle. `scripts/test-signed-boundary.sh`
@@ -34,15 +65,17 @@ byte-for-byte under `Contents/Resources/Legal/`. The native build manifest
 hashes those source and embedded files, and release verification rejects a
 missing, renamed, stale, or changed legal file.
 
-`scripts/test.sh contracts` is the narrow cross-language bridge contract path.
-Plain `scripts/test.sh` is the complete public automated gate: Swift and web
-tests, type checking, dependency/resource verification, shell safety contracts,
-double-build determinism, rollback, signed hash scopes, cleanup, and shared
-module-cache isolation.
-
 `scripts/clean.sh` removes repository-owned native output, compiled web-test
 output, installed web dependencies, and declared build staging roots. It does
 not remove committed web resources, user assets, or shared system caches.
+
+`AvatarProfileStore` is optional local persistence for profile metadata in
+`profiles-v1.json`. It stores a security-scoped bookmark and digest metadata,
+not a source path or copied model. Import and load re-capture, re-admit, and
+revalidate the digest. The owner-only root and file use modes `0700` and `0600`;
+three consecutive load or renderer failures quarantine a profile, and recovery
+requires an explicit success reset or reselection. Removing a profile preserves
+the original user file.
 
 ## Maintainer-only bundle regeneration
 
@@ -72,8 +105,8 @@ must never fall back to the registry.
 
 `scripts/bundle-web.sh` checks the toolchain before dependency restoration. It
 verifies the pinned `@esbuild/darwin-arm64` 0.28.1 executable and invokes that
-binary directly. It replaces `Resources/Web/` only after every staging check
-passes.
+binary directly. It replaces `Sources/MillerAvatarHost/Resources/Web/` only
+after every staging check passes.
 
 When the exact installed esbuild binary is present, `scripts/bundle-web.sh`
 automatically uses the installed dependency tree. Otherwise it performs the
@@ -83,10 +116,11 @@ when an audited
 mode verifies that tree and does not install or mutate dependencies. It is not
 a clean-checkout regeneration path.
 
-`Resources/Web/bundle-manifest.json` uses the v2 contract. Each payload file
-records its MIME type, byte count, and SHA-256. Each build input records its
-byte count and SHA-256. The deterministic `contract_sha256` covers the manifest
-contract without attempting the impossible self-hash of the manifest bytes.
+`Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json` uses the v2
+contract. Each payload file records its MIME type, byte count, and SHA-256. Each
+build input records its byte count and SHA-256. The deterministic
+`contract_sha256` covers the manifest contract without attempting the impossible
+self-hash of the manifest bytes.
 
 `Resources/build-manifest.json` is the deterministic pre-sign receipt. It
 records fixed product/toolchain identity, the executable-input hash, and every
@@ -107,6 +141,9 @@ harness ownership marker. The same directory may be passed to
 
 Generated roots removed by `scripts/clean.sh` are `.build/`, `.generated/`
 (including `private-build/` and `web-npm-cache/`), and `Web/node_modules/`.
-Cleanup does not remove committed `Resources/Web/` or `Resources/Static/`.
+It also removes `Web/.build/`. An external private build root may be passed to
+`scripts/clean.sh` only when it is an existing absolute directory marked by
+`scripts/build.sh`. Cleanup does not remove committed
+`Sources/MillerAvatarHost/Resources/Web/` or `Resources/Static/`.
 After cleanup, bundle regeneration remains blocked until the audited npm cache
 or audited `Web/node_modules/` tree is restored.
