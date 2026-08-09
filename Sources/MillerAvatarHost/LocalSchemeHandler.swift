@@ -1,27 +1,28 @@
 import Foundation
 import CryptoKit
+import MillerAvatarCore
 @preconcurrency import WebKit
 
-public enum LocalSchemeError: Error, Equatable, Sendable {
+package enum LocalSchemeError: Error, Equatable, Sendable {
     case rejected
     case staleSession
     case invalidInventory
 }
 
-public struct LocalSchemeResponse: Equatable, Sendable {
-    public let url: URL
-    public let mimeType: String
-    public let headers: [String: String]
-    public let data: Data
+package struct LocalSchemeResponse: Equatable, Sendable {
+    package let url: URL
+    package let mimeType: String
+    package let headers: [String: String]
+    package let data: Data
 }
 
-public struct LocalSchemeResourceRecord: Equatable, Sendable {
-    public let path: String
-    public let mimeType: String
-    public let byteCount: Int
-    public let sha256: String
+package struct LocalSchemeResourceRecord: Equatable, Sendable {
+    package let path: String
+    package let mimeType: String
+    package let byteCount: Int
+    package let sha256: String
 
-    public init(
+    package init(
         path: String,
         mimeType: String,
         byteCount: Int,
@@ -33,7 +34,7 @@ public struct LocalSchemeResourceRecord: Equatable, Sendable {
         self.sha256 = sha256
     }
 
-    public static func make(path: String, data: Data) -> Self {
+    package static func make(path: String, data: Data) -> Self {
         Self(
             path: path,
             mimeType: LocalSchemeBundlePolicy.mimeType(for: path) ?? "",
@@ -61,94 +62,174 @@ enum LocalSchemeBundlePolicy {
     }
 }
 
-private struct LocalSchemeAssetIdentity: Equatable {
-    let token: UUID
+private struct LocalSchemeResourceIdentity: Equatable {
+    let url: URL
     let generation: UInt64
 }
 
-private final class LocalSchemeAssetStore: @unchecked Sendable {
-    private let lock = NSLock()
-    private var token: UUID
-    private var url: URL
-    private var data: Data?
-    private var generation: UInt64 = 0
-    private var servingEnabled = true
+private struct LocalSchemeStoredResource {
+    let token: UUID
+    let fileExtension: String
+    let mimeType: String
+    var data: Data?
+}
 
-    init(token: UUID, url: URL, data: Data) {
-        self.token = token
-        self.url = url
-        self.data = data
+private struct LocalSchemeResourceSet {
+    let generation: UInt64
+    let modelURL: URL
+    var servingEnabled: Bool
+    var resources: [URL: LocalSchemeStoredResource]
+}
+
+private final class LocalSchemeProfileResourceStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private let sessionID: UUID
+    private var active: LocalSchemeResourceSet?
+    private var nextGeneration: UInt64 = 0
+
+    init(sessionID: UUID) {
+        self.sessionID = sessionID
     }
 
     var activeURL: URL {
-        lock.withLock { url }
+        return lock.withLock {
+            active?.modelURL ?? Self.resourceURL(
+                sessionID: sessionID,
+                token: UUID(uuidString: "00000000-0000-4000-8000-000000000000")!,
+                fileExtension: "vrm"
+            )
+        }
     }
 
     var retainedByteCount: Int {
-        lock.withLock { data?.count ?? 0 }
-    }
-
-    func replace(token: UUID, url: URL, data: Data) {
         lock.withLock {
-            precondition(generation < UInt64.max, "asset generation exhausted")
-            generation += 1
-            releaseLocked()
-            self.token = token
-            self.url = url
-            self.data = data
-            servingEnabled = true
+            active?.resources.values.reduce(into: 0) { total, resource in
+                total += resource.data?.count ?? 0
+            } ?? 0
         }
     }
 
-    func isActiveURL(_ candidate: URL) -> Bool {
-        lock.withLock { candidate == url }
-    }
+    func install(
+        modelToken: UUID,
+        modelData: Data,
+        motions: [UUID: Data]
+    ) -> Bool {
+        guard motions.count <= AvatarMotionRole.allCases.count else { return false }
 
-    func data(for candidate: URL) -> Data? {
-        lock.withLock {
-            guard servingEnabled, candidate == url else { return nil }
-            return data
+        var nextResources: [URL: LocalSchemeStoredResource] = [:]
+        let nextModelURL = Self.resourceURL(
+            sessionID: sessionID,
+            token: modelToken,
+            fileExtension: "vrm"
+        )
+        nextResources[nextModelURL] = LocalSchemeStoredResource(
+            token: modelToken,
+            fileExtension: "vrm",
+            mimeType: "model/gltf-binary",
+            data: modelData
+        )
+        for token in motions.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+            let url = Self.resourceURL(
+                sessionID: sessionID,
+                token: token,
+                fileExtension: "vrma"
+            )
+            guard nextResources[url] == nil else { return false }
+            nextResources[url] = LocalSchemeStoredResource(
+                token: token,
+                fileExtension: "vrma",
+                mimeType: "model/gltf-binary",
+                data: motions[token]!
+            )
+        }
+
+        return lock.withLock {
+            guard nextGeneration < UInt64.max else { return false }
+            nextGeneration += 1
+            active = LocalSchemeResourceSet(
+                generation: nextGeneration,
+                modelURL: nextModelURL,
+                servingEnabled: true,
+                resources: nextResources
+            )
+            return true
         }
     }
 
-    func identity(for candidate: URL) -> LocalSchemeAssetIdentity? {
+    func isKnownURL(_ candidate: URL) -> Bool {
+        lock.withLock { active?.resources[candidate] != nil }
+    }
+
+    func resource(for candidate: URL) -> (mimeType: String, data: Data)? {
         lock.withLock {
-            guard servingEnabled, candidate == url, data != nil else { return nil }
-            return LocalSchemeAssetIdentity(token: token, generation: generation)
+            guard let active,
+                  active.servingEnabled,
+                  let resource = active.resources[candidate],
+                  let data = resource.data
+            else {
+                return nil
+            }
+            return (resource.mimeType, data)
+        }
+    }
+
+    func identity(for candidate: URL) -> LocalSchemeResourceIdentity? {
+        lock.withLock {
+            guard let active,
+                  active.servingEnabled,
+                  active.resources[candidate]?.data != nil
+            else {
+                return nil
+            }
+            return LocalSchemeResourceIdentity(
+                url: candidate,
+                generation: active.generation
+            )
         }
     }
 
     func revokeServing() {
         lock.withLock {
-            servingEnabled = false
+            active?.servingEnabled = false
         }
     }
 
     func releaseBytes() {
         lock.withLock {
-            releaseLocked()
-        }
-    }
-
-    func release(identity: LocalSchemeAssetIdentity?) {
-        lock.withLock {
-            guard let identity,
-                  identity.token == token,
-                  identity.generation == generation
-            else {
-                return
+            if var active {
+                active.servingEnabled = false
+                for url in active.resources.keys {
+                    active.resources[url]?.data = nil
+                }
+                self.active = active
             }
-            releaseLocked()
         }
     }
 
-    private func releaseLocked() {
-        servingEnabled = false
-        data = nil
+    func release(identity: LocalSchemeResourceIdentity?) {
+        lock.withLock {
+            guard let identity else { return }
+
+            if active?.generation == identity.generation {
+                active?.resources[identity.url]?.data = nil
+            }
+        }
+    }
+
+    private static func resourceURL(
+        sessionID: UUID,
+        token: UUID,
+        fileExtension: String
+    ) -> URL {
+        URL(
+            string: "miller-avatar-local://app/session/"
+                + "\(sessionID.uuidString.lowercased())/"
+                + "\(token.uuidString.lowercased()).\(fileExtension)"
+        )!
     }
 }
 
-public protocol LocalSchemeTaskSink: AnyObject {
+package protocol LocalSchemeTaskSink: AnyObject {
     var request: URLRequest { get }
     func receive(response: URLResponse)
     func receive(data: Data)
@@ -176,16 +257,16 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     base-uri 'none'; form-action 'none'; navigate-to 'none'
     """
 
-    public var activeAssetURL: URL { assetStore.activeURL }
+    package var activeAssetURL: URL { resourceStore.activeURL }
 
-    public var entrypointURL: URL {
+    package var entrypointURL: URL {
         Self.entrypointURL(for: lease.id)
     }
 
     private let lease: RendererSessionLease
     private let sessionController: RendererSessionController
     private let bundledResources: [String: Data]
-    private let assetStore: LocalSchemeAssetStore
+    private let resourceStore: LocalSchemeProfileResourceStore
     private let scheduleDelivery: (@escaping () -> Void) -> Void
     private let lock = NSLock()
     private let deliveryGate = SerializedCallbackGate(
@@ -197,7 +278,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     private nonisolated(unsafe) var taskIDsByDelivery: [UUID: ObjectIdentifier] = [:]
 
     internal var retainedAssetByteCount: Int {
-        assetStore.retainedByteCount
+        resourceStore.retainedByteCount
     }
 
     package init(
@@ -205,8 +286,6 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         sessionController: RendererSessionController,
         bundledResources: [String: Data],
         resourceRecords: [LocalSchemeResourceRecord],
-        assetToken: UUID,
-        assetData: Data,
         scheduleDelivery: @escaping (@escaping () -> Void) -> Void = { $0() }
     ) throws {
         guard Self.validInventory(
@@ -220,32 +299,36 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         self.sessionController = sessionController
         self.bundledResources = bundledResources
         self.scheduleDelivery = scheduleDelivery
-        let assetPath = "/session/\(lease.id.uuidString.lowercased())/"
-            + "\(assetToken.uuidString.lowercased()).vrm"
-        guard let activeAssetURL = URL(string: Self.origin + assetPath) else {
-            throw LocalSchemeError.invalidInventory
-        }
-        assetStore = LocalSchemeAssetStore(
-            token: assetToken,
-            url: activeAssetURL,
-            data: assetData
-        )
+        resourceStore = LocalSchemeProfileResourceStore(sessionID: lease.id)
     }
 
     @discardableResult
-    package func installAsset(token: UUID, data: Data) -> Bool {
-        guard let url = URL(string: Self.origin + "/session/"
-            + lease.id.uuidString.lowercased() + "/"
-            + token.uuidString.lowercased() + ".vrm")
-        else {
+    package func install(_ profile: LoadedAvatarProfile) -> Bool {
+        var motions: [UUID: AdmittedMotion] = [:]
+        for binding in profile.motionBindings.values {
+            guard case .ready(_, let motion) = binding else { continue }
+            if let existing = motions[motion.token] {
+                guard existing.bytes == motion.bytes else { return false }
+                continue
+            }
+            motions[motion.token] = motion
+        }
+        guard motions.count <= AvatarMotionRole.allCases.count else {
             return false
         }
-        return sessionController.perform(for: lease) {
-            assetStore.replace(token: token, url: url, data: data)
+
+        var installed = false
+        let admitted = sessionController.perform(for: lease) {
+            installed = resourceStore.install(
+                modelToken: profile.model.token,
+                modelData: profile.model.bytes,
+                motions: motions.mapValues(\.bytes)
+            )
         }
+        return admitted && installed
     }
 
-    public func response(for request: URLRequest) throws -> LocalSchemeResponse {
+    package func response(for request: URLRequest) throws -> LocalSchemeResponse {
         var response: LocalSchemeResponse?
         var failure: (any Error)?
         let admitted = sessionController.perform(for: lease) {
@@ -282,12 +365,12 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
 
         let data: Data
         let mimeType: String
-        if assetStore.isActiveURL(url) {
-            guard let activeAssetData = assetStore.data(for: url) else {
+        if resourceStore.isKnownURL(url) {
+            guard let resource = resourceStore.resource(for: url) else {
                 throw LocalSchemeError.staleSession
             }
-            data = activeAssetData
-            mimeType = "model/gltf-binary"
+            data = resource.data
+            mimeType = resource.mimeType
         } else {
             guard let bundlePath = bundlePath(for: path),
                   let resource = bundledResources[bundlePath],
@@ -315,7 +398,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         )
     }
 
-    public func start(_ sink: any LocalSchemeTaskSink) {
+    package func start(_ sink: any LocalSchemeTaskSink) {
         start(sink, taskIdentity: nil)
     }
 
@@ -329,12 +412,12 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         let admitted = sessionController.perform(for: lease) {
             do {
                 let response = try responseUnchecked(for: sink.request)
-                let assetIdentity = assetStore.identity(for: response.url)
+                let resourceIdentity = resourceStore.identity(for: response.url)
                 let pendingDelivery = LocalSchemeDelivery(
                     response: response,
                     sink: sink,
-                    assetIdentity: assetIdentity,
-                    releaseAsset: assetStore.release
+                    resourceIdentity: resourceIdentity,
+                    releaseResource: resourceStore.release
                 )
                 deliveryGate.sync {
                     lock.withLock {
@@ -359,7 +442,7 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         }
     }
 
-    public nonisolated func cancelAll() {
+    package nonisolated func cancelAll() {
         sessionController.synchronize {
             deliveryGate.sync {
                 let pending = lock.withLock {
@@ -374,12 +457,12 @@ public final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
         }
     }
 
-    public func revokeAssetServing() {
-        assetStore.revokeServing()
+    package func revokeAssetServing() {
+        resourceStore.revokeServing()
     }
 
-    public func releaseAssetBytes() {
-        assetStore.releaseBytes()
+    package func releaseAssetBytes() {
+        resourceStore.releaseBytes()
     }
 
     public func webView(
@@ -524,20 +607,20 @@ private final class LocalSchemeDelivery {
     private var sink: (any LocalSchemeTaskSink)?
     private var cancelled = false
     private var finishing = false
-    private var assetReleased = false
-    private let assetIdentity: LocalSchemeAssetIdentity?
-    private let releaseAsset: (LocalSchemeAssetIdentity?) -> Void
+    private var resourceReleased = false
+    private let resourceIdentity: LocalSchemeResourceIdentity?
+    private let releaseResource: (LocalSchemeResourceIdentity?) -> Void
 
     init(
         response: LocalSchemeResponse,
         sink: any LocalSchemeTaskSink,
-        assetIdentity: LocalSchemeAssetIdentity?,
-        releaseAsset: @escaping (LocalSchemeAssetIdentity?) -> Void
+        resourceIdentity: LocalSchemeResourceIdentity?,
+        releaseResource: @escaping (LocalSchemeResourceIdentity?) -> Void
     ) {
         self.response = response
         self.sink = sink
-        self.assetIdentity = assetIdentity
-        self.releaseAsset = releaseAsset
+        self.resourceIdentity = resourceIdentity
+        self.releaseResource = releaseResource
     }
 
     func cancel() {
@@ -580,7 +663,7 @@ private final class LocalSchemeDelivery {
         finishing = true
         pendingSink.finish()
         cancelled = true
-        releaseAssetIfNeeded()
+        releaseResourceIfNeeded()
         sink = nil
         self.response = nil
     }
@@ -593,15 +676,15 @@ private final class LocalSchemeDelivery {
         guard !cancelled, !finishing, let pendingSink = sink else { return }
         cancelled = true
         pendingSink.fail(with: LocalSchemeError.staleSession)
-        releaseAssetIfNeeded()
+        releaseResourceIfNeeded()
         sink = nil
         response = nil
     }
 
-    private func releaseAssetIfNeeded() {
-        guard !assetReleased else { return }
-        assetReleased = true
-        releaseAsset(assetIdentity)
+    private func releaseResourceIfNeeded() {
+        guard !resourceReleased else { return }
+        resourceReleased = true
+        releaseResource(resourceIdentity)
     }
 
 }

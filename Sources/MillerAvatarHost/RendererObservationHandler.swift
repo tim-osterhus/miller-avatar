@@ -26,17 +26,36 @@ public final class RendererObservationHandler: NSObject, WKScriptMessageHandler 
         self.onInvalidObservation = onInvalidObservation
     }
 
+    package func expectProfile(
+        _ profile: LoadProfilePayload,
+        causedBySequence: UInt64
+    ) {
+        _ = sessionController.perform(for: lease) {
+            decoder.setExpectedProfile(profile, causedBySequence: causedBySequence)
+            decoder.setExpectedPhaseCauseSequence(nil)
+        }
+    }
+
+    package func expectPhaseCauseSequence(_ sequence: UInt64) {
+        _ = sessionController.perform(for: lease) {
+            decoder.setExpectedPhaseCauseSequence(sequence)
+        }
+    }
+
     public func accept(_ body: Any) {
         guard let serialized = body as? String else {
             rejectIfCurrent()
             return
         }
         let data = Data(serialized.utf8)
-        _ = sessionController.perform(for: lease) { [decoder, receive] in
+        _ = sessionController.perform(for: lease) {
             do {
                 receive(try decoder.decode(data))
+            } catch let error as BridgeContractError {
+                guard error != .staleSession else { return }
+                containInvalidObservation()
             } catch {
-                self.containInvalidObservation()
+                containInvalidObservation()
             }
         }
     }

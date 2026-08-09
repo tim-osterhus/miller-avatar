@@ -1,11 +1,43 @@
 export const bridgeContract = {
-  commandSchema: "miller-avatar.presentation-command/v1",
-  observationSchema: "miller-avatar.presentation-observation/v1",
+  commandSchema: "miller-avatar.presentation-command/v2",
+  observationSchema: "miller-avatar.presentation-observation/v2",
   maximumMessageBytes: 16_384,
   maximumContainerDepth: 8,
   maximumArrayLength: 64,
   maximumSafeInteger: Number.MAX_SAFE_INTEGER,
 } as const;
+
+export const avatarMotionRoles = [
+  "idle",
+  "listening",
+  "thinking",
+  "speaking",
+  "success",
+  "failure",
+] as const;
+
+export const steadyMotionRoles = ["idle", "listening", "thinking", "speaking"] as const;
+export const terminalMotionRoles = ["success", "failure"] as const;
+export const motionBindingStatuses = ["ready", "missing", "rejected"] as const;
+export const motionStatuses = [
+  "ready",
+  "missing",
+  "rejected",
+  "load_failed",
+  "timed_out",
+  "runtime_failed",
+] as const;
+export const motionActiveModes = ["loop", "one_shot", "rest"] as const;
+export const motionFailureCodes = [
+  "motion_rejected",
+  "resource_limit",
+  "bookmark_unavailable",
+  "quarantined",
+  "motion_load_failed",
+  "motion_load_timeout",
+  "motion_runtime_failed",
+  "cancelled",
+] as const;
 
 export const presentationPhases = [
   "idle",
@@ -54,6 +86,13 @@ export const failureOperations = [
   "policy",
 ] as const;
 
+export type AvatarMotionRole = (typeof avatarMotionRoles)[number];
+export type SteadyMotionRole = (typeof steadyMotionRoles)[number];
+export type TerminalMotionRole = (typeof terminalMotionRoles)[number];
+export type MotionBindingStatus = (typeof motionBindingStatuses)[number];
+export type MotionStatus = (typeof motionStatuses)[number];
+export type MotionActiveMode = (typeof motionActiveModes)[number];
+export type MotionFailureCode = (typeof motionFailureCodes)[number];
 export type PresentationPhase = (typeof presentationPhases)[number];
 export type PresentationVisibility = (typeof presentationVisibilities)[number];
 export type ResetReason = (typeof resetReasons)[number];
@@ -61,9 +100,24 @@ export type DisposalReason = (typeof disposalReasons)[number];
 export type FailureCode = (typeof failureCodes)[number];
 export type FailureOperation = (typeof failureOperations)[number];
 
+export interface MotionBindingPayload {
+  status: MotionBindingStatus;
+  token: string | null;
+}
+
+export type MotionBindings = {
+  [Role in AvatarMotionRole]: MotionBindingPayload;
+};
+
+export interface LoadProfilePayload {
+  profile_revision: number;
+  model_token: string;
+  motion_bindings: MotionBindings;
+}
+
 export type PresentationCommand =
   | { type: "configure"; payload: { profile: "lightweight"; reduced_motion: boolean } }
-  | { type: "load_asset"; payload: { asset_token: string } }
+  | { type: "load_profile"; payload: LoadProfilePayload }
   | {
       type: "project_phase";
       payload: {
@@ -99,12 +153,13 @@ export type PresentationCommand =
   | { type: "dispose"; payload: { reason: DisposalReason } };
 
 export type PresentationObservation =
-  | { type: "wrapper_ready"; payload: { bridge_version: 1 } }
+  | { type: "wrapper_ready"; payload: { bridge_version: 2 } }
   | { type: "renderer_ready"; payload: { webgl: "webgl2" } }
   | {
-      type: "asset_loaded";
+      type: "profile_model_loaded";
       payload: {
-        asset_token: string;
+        profile_revision: number;
+        model_token: string;
         capabilities: {
           aa: boolean;
           look_at: boolean;
@@ -116,13 +171,35 @@ export type PresentationObservation =
   | {
       type: "first_frame";
       payload: {
-        asset_token: string;
+        profile_revision: number;
+        model_token: string;
         viewport_width: number;
         viewport_height: number;
         visible_meshes: number;
         decoded_textures: number;
         material_bindings: number;
         alpha_probe_pixels: number;
+      };
+    }
+  | {
+      type: "motion_status";
+      payload: {
+        profile_revision: number;
+        model_token: string;
+        motion_token: string | null;
+        role: AvatarMotionRole;
+        status: MotionStatus;
+        motion_code: MotionFailureCode | null;
+      };
+    }
+  | {
+      type: "motion_active";
+      payload: {
+        profile_revision: number;
+        model_token: string;
+        motion_token: string | null;
+        role: AvatarMotionRole | null;
+        mode: MotionActiveMode;
       };
     }
   | {

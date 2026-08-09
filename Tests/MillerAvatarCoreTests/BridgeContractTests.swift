@@ -11,11 +11,11 @@ import Testing
     @Test func schemaNamesAndSharedLimits() {
         #expect(
             BridgeContract.commandSchema
-                == "miller-avatar.presentation-command/v1"
+                == "miller-avatar.presentation-command/v2"
         )
         #expect(
             BridgeContract.observationSchema
-                == "miller-avatar.presentation-observation/v1"
+                == "miller-avatar.presentation-observation/v2"
         )
         #expect(BridgeContract.maximumMessageBytes == 16_384)
         #expect(BridgeContract.maximumContainerDepth == 8)
@@ -25,16 +25,17 @@ import Testing
 
     @Test func everyValidFixtureIsAccepted() throws {
         let fixtures = try fixtureURLs(in: "valid")
-        #expect(fixtures.count == 16)
+        #expect(fixtures.count == 18)
         #expect(
             Set(fixtures.map { $0.deletingPathExtension().lastPathComponent })
                 == [
-                "command-configure", "command-load-asset", "command-project-phase",
+                "command-configure", "command-load-profile", "command-project-phase",
                 "command-set-visibility", "command-set-policy", "command-set-mouth",
                 "command-reset", "command-dispose", "observation-wrapper-ready",
-                "observation-renderer-ready", "observation-asset-loaded",
+                "observation-renderer-ready", "observation-profile-model-loaded",
                 "observation-first-frame", "observation-suspended", "observation-resumed",
                 "observation-disposed", "observation-failed",
+                "observation-motion-status", "observation-motion-active",
             ]
         )
 
@@ -59,7 +60,7 @@ import Testing
         })
         #expect(names.isSuperset(of: [
             "message-duplicate-key", "command-unknown-top-level-field",
-            "observation-asset-loaded", "command-missing-required-field",
+            "observation-profile-model-loaded", "command-missing-required-field",
             "command-unknown-type", "command-uppercase-uuid",
             "command-noncanonical-uuid", "command-negative-integer",
             "command-unsafe-integer", "command-sequence-duplicate",
@@ -127,10 +128,367 @@ import Testing
 
     @Test func duplicateKeysAreRejectedBeforeFoundationNormalizesThem() {
         let raw = """
-        {"schema":"miller-avatar.presentation-command/v1","session_id":"11111111-1111-4111-8111-111111111111","sequence":1,"type":"configure","payload":{"profile":"lightweight","reduced_motion":false,"reduced_motion":true}}
+        {"schema":"miller-avatar.presentation-command/v2","session_id":"11111111-1111-4111-8111-111111111111","sequence":1,"type":"configure","payload":{"profile":"lightweight","reduced_motion":false,"reduced_motion":true}}
         """
         #expect(throws: (any Error).self) {
             try commandDecoder().decode(Data(raw.utf8))
+        }
+    }
+
+    @Test func loadProfileRequiresExactBindingsAndOnlyLoadsOnce() throws {
+        let decoder = commandDecoder()
+        let bindings = Dictionary(uniqueKeysWithValues: AvatarMotionRole.allCases.map { role in
+            (role.rawValue, ["status": "missing", "token": NSNull()] as [String: Any])
+        })
+        let message = command(
+            type: "load_profile",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "motion_bindings": bindings,
+            ]
+        )
+        let envelope = try decoder.decode(message)
+        guard case .loadProfile(let payload) = envelope.command else {
+            Issue.record("expected load_profile")
+            return
+        }
+        #expect(payload.profileRevision == 1)
+        #expect(payload.modelToken == UUID(uuidString: Self.modelToken))
+        #expect(payload.motionBindings.count == AvatarMotionRole.allCases.count)
+        #expect(throws: BridgeContractError.invalidSequence) {
+            try decoder.decode(command(
+                sequence: 2,
+                type: "load_profile",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "motion_bindings": bindings,
+                ]
+            ))
+        }
+
+        for mutation in [
+            "missing_role", "extra_role", "extra_descriptor_key", "ready_without_token",
+            "missing_with_token", "unknown_status",
+        ] {
+            var mutated = bindings
+            switch mutation {
+            case "missing_role": mutated.removeValue(forKey: AvatarMotionRole.failure.rawValue)
+            case "extra_role": mutated["unexpected"] = ["status": "missing", "token": NSNull()]
+            case "extra_descriptor_key":
+                var descriptor = mutated[AvatarMotionRole.idle.rawValue]!
+                descriptor["extra"] = false
+                mutated[AvatarMotionRole.idle.rawValue] = descriptor
+            case "ready_without_token": mutated[AvatarMotionRole.idle.rawValue] = ["status": "ready", "token": NSNull()]
+            case "missing_with_token": mutated[AvatarMotionRole.idle.rawValue] = ["status": "missing", "token": Self.motionToken]
+            case "unknown_status": mutated[AvatarMotionRole.idle.rawValue] = ["status": "unknown", "token": NSNull()]
+            default: Issue.record("unknown mutation"); continue
+            }
+            #expect(throws: (any Error).self) {
+                try commandDecoder().decode(command(
+                    type: "load_profile",
+                    payload: [
+                        "profile_revision": 1,
+                        "model_token": Self.modelToken,
+                        "motion_bindings": mutated,
+                    ]
+                ))
+            }
+        }
+    }
+
+    @Test func profileObservationsFenceIdentityCausalityAndDisposal() throws {
+        let expectedProfile = LoadProfilePayload(
+            profileRevision: 1,
+            modelToken: UUID(uuidString: Self.modelToken)!,
+            motionBindings: Dictionary(uniqueKeysWithValues: AvatarMotionRole.allCases.map { role in
+                (role, role == .idle ? .ready(token: UUID(uuidString: Self.motionToken)!) : .missing)
+            })
+        )
+        let decoder = PresentationObservationDecoder(
+            sessionID: UUID(uuidString: Self.sessionID)!,
+            expectedProfile: expectedProfile,
+            expectedProfileLoadSequence: 4
+        )
+        decoder.setExpectedPhaseCauseSequence(9)
+        _ = try decoder.decode(observation(
+            sequence: 1,
+            causedBySequence: 4,
+            type: "profile_model_loaded",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "capabilities": ["aa": true, "look_at": true, "spring_bone": false, "mtoon_materials": 1],
+            ]
+        ))
+        _ = try decoder.decode(observation(
+            sequence: 2,
+            causedBySequence: 4,
+            type: "first_frame",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "viewport_width": 800,
+                "viewport_height": 600,
+                "visible_meshes": 1,
+                "decoded_textures": 2,
+                "material_bindings": 2,
+                "alpha_probe_pixels": 5,
+            ]
+        ))
+        _ = try decoder.decode(observation(
+            sequence: 3,
+            causedBySequence: 4,
+            type: "motion_status",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "motion_token": Self.motionToken,
+                "role": "idle",
+                "status": "ready",
+                "motion_code": NSNull(),
+            ]
+        ))
+        _ = try decoder.decode(observation(
+            sequence: 4,
+            causedBySequence: 9,
+            type: "motion_active",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "motion_token": Self.motionToken,
+                "role": "idle",
+                "mode": "loop",
+            ]
+        ))
+
+        let stale = PresentationObservationDecoder(
+            sessionID: UUID(uuidString: Self.sessionID)!,
+            expectedProfile: expectedProfile,
+            expectedProfileLoadSequence: 4
+        )
+        _ = try stale.decode(observation(
+            sequence: 1,
+            causedBySequence: 4,
+            type: "profile_model_loaded",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "capabilities": ["aa": true, "look_at": true, "spring_bone": false, "mtoon_materials": 1],
+            ]
+        ))
+        #expect(throws: BridgeContractError.staleSession) {
+            try stale.decode(observation(
+                sequence: 2,
+                causedBySequence: 4,
+                type: "first_frame",
+                payload: [
+                    "profile_revision": 2,
+                    "model_token": Self.modelToken,
+                    "viewport_width": 800,
+                    "viewport_height": 600,
+                    "visible_meshes": 1,
+                    "decoded_textures": 2,
+                    "material_bindings": 2,
+                    "alpha_probe_pixels": 5,
+                ]
+            ))
+        }
+
+        let disposed = observationDecoder()
+        _ = try disposed.decode(observation(type: "disposed", payload: ["reason": "operator"]))
+        #expect(throws: BridgeContractError.disposed) {
+            try disposed.decode(observation(
+                sequence: 2,
+                causedBySequence: 1,
+                type: "motion_status",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "motion_token": Self.motionToken,
+                    "role": "idle",
+                    "status": "ready",
+                    "motion_code": NSNull(),
+                ]
+            ))
+        }
+    }
+
+    @Test func defaultObservationDecoderAnchorsLoadCauseAndRejectsStaleOrDisposedEvents() throws {
+        let decoder = observationDecoder()
+        _ = try decoder.decode(observation(
+            sequence: 1,
+            causedBySequence: 7,
+            type: "profile_model_loaded",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "capabilities": [
+                    "aa": true,
+                    "look_at": true,
+                    "spring_bone": false,
+                    "mtoon_materials": 1,
+                ],
+            ]
+        ))
+
+        #expect(throws: BridgeContractError.invalidSequence) {
+            try decoder.decode(observation(
+                sequence: 2,
+                causedBySequence: 8,
+                type: "first_frame",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "viewport_width": 800,
+                    "viewport_height": 600,
+                    "visible_meshes": 1,
+                    "decoded_textures": 2,
+                    "material_bindings": 2,
+                    "alpha_probe_pixels": 5,
+                ]
+            ))
+        }
+        _ = try decoder.decode(observation(
+            sequence: 2,
+            causedBySequence: 7,
+            type: "first_frame",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "viewport_width": 800,
+                "viewport_height": 600,
+                "visible_meshes": 1,
+                "decoded_textures": 2,
+                "material_bindings": 2,
+                "alpha_probe_pixels": 5,
+            ]
+        ))
+
+        #expect(throws: BridgeContractError.staleSession) {
+            try decoder.decode(observation(
+                sequence: 3,
+                causedBySequence: 7,
+                type: "motion_status",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": "99999999-9999-4999-8999-999999999999",
+                    "motion_token": Self.motionToken,
+                    "role": "idle",
+                    "status": "ready",
+                    "motion_code": NSNull(),
+                ]
+            ))
+        }
+        _ = try decoder.decode(observation(
+            sequence: 3,
+            causedBySequence: 7,
+            type: "motion_status",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "motion_token": Self.motionToken,
+                "role": "idle",
+                "status": "ready",
+                "motion_code": NSNull(),
+            ]
+        ))
+
+        _ = try decoder.decode(observation(
+            sequence: 4,
+            causedBySequence: nil,
+            type: "disposed",
+            payload: ["reason": "operator"]
+        ))
+        #expect(throws: BridgeContractError.disposed) {
+            try decoder.decode(observation(
+                sequence: 5,
+                causedBySequence: 7,
+                type: "first_frame",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "viewport_width": 800,
+                    "viewport_height": 600,
+                    "visible_meshes": 1,
+                    "decoded_textures": 2,
+                    "material_bindings": 2,
+                    "alpha_probe_pixels": 5,
+                ]
+            ))
+        }
+    }
+
+    @Test func motionStatusAndActiveModeMatricesAreClosed() throws {
+        for status in MotionStatus.allCases {
+            let token: Any = [.ready, .loadFailed, .timedOut, .runtimeFailed].contains(status)
+                ? Self.motionToken
+                : NSNull()
+            let code: Any = switch status {
+            case .loadFailed: "motion_load_failed"
+            case .timedOut: "motion_load_timeout"
+            case .runtimeFailed: "motion_runtime_failed"
+            default: NSNull()
+            }
+            let decoder = observationDecoder()
+            _ = try decoder.decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": ["aa": true, "look_at": true, "spring_bone": false, "mtoon_materials": 1],
+                ]
+            ))
+            #expect(throws: Never.self) {
+                try decoder.decode(observation(
+                    sequence: 2,
+                    causedBySequence: 1,
+                    type: "motion_status",
+                    payload: [
+                        "profile_revision": 1,
+                        "model_token": Self.modelToken,
+                        "motion_token": token,
+                        "role": "idle",
+                        "status": status.rawValue,
+                        "motion_code": code,
+                    ]
+                ))
+            }
+        }
+
+        for payload in [
+            ["profile_revision": 1, "model_token": Self.modelToken, "motion_token": Self.motionToken, "role": "success", "mode": "loop"] as [String: Any],
+            ["profile_revision": 1, "model_token": Self.modelToken, "motion_token": Self.motionToken, "role": "idle", "mode": "one_shot"],
+            ["profile_revision": 1, "model_token": Self.modelToken, "motion_token": NSNull(), "role": "idle", "mode": "rest"],
+            ["profile_revision": 1, "model_token": Self.modelToken, "motion_token": Self.motionToken, "role": NSNull(), "mode": "rest"],
+        ] {
+            let decoder = observationDecoder()
+            _ = try decoder.decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": ["aa": true, "look_at": true, "spring_bone": false, "mtoon_materials": 1],
+                ]
+            ))
+            #expect(throws: (any Error).self) {
+                try decoder.decode(observation(sequence: 2, causedBySequence: 8, type: "motion_active", payload: payload))
+            }
+        }
+
+        // resource_limit is intentionally shared with the terminal renderer vocabulary.
+        for code in MotionFailureCode.allCases where code != .resourceLimit {
+            #expect(throws: (any Error).self) {
+                try observationDecoder().decode(observation(
+                    type: "failed",
+                    payload: ["code": code.rawValue, "operation": "load"]
+                ))
+            }
         }
     }
 
@@ -408,17 +766,28 @@ import Testing
     }
 
     private func observation(type: String, payload: [String: Any]) -> Data {
+        observation(sequence: 1, causedBySequence: nil, type: type, payload: payload)
+    }
+
+    private func observation(
+        sequence: UInt64,
+        causedBySequence: UInt64?,
+        type: String,
+        payload: [String: Any]
+    ) -> Data {
         try! JSONSerialization.data(withJSONObject: [
             "schema": BridgeContract.observationSchema,
             "session_id": Self.sessionID,
-            "sequence": 1,
-            "caused_by_sequence": NSNull(),
+            "sequence": sequence,
+            "caused_by_sequence": causedBySequence ?? NSNull(),
             "type": type,
             "payload": payload,
         ])
     }
 
     private static let sessionID = "11111111-1111-4111-8111-111111111111"
+    private static let modelToken = "22222222-2222-4222-8222-222222222222"
+    private static let motionToken = "33333333-3333-4333-8333-333333333333"
     private static let generationID = "33333333-3333-4333-8333-333333333333"
     private static let playbackID = "44444444-4444-4444-8444-444444444444"
 }

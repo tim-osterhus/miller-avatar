@@ -2,14 +2,14 @@ import Foundation
 import MillerAvatarCore
 @preconcurrency import WebKit
 
-public enum BridgeControllerError: Error, Equatable, Sendable {
+package enum BridgeControllerError: Error, Equatable, Sendable {
     case invalidCommand
     case messageTooLarge
 }
 
-public enum BridgeCommand: Equatable, Sendable {
+package enum BridgeCommand: Equatable, Sendable {
     case configure(reducedMotion: Bool)
-    case loadAsset(token: UUID)
+    case loadProfile(LoadProfilePayload)
     case projectPhase(
         sequence: UInt64,
         generationID: UUID?,
@@ -31,19 +31,19 @@ public enum BridgeCommand: Equatable, Sendable {
 }
 
 @MainActor
-public protocol JavaScriptCommandCalling: AnyObject {
+package protocol JavaScriptCommandCalling: AnyObject {
     func call(source: String, commandJSON: String) async throws
 }
 
 @MainActor
-public final class WebViewJavaScriptCaller: JavaScriptCommandCalling {
+package final class WebViewJavaScriptCaller: JavaScriptCommandCalling {
     private weak var webView: WKWebView?
 
-    public init(webView: WKWebView) {
+    package init(webView: WKWebView) {
         self.webView = webView
     }
 
-    public func call(source: String, commandJSON: String) async throws {
+    package func call(source: String, commandJSON: String) async throws {
         guard let webView else { throw BridgeControllerError.invalidCommand }
         _ = try await webView.callAsyncJavaScript(
             source,
@@ -55,20 +55,23 @@ public final class WebViewJavaScriptCaller: JavaScriptCommandCalling {
 }
 
 @MainActor
-public final class BridgeController {
-    public static let receiverSource = "return globalThis.millerAvatarBridge.accept(commandJSON);"
+package final class BridgeController {
+    package static let receiverSource = "return globalThis.millerAvatarBridge.accept(commandJSON);"
 
     private let sessionID: UUID
     private let caller: any JavaScriptCommandCalling
     private var nextSequence: UInt64 = 1
     private var commandTail: Task<Void, Error>?
 
-    public init(sessionID: UUID, caller: any JavaScriptCommandCalling) {
+    package init(sessionID: UUID, caller: any JavaScriptCommandCalling) {
         self.sessionID = sessionID
         self.caller = caller
     }
 
-    public func send(_ command: BridgeCommand) async throws {
+    package func send(
+        _ command: BridgeCommand,
+        beforeDispatch: (@MainActor (UInt64) -> Void)? = nil
+    ) async throws {
         let previous = commandTail
         let delivery = Task { @MainActor [weak self] in
             if let previous {
@@ -80,9 +83,10 @@ public final class BridgeController {
             guard self.nextSequence <= BridgeContract.maximumSafeInteger else {
                 throw BridgeControllerError.invalidCommand
             }
+            let sequence = self.nextSequence
             let envelope = try Self.envelope(
                 sessionID: self.sessionID,
-                sequence: self.nextSequence,
+                sequence: sequence,
                 command: command
             )
             let data = try JSONSerialization.data(
@@ -95,11 +99,12 @@ public final class BridgeController {
             guard let commandJSON = String(data: data, encoding: .utf8) else {
                 throw BridgeControllerError.invalidCommand
             }
+            self.nextSequence += 1
+            beforeDispatch?(sequence)
             try await self.caller.call(
                 source: Self.receiverSource,
                 commandJSON: commandJSON
             )
-            self.nextSequence += 1
         }
         commandTail = delivery
         try await delivery.value
@@ -129,8 +134,31 @@ public final class BridgeController {
                 "profile": "lightweight",
                 "reduced_motion": reducedMotion,
             ])
-        case .loadAsset(let token):
-            return ("load_asset", ["asset_token": token.uuidString.lowercased()])
+        case .loadProfile(let profile):
+            guard profile.profileRevision > 0,
+                  profile.profileRevision <= BridgeContract.maximumSafeInteger,
+                  profile.motionBindings.count == AvatarMotionRole.allCases.count,
+                  Set(profile.motionBindings.keys)
+                      == Set(AvatarMotionRole.allCases),
+                  profile.motionBindings.values.allSatisfy(\.isValid)
+            else {
+                throw BridgeControllerError.invalidCommand
+            }
+            var bindings: [String: Any] = [:]
+            for role in AvatarMotionRole.allCases {
+                guard let binding = profile.motionBindings[role] else {
+                    throw BridgeControllerError.invalidCommand
+                }
+                bindings[role.rawValue] = [
+                    "status": binding.status.rawValue,
+                    "token": binding.token?.uuidString.lowercased() ?? NSNull(),
+                ]
+            }
+            return ("load_profile", [
+                "profile_revision": profile.profileRevision,
+                "model_token": profile.modelToken.uuidString.lowercased(),
+                "motion_bindings": bindings,
+            ])
         case .projectPhase(let sequence, let generationID, let phase, let playbackID):
             guard sequence > 0,
                   sequence <= BridgeContract.maximumSafeInteger,

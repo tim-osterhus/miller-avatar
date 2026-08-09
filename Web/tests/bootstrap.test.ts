@@ -26,7 +26,7 @@ test("production bootstrap installs its only receiver and reports renderer readi
   assert.ok(receiver);
   assert.deepEqual(observations.map((observation) => observation.type), ["wrapper_ready"]);
   await receiver.accept(JSON.stringify({
-    schema: "miller-avatar.presentation-command/v1",
+    schema: "miller-avatar.presentation-command/v2",
     session_id: session,
     sequence: 1,
     type: "configure",

@@ -9,7 +9,8 @@ import {
 import type { PresentationEffect } from "../src/presentation.js";
 
 const session = "11111111-1111-4111-8111-111111111111";
-const asset = "22222222-2222-4222-8222-222222222222";
+const model = "22222222-2222-4222-8222-222222222222";
+const motion = "33333333-3333-4333-8333-333333333333";
 
 test("fake backend proves scheduling, suspension, exact resume deltas, and disposal", async () => {
   const backend = new FakeBackend();
@@ -18,8 +19,30 @@ test("fake backend proves scheduling, suspension, exact resume deltas, and dispo
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
   core.start();
   await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
-  await core.accept(command(2, "load_asset", { asset_token: asset }));
-  assert.equal(backend.loadedURL, `miller-avatar-local://app/session/${session}/${asset}.vrm`);
+  await core.accept(loadProfileCommand(2));
+  assert.equal(backend.loadedURL, `miller-avatar-local://app/session/${session}/${model}.vrm`);
+  assert.deepEqual(messages.slice(0, 4).map((message) => message.type), [
+    "wrapper_ready",
+    "renderer_ready",
+    "profile_model_loaded",
+    "first_frame",
+  ]);
+  assert.equal(messages[2]?.caused_by_sequence, 2);
+  assert.equal(messages[3]?.caused_by_sequence, 2);
+  const initialStatuses = messages.filter((message) => message.type === "motion_status");
+  assert.equal(initialStatuses.length, 6);
+  for (const message of initialStatuses) {
+    assert.equal(message.caused_by_sequence, 2);
+    assert.deepEqual(message.payload, {
+      profile_revision: 1,
+      model_token: model,
+      motion_token: null,
+      role: (message.payload as { role: string }).role,
+      status: "missing",
+      motion_code: null,
+    });
+  }
+  assert.equal(core.snapshot().state, "live");
   scheduler.run(100);
   await core.accept(command(3, "set_visibility", { visibility: "hidden" }));
   const suspended = core.snapshot().counters;
@@ -53,7 +76,7 @@ test("terminal presentation phases render without re-running first-frame proof",
   const core = new WebRendererCore(session, backend, scheduler, () => {});
   core.start();
   await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
-  await core.accept(command(2, "load_asset", { asset_token: asset }));
+  await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
     generation_id: "33333333-3333-4333-8333-333333333333",
@@ -75,7 +98,7 @@ test("context loss emits one failure, disposes, and fences later commands", asyn
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
   core.start();
   await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true }));
-  await core.accept(command(2, "load_asset", { asset_token: asset }));
+  await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "set_visibility", { visibility: "occluded" }));
   const before = core.snapshot().counters;
   await core.accept(command(4, "set_visibility", { visibility: "visible" }));
@@ -137,7 +160,7 @@ test("timed out loads abort, dispose the backend, and retain command correlation
   core.start();
   await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
   const terminalStart = messages.length;
-  const loading = core.accept(command(2, "load_asset", { asset_token: asset }));
+  const loading = core.accept(loadProfileCommand(2));
   assert.equal(timeout.pending, 1);
   timeout.run();
   await loading;
@@ -157,7 +180,7 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
 
   core.start();
   await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
-  await core.accept(command(2, "load_asset", { asset_token: asset }));
+  await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
     generation_id: generation,
@@ -184,6 +207,33 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
     suspended: false,
     terminated: false,
   });
+});
+
+test("profile load reports only nonterminal missing and rejected bindings", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true }));
+  await core.accept(loadProfileCommand(2, {
+    idle: { status: "ready", token: motion },
+    speaking: { status: "rejected", token: null },
+  }));
+
+  const statuses = messages.filter((message) => message.type === "motion_status");
+  assert.equal(statuses.length, 5);
+  assert.deepEqual(statuses.map((message) => (message.payload as { role: string }).role).sort(), [
+    "failure",
+    "listening",
+    "speaking",
+    "success",
+    "thinking",
+  ]);
+  assert.equal(statuses.some((message) => (message.payload as { status: string }).status === "ready"), false);
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(messages.some((message) => message.type === "failed"), false);
 });
 
 class FakeScheduler implements FrameScheduler {
@@ -260,11 +310,26 @@ class FakeLoadTimeoutScheduler implements LoadTimeoutScheduler {
 
 function command(sequence: number, type: string, payload: Record<string, unknown>): string {
   return JSON.stringify({
-    schema: "miller-avatar.presentation-command/v1",
+    schema: "miller-avatar.presentation-command/v2",
     session_id: session,
     sequence,
     type,
     payload,
+  });
+}
+
+function loadProfileCommand(
+  sequence: number,
+  overrides: Record<string, { status: string; token: string | null }> = {},
+): string {
+  const roles = ["idle", "listening", "thinking", "speaking", "success", "failure"];
+  return command(sequence, "load_profile", {
+    profile_revision: 1,
+    model_token: model,
+    motion_bindings: Object.fromEntries(roles.map((role) => [
+      role,
+      overrides[role] ?? { status: "missing", token: null },
+    ])),
   });
 }
 

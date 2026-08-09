@@ -1,11 +1,360 @@
 import Foundation
 import Dispatch
 import Testing
+import MillerAvatarCore
 @preconcurrency import WebKit
 @testable import MillerAvatarHost
 
 @MainActor
 @Suite struct LocalSchemeHandlerTests {
+    @Test func modelOnlyProfileInstallsExactlyOneVrmResource() throws {
+        let modelToken = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        let modelData = Data([0x01, 0x02, 0x03])
+        let handler = makeUninstalledHandler()
+        let profile = LoadedAvatarProfile.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: modelData
+        )
+
+        #expect(handler.install(profile))
+        #expect(handler.retainedAssetByteCount == modelData.count)
+
+        let response = try handler.response(
+            for: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm"))
+        )
+        #expect(response.mimeType == "model/gltf-binary")
+        #expect(response.headers["Content-Type"] == "model/gltf-binary")
+        #expect(response.data == modelData)
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: motionToken, fileExtension: "vrma"))
+            )
+        }
+    }
+
+    @Test func sixUniqueReadyMotionsAreStoredOnceAlongsideTheModel() throws {
+        let modelData = Data([0x00])
+        let tokens = [
+            UUID(uuidString: "00000000-0000-4000-8000-000000000001")!,
+            UUID(uuidString: "00000000-0000-4000-8000-000000000002")!,
+            UUID(uuidString: "00000000-0000-4000-8000-000000000003")!,
+            UUID(uuidString: "00000000-0000-4000-8000-000000000004")!,
+            UUID(uuidString: "00000000-0000-4000-8000-000000000005")!,
+            UUID(uuidString: "00000000-0000-4000-8000-000000000006")!,
+        ]
+        let roles = AvatarMotionRole.allCases
+        let motions = roles.enumerated().map { index, role in
+            (role, tokens[index], Data([UInt8(index + 1), UInt8(index + 2)]))
+        }
+        let handler = makeUninstalledHandler()
+        let profile = LoadedAvatarProfile.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: modelData,
+            motions: motions
+        )
+
+        #expect(handler.install(profile))
+        let motionByteCount = motions.reduce(into: 0) { total, motion in
+            total += motion.2.count
+        }
+        let expectedByteCount = modelData.count + motionByteCount
+        #expect(handler.retainedAssetByteCount == expectedByteCount)
+        for (_, token, data) in motions {
+            let response = try handler.response(
+                for: URLRequest(url: resourceURL(token: token, fileExtension: "vrma"))
+            )
+            #expect(response.mimeType == "model/gltf-binary")
+            #expect(response.data == data)
+        }
+    }
+
+    @Test func multiplyBoundMotionUsesOneTokenResourceAndOneByteAllocation() throws {
+        let sharedToken = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        let motionData = Data([0x10, 0x11, 0x12])
+        let handler = makeUninstalledHandler()
+        let profile = LoadedAvatarProfile.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x20]),
+            motions: [
+                (.idle, sharedToken, motionData),
+                (.listening, sharedToken, motionData),
+            ]
+        )
+
+        #expect(handler.install(profile))
+        #expect(handler.retainedAssetByteCount == 1 + motionData.count)
+        let response = try handler.response(
+            for: URLRequest(url: resourceURL(token: sharedToken, fileExtension: "vrma"))
+        )
+        #expect(response.data == motionData)
+        #expect(!handler.install(.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x20]),
+            motions: [
+                (.idle, sharedToken, Data([0x99])),
+                (.listening, sharedToken, motionData),
+            ]
+        )))
+        #expect(handler.retainedAssetByteCount == 1 + motionData.count)
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: sharedToken, fileExtension: "vrm"))
+            )
+        }
+    }
+
+    @Test func replacementSwapsTheCompleteProfileWithoutExposingAHalfInstalledSet() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        var scheduled: [() -> Void] = []
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            scheduleDelivery: { scheduled.append($0) }
+        )
+        let oldProfile = LoadedAvatarProfile.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01]),
+            motions: [(.idle, motionToken, Data([0x02]))]
+        )
+        let replacementModelToken = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
+        let replacementMotionToken = UUID(uuidString: "dddddddd-dddd-4ddd-8ddd-dddddddddddd")!
+        let replacementProfile = LoadedAvatarProfile.localSchemeFixture(
+            profileRevision: 2,
+            modelToken: replacementModelToken,
+            modelData: Data([0x03, 0x04]),
+            motions: [(.idle, replacementMotionToken, Data([0x05, 0x06]))]
+        )
+
+        #expect(handler.install(oldProfile))
+        let oldModelURL = resourceURL(token: modelToken, fileExtension: "vrm")
+        let oldMotionURL = resourceURL(token: motionToken, fileExtension: "vrma")
+        let oldSink = RecordingSchemeTaskSink(request: URLRequest(url: oldModelURL))
+        handler.start(oldSink)
+        #expect(scheduled.count == 1)
+
+        #expect(handler.install(replacementProfile))
+        #expect(handler.retainedAssetByteCount == 4)
+        #expect(
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: replacementModelToken, fileExtension: "vrm"))
+            ).data == Data([0x03, 0x04])
+        )
+        #expect(
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: replacementMotionToken, fileExtension: "vrma"))
+            ).data == Data([0x05, 0x06])
+        )
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(for: URLRequest(url: oldMotionURL))
+        }
+
+        scheduled[0]()
+        #expect(oldSink.events == ["response", "data", "finish"])
+        #expect(handler.retainedAssetByteCount == 4)
+    }
+
+    @Test func staleSessionCannotServeOrCompleteBytes() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        var scheduled: (() -> Void)?
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            scheduleDelivery: { scheduled = $0 }
+        )
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01])
+        )))
+        let sink = RecordingSchemeTaskSink(
+            request: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm"))
+        )
+        handler.start(sink)
+        _ = controller.begin(id: UUID(uuidString: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")!)
+        scheduled?()
+
+        #expect(sink.events == ["failure"])
+        #expect(throws: LocalSchemeError.self) {
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm"))
+            )
+        }
+    }
+
+    @Test func completionReleasesOnlyTheResourceThatFinished() throws {
+        var pendingDeliveries: [() -> Void] = []
+        let handler = makeUninstalledHandler { callback in
+            pendingDeliveries.append(callback)
+        }
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01, 0x02]),
+            motions: [(.idle, motionToken, Data([0x03, 0x04, 0x05]))]
+        )))
+        var modelByteCountAtFinish = 0
+        var motionByteCountAtFinish = 0
+        let modelSink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm")),
+            finish: { modelByteCountAtFinish = handler.retainedAssetByteCount }
+        )
+        let motionSink = AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: resourceURL(token: motionToken, fileExtension: "vrma")),
+            finish: { motionByteCountAtFinish = handler.retainedAssetByteCount }
+        )
+
+        handler.start(modelSink)
+        handler.start(motionSink)
+        #expect(pendingDeliveries.count == 2)
+        pendingDeliveries[0]()
+        #expect(modelByteCountAtFinish == 5)
+        #expect(handler.retainedAssetByteCount == 3)
+        #expect(motionSink.events.isEmpty)
+        pendingDeliveries[1]()
+        #expect(motionByteCountAtFinish == 3)
+        #expect(handler.retainedAssetByteCount == 0)
+    }
+
+    @Test func revokeAndReleaseDisableAndClearEveryActiveResourceIdempotently() throws {
+        let handler = makeUninstalledHandler()
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01]),
+            motions: [(.idle, motionToken, Data([0x02]))]
+        )))
+        handler.revokeAssetServing()
+        handler.revokeAssetServing()
+        for (token, fileExtension) in [(modelToken, "vrm"), (motionToken, "vrma")] {
+            #expect(throws: LocalSchemeError.self) {
+                try handler.response(
+                    for: URLRequest(url: resourceURL(token: token, fileExtension: fileExtension))
+                )
+            }
+        }
+        handler.releaseAssetBytes()
+        handler.releaseAssetBytes()
+        #expect(handler.retainedAssetByteCount == 0)
+    }
+
+    @Test func exactResourceURLAndMimeMatrixRejectsEveryNonExactRequest() throws {
+        let handler = makeUninstalledHandler()
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01]),
+            motions: [(.idle, motionToken, Data([0x02]))]
+        )))
+        let modelURL = resourceURL(token: modelToken, fileExtension: "vrm")
+        let motionURL = resourceURL(token: motionToken, fileExtension: "vrma")
+        #expect(try handler.response(for: URLRequest(url: modelURL)).mimeType == "model/gltf-binary")
+        #expect(try handler.response(for: URLRequest(url: motionURL)).mimeType == "model/gltf-binary")
+
+        let invalidURLs = [
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/ffffffff-ffff-4fff-8fff-ffffffffffff.vrm",
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/\(modelToken.uuidString.lowercased()).vrma",
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/\(motionToken.uuidString.lowercased()).vrm",
+            "miller-avatar-local://app/session/ffffffff-ffff-4fff-8fff-ffffffffffff/\(modelToken.uuidString.lowercased()).vrm",
+            "miller-avatar-local://other/session/\(sessionID.uuidString.lowercased())/\(modelToken.uuidString.lowercased()).vrm",
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/\(modelToken.uuidString.lowercased()).vrm?x=1",
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/\(modelToken.uuidString.lowercased()).vrm#x",
+            "miller-avatar-local://app/session/\(sessionID.uuidString.lowercased())/../\(modelToken.uuidString.lowercased()).vrm",
+            "https://app/session/\(sessionID.uuidString.lowercased())/\(modelToken.uuidString.lowercased()).vrm",
+        ]
+        for rawURL in invalidURLs {
+            #expect(throws: LocalSchemeError.self, "accepted \(rawURL)") {
+                try handler.response(for: URLRequest(url: URL(string: rawURL)!))
+            }
+        }
+
+        var post = URLRequest(url: modelURL)
+        post.httpMethod = "POST"
+        #expect(throws: LocalSchemeError.self) { try handler.response(for: post) }
+        var range = URLRequest(url: motionURL)
+        range.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        #expect(throws: LocalSchemeError.self) { try handler.response(for: range) }
+        var conditional = URLRequest(url: modelURL)
+        conditional.setValue("etag", forHTTPHeaderField: "If-None-Match")
+        #expect(throws: LocalSchemeError.self) { try handler.response(for: conditional) }
+    }
+
+    @Test func lateCompletionWithReusedTokensReleasesOnlyTheDetachedGeneration() throws {
+        let controller = RendererSessionController()
+        let lease = controller.begin(id: sessionID)
+        var scheduled: [() -> Void] = []
+        let handler = try LocalSchemeHandler(
+            lease: lease,
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            scheduleDelivery: { scheduled.append($0) }
+        )
+        let oldProfile = LoadedAvatarProfile.localSchemeFixture(
+            modelToken: modelToken,
+            modelData: Data([0x01]),
+            motions: [(.idle, motionToken, Data([0x02]))]
+        )
+        let newProfile = LoadedAvatarProfile.localSchemeFixture(
+            profileRevision: 2,
+            modelToken: modelToken,
+            modelData: Data([0x03, 0x04]),
+            motions: [(.idle, motionToken, Data([0x05, 0x06, 0x07]))]
+        )
+        #expect(handler.install(oldProfile))
+        var oldModelData: Data?
+        var oldMotionData: Data?
+        handler.start(AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm")),
+            receiveData: { oldModelData = $0 }
+        ))
+        handler.start(AssetLifetimeSchemeTaskSink(
+            request: URLRequest(url: resourceURL(token: motionToken, fileExtension: "vrma")),
+            receiveData: { oldMotionData = $0 }
+        ))
+        #expect(scheduled.count == 2)
+
+        handler.revokeAssetServing()
+        #expect(handler.install(newProfile))
+        #expect(handler.retainedAssetByteCount == 5)
+        scheduled[0]()
+        scheduled[1]()
+
+        #expect(oldModelData == Data([0x01]))
+        #expect(oldMotionData == Data([0x02]))
+        #expect(handler.retainedAssetByteCount == 5)
+        #expect(
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: modelToken, fileExtension: "vrm"))
+            ).data == Data([0x03, 0x04])
+        )
+        #expect(
+            try handler.response(
+                for: URLRequest(url: resourceURL(token: motionToken, fileExtension: "vrma"))
+            ).data == Data([0x05, 0x06, 0x07])
+        )
+    }
+
+    @Test func repeatedProfileReplacementWithoutRequestsDropsReplacedGenerationBytes() throws {
+        let handler = makeUninstalledHandler()
+
+        for index in 0..<16 {
+            let modelToken = UUID()
+            let motionToken = UUID()
+            #expect(handler.install(.localSchemeFixture(
+                profileRevision: UInt64(index + 1),
+                modelToken: modelToken,
+                modelData: Data(repeating: UInt8(index), count: 1_024),
+                motions: [
+                    (.idle, motionToken, Data(repeating: UInt8(index + 1), count: 2_048)),
+                ]
+            )))
+        }
+
+        #expect(detachedBytes(in: handler) == 0)
+    }
+
     @Test func installedAssetReplacesTheInitialOpaqueAsset() throws {
         let controller = RendererSessionController()
         let lease = controller.begin()
@@ -23,7 +372,10 @@ import Testing
             assetData: Data()
         )
 
-        handler.installAsset(token: replacementToken, data: Data([1, 2, 3]))
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: replacementToken,
+            modelData: Data([1, 2, 3])
+        )))
 
         #expect(handler.retainedAssetByteCount == 3)
         let response = try handler.response(for: URLRequest(url: handler.activeAssetURL))
@@ -132,7 +484,10 @@ import Testing
 
         handler.start(oldSink)
         #expect(scheduled.count == 1)
-        #expect(handler.installAsset(token: replacementToken, data: replacementData))
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: replacementToken,
+            modelData: replacementData
+        )))
         let replacementURL = handler.activeAssetURL
 
         #expect(replacementURL != oldURL)
@@ -194,7 +549,10 @@ import Testing
 
         handler.start(oldSink)
         #expect(scheduled.count == 1)
-        #expect(handler.installAsset(token: assetToken, data: replacementData))
+        #expect(handler.install(.localSchemeFixture(
+            modelToken: assetToken,
+            modelData: replacementData
+        )))
         #expect(handler.activeAssetURL == assetURL)
         #expect(
             try handler.response(for: URLRequest(url: assetURL)).data
@@ -244,6 +602,8 @@ import Testing
     }
 
     private let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+    private let modelToken = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+    private let motionToken = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
     private let assetToken = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
 
     @Test func servesOnlyManifestPathsAndTheActiveAsset() throws {
@@ -713,6 +1073,19 @@ import Testing
         #expect(sink.events == ["failure"])
     }
 
+    private func makeUninstalledHandler(
+        _ scheduleDelivery: @escaping (@escaping () -> Void) -> Void = { $0() }
+    ) -> LocalSchemeHandler {
+        let controller = RendererSessionController()
+        return try! LocalSchemeHandler(
+            lease: controller.begin(id: sessionID),
+            sessionController: controller,
+            bundledResources: bundleResources(),
+            resourceRecords: resourceRecords(for: bundleResources()),
+            scheduleDelivery: scheduleDelivery
+        )
+    }
+
     private func makeHandler(
         resources: [String: Data]? = nil
     ) -> LocalSchemeHandler {
@@ -726,6 +1099,12 @@ import Testing
             assetToken: assetToken,
             assetData: Data([0x67, 0x6c, 0x54, 0x46])
         )
+    }
+
+    private func resourceURL(token: UUID, fileExtension: String) -> URL {
+        URL(string: "miller-avatar-local://app/session/"
+            + "\(sessionID.uuidString.lowercased())/"
+            + "\(token.uuidString.lowercased()).\(fileExtension)")!
     }
 
     private func request(_ path: String) -> URLRequest {
@@ -758,6 +1137,26 @@ import Testing
                 path: path,
                 data: resources[path]!
             )
+        }
+    }
+
+    private func detachedBytes(in handler: LocalSchemeHandler) -> Int {
+        guard let store = Mirror(reflecting: handler).children.first(where: {
+            $0.label == "resourceStore"
+        })?.value,
+        let detached = Mirror(reflecting: store).children.first(where: {
+            $0.label == "detached"
+        })?.value
+        else {
+            return 0
+        }
+        return dataBytes(in: detached)
+    }
+
+    private func dataBytes(in value: Any) -> Int {
+        if let data = value as? Data { return data.count }
+        return Mirror(reflecting: value).children.reduce(into: 0) { total, child in
+            total += dataBytes(in: child.value)
         }
     }
 }

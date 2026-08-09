@@ -2,12 +2,147 @@ import CoreFoundation
 import Foundation
 
 public enum BridgeContract {
-    public static let commandSchema = "miller-avatar.presentation-command/v1"
-    public static let observationSchema = "miller-avatar.presentation-observation/v1"
+    public static let commandSchema = "miller-avatar.presentation-command/v2"
+    public static let observationSchema = "miller-avatar.presentation-observation/v2"
     public static let maximumMessageBytes = 16_384
     public static let maximumContainerDepth = 8
     public static let maximumArrayLength = 64
     public static let maximumSafeInteger: UInt64 = 9_007_199_254_740_991
+}
+
+public enum AvatarMotionRole: String, Codable, CaseIterable, Sendable {
+    case idle
+    case listening
+    case thinking
+    case speaking
+    case success
+    case failure
+
+    public var isSteady: Bool {
+        switch self {
+        case .idle, .listening, .thinking, .speaking:
+            true
+        case .success, .failure:
+            false
+        }
+    }
+}
+
+public enum MotionBindingStatus: String, Codable, Equatable, Sendable {
+    case ready
+    case missing
+    case rejected
+}
+
+public struct MotionBindingPayload: Codable, Equatable, Sendable {
+    public let status: MotionBindingStatus
+    public let token: UUID?
+
+    public init(status: MotionBindingStatus, token: UUID?) {
+        self.status = status
+        self.token = token
+    }
+
+    public static func ready(token: UUID) -> Self {
+        Self(status: .ready, token: token)
+    }
+
+    public static var missing: Self {
+        Self(status: .missing, token: nil)
+    }
+
+    public static var rejected: Self {
+        Self(status: .rejected, token: nil)
+    }
+
+    package var isValid: Bool {
+        switch status {
+        case .ready:
+            token != nil
+        case .missing, .rejected:
+            token == nil
+        }
+    }
+}
+
+public struct LoadProfilePayload: Codable, Equatable, Sendable {
+    public let profileRevision: UInt64
+    public let modelToken: UUID
+    public let motionBindings: [AvatarMotionRole: MotionBindingPayload]
+
+    public init(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        motionBindings: [AvatarMotionRole: MotionBindingPayload]
+    ) {
+        self.profileRevision = profileRevision
+        self.modelToken = modelToken
+        self.motionBindings = motionBindings
+    }
+}
+
+public enum MotionStatus: String, Codable, CaseIterable, Equatable, Sendable {
+    case ready
+    case missing
+    case rejected
+    case loadFailed = "load_failed"
+    case timedOut = "timed_out"
+    case runtimeFailed = "runtime_failed"
+}
+
+public typealias MotionObservationStatus = MotionStatus
+
+public enum MotionActiveMode: String, Codable, CaseIterable, Equatable, Sendable {
+    case loop
+    case oneShot = "one_shot"
+    case rest
+}
+
+public struct MotionStatusPayload: Codable, Equatable, Sendable {
+    public let profileRevision: UInt64
+    public let modelToken: UUID
+    public let motionToken: UUID?
+    public let role: AvatarMotionRole
+    public let status: MotionStatus
+    public let motionCode: MotionFailureCode?
+
+    public init(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        motionToken: UUID?,
+        role: AvatarMotionRole,
+        status: MotionStatus,
+        motionCode: MotionFailureCode?
+    ) {
+        self.profileRevision = profileRevision
+        self.modelToken = modelToken
+        self.motionToken = motionToken
+        self.role = role
+        self.status = status
+        self.motionCode = motionCode
+    }
+}
+
+public struct MotionActivePayload: Codable, Equatable, Sendable {
+    public let profileRevision: UInt64
+    public let modelToken: UUID
+    public let motionToken: UUID?
+    public let role: AvatarMotionRole?
+    public let mode: MotionActiveMode
+
+    public init(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        motionToken: UUID?,
+        role: AvatarMotionRole?,
+        mode: MotionActiveMode
+    ) {
+        self.profileRevision = profileRevision
+        self.modelToken = modelToken
+        self.motionToken = motionToken
+        self.role = role
+        self.mode = mode
+    }
 }
 
 public enum BridgeContractError: Error, Equatable, Sendable {
@@ -68,10 +203,11 @@ public enum FailureOperation: String, CaseIterable, Codable, Equatable, Sendable
 public struct ConfigurePayload: Codable, Equatable, Sendable {
     public let profile: String
     public let reducedMotion: Bool
-}
 
-public struct LoadAssetPayload: Codable, Equatable, Sendable {
-    public let assetToken: UUID
+    public init(profile: String = "lightweight", reducedMotion: Bool) {
+        self.profile = profile
+        self.reducedMotion = reducedMotion
+    }
 }
 
 public struct ProjectPhasePayload: Codable, Equatable, Sendable {
@@ -95,10 +231,18 @@ public struct ProjectPhasePayload: Codable, Equatable, Sendable {
 
 public struct SetVisibilityPayload: Codable, Equatable, Sendable {
     public let visibility: PresentationVisibility
+
+    public init(visibility: PresentationVisibility) {
+        self.visibility = visibility
+    }
 }
 
 public struct SetPolicyPayload: Codable, Equatable, Sendable {
     public let reducedMotion: Bool
+
+    public init(reducedMotion: Bool) {
+        self.reducedMotion = reducedMotion
+    }
 }
 
 public struct SetMouthPayload: Codable, Equatable, Sendable {
@@ -143,28 +287,29 @@ public struct ReconcilePresentationPayload: Codable, Equatable, Sendable {
         self.playbackID = playbackID
         self.reducedMotion = reducedMotion
     }
-
-    private enum CodingKeys: String, CodingKey {
-        case lastProjectionSequence = "last_projection_sequence"
-        case generationID = "generation_id"
-        case phase
-        case playbackID = "playback_id"
-        case reducedMotion = "reduced_motion"
-    }
 }
 
 public struct ResetPayload: Codable, Equatable, Sendable {
     public let generationID: UUID?
     public let reason: ResetReason
+
+    public init(generationID: UUID?, reason: ResetReason) {
+        self.generationID = generationID
+        self.reason = reason
+    }
 }
 
 public struct DisposePayload: Codable, Equatable, Sendable {
     public let reason: DisposalReason
+
+    public init(reason: DisposalReason) {
+        self.reason = reason
+    }
 }
 
 public enum PresentationCommand: Equatable, Sendable {
     case configure(ConfigurePayload)
-    case loadAsset(LoadAssetPayload)
+    case loadProfile(LoadProfilePayload)
     case projectPhase(ProjectPhasePayload)
     case reconcilePresentation(ReconcilePresentationPayload)
     case setVisibility(SetVisibilityPayload)
@@ -176,10 +321,12 @@ public enum PresentationCommand: Equatable, Sendable {
 
 public struct WrapperReadyPayload: Codable, Equatable, Sendable {
     public let bridgeVersion: UInt64
+    public init(bridgeVersion: UInt64) { self.bridgeVersion = bridgeVersion }
 }
 
 public struct RendererReadyPayload: Codable, Equatable, Sendable {
     public let webgl: String
+    public init(webgl: String) { self.webgl = webgl }
 }
 
 public struct AssetCapabilities: Codable, Equatable, Sendable {
@@ -187,21 +334,60 @@ public struct AssetCapabilities: Codable, Equatable, Sendable {
     public let lookAt: Bool
     public let springBone: Bool
     public let mtoonMaterials: UInt64
+
+    public init(aa: Bool, lookAt: Bool, springBone: Bool, mtoonMaterials: UInt64) {
+        self.aa = aa
+        self.lookAt = lookAt
+        self.springBone = springBone
+        self.mtoonMaterials = mtoonMaterials
+    }
 }
 
-public struct AssetLoadedPayload: Codable, Equatable, Sendable {
-    public let assetToken: UUID
+public struct ProfileModelLoadedPayload: Codable, Equatable, Sendable {
+    public let profileRevision: UInt64
+    public let modelToken: UUID
     public let capabilities: AssetCapabilities
+
+    public init(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        capabilities: AssetCapabilities
+    ) {
+        self.profileRevision = profileRevision
+        self.modelToken = modelToken
+        self.capabilities = capabilities
+    }
 }
 
 public struct FirstFramePayload: Codable, Equatable, Sendable {
-    public let assetToken: UUID
+    public let profileRevision: UInt64
+    public let modelToken: UUID
     public let viewportWidth: UInt64
     public let viewportHeight: UInt64
     public let visibleMeshes: UInt64
     public let decodedTextures: UInt64
     public let materialBindings: UInt64
     public let alphaProbePixels: UInt64
+
+    public init(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        viewportWidth: UInt64,
+        viewportHeight: UInt64,
+        visibleMeshes: UInt64,
+        decodedTextures: UInt64,
+        materialBindings: UInt64,
+        alphaProbePixels: UInt64
+    ) {
+        self.profileRevision = profileRevision
+        self.modelToken = modelToken
+        self.viewportWidth = viewportWidth
+        self.viewportHeight = viewportHeight
+        self.visibleMeshes = visibleMeshes
+        self.decodedTextures = decodedTextures
+        self.materialBindings = materialBindings
+        self.alphaProbePixels = alphaProbePixels
+    }
 }
 
 public struct SuspendedPayload: Codable, Equatable, Sendable {
@@ -209,28 +395,54 @@ public struct SuspendedPayload: Codable, Equatable, Sendable {
     public let frames: UInt64
     public let updates: UInt64
     public let renders: UInt64
+
+    public init(
+        visibility: PresentationVisibility,
+        frames: UInt64,
+        updates: UInt64,
+        renders: UInt64
+    ) {
+        self.visibility = visibility
+        self.frames = frames
+        self.updates = updates
+        self.renders = renders
+    }
 }
 
 public struct ResumedPayload: Codable, Equatable, Sendable {
     public let frames: UInt64
     public let updates: UInt64
     public let renders: UInt64
+
+    public init(frames: UInt64, updates: UInt64, renders: UInt64) {
+        self.frames = frames
+        self.updates = updates
+        self.renders = renders
+    }
 }
 
 public struct DisposedPayload: Codable, Equatable, Sendable {
     public let reason: DisposalReason
+    public init(reason: DisposalReason) { self.reason = reason }
 }
 
 public struct FailedPayload: Codable, Equatable, Sendable {
     public let code: FailureCode
     public let operation: FailureOperation
+
+    public init(code: FailureCode, operation: FailureOperation) {
+        self.code = code
+        self.operation = operation
+    }
 }
 
 public enum PresentationObservation: Equatable, Sendable {
     case wrapperReady(WrapperReadyPayload)
     case rendererReady(RendererReadyPayload)
-    case assetLoaded(AssetLoadedPayload)
+    case profileModelLoaded(ProfileModelLoadedPayload)
     case firstFrame(FirstFramePayload)
+    case motionStatus(MotionStatusPayload)
+    case motionActive(MotionActivePayload)
     case suspended(SuspendedPayload)
     case resumed(ResumedPayload)
     case disposed(DisposedPayload)
@@ -259,37 +471,30 @@ public final class PresentationCommandDecoder {
     private var lastCueIndex: UInt64?
     private var lastPlaybackOffsetMilliseconds: UInt64?
     private var hasDisposed = false
+    private var hasLoadedProfile = false
 
     public init(sessionID: UUID) {
         self.sessionID = sessionID
     }
 
     public func decode(_ data: Data) throws -> PresentationCommandEnvelope {
-        if hasDisposed {
-            throw BridgeContractError.disposed
-        }
+        if hasDisposed { throw BridgeContractError.disposed }
         let object = try BridgeValue.decodeObject(data)
         try object.requireKeys(["schema", "session_id", "sequence", "type", "payload"])
         guard try object.string("schema") == BridgeContract.commandSchema else {
             throw BridgeContractError.invalidValue
         }
         let decodedSession = try object.uuid("session_id")
-        guard decodedSession == sessionID else {
-            throw BridgeContractError.staleSession
-        }
-        let sequence = try object.integer("sequence")
-        guard sequence == nextSequence else {
-            throw BridgeContractError.invalidSequence
-        }
-        let type = try object.string("type")
-        let payload = try object.object("payload")
-        let command = try PresentationCommand.decode(type: type, payload: payload)
+        guard decodedSession == sessionID else { throw BridgeContractError.staleSession }
+        let sequence = try object.integer("sequence", minimum: 1)
+        guard sequence == nextSequence else { throw BridgeContractError.invalidSequence }
+        let command = try PresentationCommand.decode(
+            type: object.string("type"),
+            payload: object.object("payload")
+        )
         try accept(command)
-
         nextSequence += 1
-        if case .dispose = command {
-            hasDisposed = true
-        }
+        if case .dispose = command { hasDisposed = true }
         return PresentationCommandEnvelope(
             sessionID: decodedSession,
             sequence: sequence,
@@ -299,6 +504,9 @@ public final class PresentationCommandDecoder {
 
     private func accept(_ command: PresentationCommand) throws {
         switch command {
+        case .loadProfile:
+            guard !hasLoadedProfile else { throw BridgeContractError.invalidSequence }
+            hasLoadedProfile = true
         case let .projectPhase(projection):
             if let lastProjectionSequence,
                projection.projectionSequence <= lastProjectionSequence
@@ -338,9 +546,7 @@ public final class PresentationCommandDecoder {
                   cue.cueIndex > (lastCueIndex ?? 0),
                   cue.playbackOffsetMilliseconds
                       >= (lastPlaybackOffsetMilliseconds ?? 0)
-            else {
-                throw BridgeContractError.invalidSequence
-            }
+            else { throw BridgeContractError.invalidSequence }
             lastCueIndex = cue.cueIndex
             lastPlaybackOffsetMilliseconds = cue.playbackOffsetMilliseconds
         case let .reset(reset):
@@ -371,12 +577,52 @@ public final class PresentationObservationDecoder {
     private var lastFrames: UInt64?
     private var lastUpdates: UInt64?
     private var lastRenders: UInt64?
+    private var activeProfileRevision: UInt64?
+    private var activeModelToken: UUID?
+    private var activeProfileLoadCauseSequence: UInt64?
+    private var expectedProfile: LoadProfilePayload?
+    private var expectedProfileLoadSequence: UInt64?
+    private var expectedPhaseCauseSequence: UInt64?
+    private var hasDisposed = false
+    private var expectedMotionBindings: [AvatarMotionRole: MotionBindingPayload] = [:]
 
     public init(sessionID: UUID) {
         self.sessionID = sessionID
     }
 
+    public convenience init(
+        sessionID: UUID,
+        expectedProfile: LoadProfilePayload,
+        expectedProfileLoadSequence: UInt64? = nil
+    ) {
+        self.init(sessionID: sessionID)
+        self.expectedProfile = expectedProfile
+        self.expectedProfileLoadSequence = expectedProfileLoadSequence
+        expectedMotionBindings = expectedProfile.motionBindings
+    }
+
+    public func setExpectedProfile(
+        _ profile: LoadProfilePayload?,
+        causedBySequence: UInt64? = nil
+    ) {
+        expectedProfile = profile
+        expectedProfileLoadSequence = causedBySequence
+        if activeProfileRevision == nil {
+            activeProfileLoadCauseSequence = nil
+        }
+        expectedMotionBindings = profile?.motionBindings ?? [:]
+    }
+
+    public func setExpectedProfileLoadSequence(_ sequence: UInt64?) {
+        expectedProfileLoadSequence = sequence
+    }
+
+    public func setExpectedPhaseCauseSequence(_ sequence: UInt64?) {
+        expectedPhaseCauseSequence = sequence
+    }
+
     public func decode(_ data: Data) throws -> PresentationObservationEnvelope {
+        if hasDisposed { throw BridgeContractError.disposed }
         let object = try BridgeValue.decodeObject(data)
         try object.requireKeys([
             "schema", "session_id", "sequence", "caused_by_sequence", "type", "payload",
@@ -385,21 +631,75 @@ public final class PresentationObservationDecoder {
             throw BridgeContractError.invalidValue
         }
         let decodedSession = try object.uuid("session_id")
-        guard decodedSession == sessionID else {
-            throw BridgeContractError.staleSession
-        }
-        let sequence = try object.integer("sequence")
-        guard sequence == nextSequence else {
-            throw BridgeContractError.invalidSequence
-        }
-        let causedBySequence = try object.optionalInteger(
-            "caused_by_sequence",
-            minimum: 1
+        guard decodedSession == sessionID else { throw BridgeContractError.staleSession }
+        let sequence = try object.integer("sequence", minimum: 1)
+        guard sequence == nextSequence else { throw BridgeContractError.invalidSequence }
+        let causedBySequence = try object.optionalInteger("caused_by_sequence", minimum: 1)
+        let observation = try PresentationObservation.decode(
+            type: object.string("type"),
+            payload: object.object("payload")
         )
-        let type = try object.string("type")
-        let payload = try object.object("payload")
-        let observation = try PresentationObservation.decode(type: type, payload: payload)
+        try accept(
+            observation,
+            causedBySequence: causedBySequence
+        )
+        nextSequence += 1
+        if case .disposed = observation { hasDisposed = true }
+        return PresentationObservationEnvelope(
+            sessionID: decodedSession,
+            sequence: sequence,
+            causedBySequence: causedBySequence,
+            observation: observation
+        )
+    }
+
+    private func accept(
+        _ observation: PresentationObservation,
+        causedBySequence: UInt64?
+    ) throws {
         switch observation {
+        case .profileModelLoaded(let payload):
+            guard initialProfileLoadCauseMatches(causedBySequence),
+                  activeProfileRevision == nil,
+                  payload.profileRevision > 0,
+                  payload.profileRevision <= BridgeContract.maximumSafeInteger
+            else { throw BridgeContractError.invalidSequence }
+            if let expectedProfile {
+                guard expectedProfile.profileRevision == payload.profileRevision,
+                      expectedProfile.modelToken == payload.modelToken
+                else { throw BridgeContractError.staleSession }
+            }
+            activeProfileRevision = payload.profileRevision
+            activeModelToken = payload.modelToken
+            activeProfileLoadCauseSequence = causedBySequence
+        case .firstFrame(let payload):
+            try requireIdentity(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken,
+                causedBySequence: causedBySequence
+            )
+        case .motionStatus(let payload):
+            try requireIdentity(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken,
+                causedBySequence: causedBySequence
+            )
+            try requireMotionIdentity(
+                role: payload.role,
+                token: payload.motionToken,
+                status: payload.status
+            )
+        case .motionActive(let payload):
+            try requireIdentity(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken,
+                causedBySequence: causedBySequence,
+                requiresProfileLoadCause: false
+            )
+            guard expectedPhaseCauseSequence == nil
+                    || causedBySequence == expectedPhaseCauseSequence
+            else { throw BridgeContractError.invalidSequence }
+            try requireActiveMotionIdentity(payload)
         case let .suspended(payload):
             try acceptCounters(
                 frames: payload.frames,
@@ -415,14 +715,85 @@ public final class PresentationObservationDecoder {
         default:
             break
         }
+    }
 
-        nextSequence += 1
-        return PresentationObservationEnvelope(
-            sessionID: decodedSession,
-            sequence: sequence,
-            causedBySequence: causedBySequence,
-            observation: observation
-        )
+    private func requireIdentity(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        causedBySequence: UInt64?,
+        requiresProfileLoadCause: Bool = true
+    ) throws {
+        guard !requiresProfileLoadCause || profileLoadCauseMatches(causedBySequence) else {
+            throw BridgeContractError.invalidSequence
+        }
+        guard causedBySequence != nil else { throw BridgeContractError.staleSession }
+        guard activeProfileRevision == profileRevision,
+              activeModelToken == modelToken
+        else { throw BridgeContractError.staleSession }
+    }
+
+    private func profileLoadCauseMatches(_ causedBySequence: UInt64?) -> Bool {
+        guard let causedBySequence else { return false }
+        if let expectedProfileLoadSequence {
+            return causedBySequence == expectedProfileLoadSequence
+        }
+        guard let activeProfileLoadCauseSequence else { return false }
+        return causedBySequence == activeProfileLoadCauseSequence
+    }
+
+    private func initialProfileLoadCauseMatches(_ causedBySequence: UInt64?) -> Bool {
+        guard let causedBySequence else { return false }
+        return expectedProfileLoadSequence == nil
+            || causedBySequence == expectedProfileLoadSequence
+    }
+
+    private func requireMotionIdentity(
+        role: AvatarMotionRole,
+        token: UUID?,
+        status: MotionStatus
+    ) throws {
+        guard let expected = expectedMotionBindings[role] else {
+            if expectedMotionBindings.isEmpty { return }
+            throw BridgeContractError.invalidValue
+        }
+
+        switch expected.status {
+        case .ready:
+            guard let expectedToken = expected.token,
+                  token == expectedToken,
+                  status == .ready
+                      || status == .loadFailed
+                      || status == .timedOut
+                      || status == .runtimeFailed
+            else { throw BridgeContractError.invalidValue }
+        case .missing:
+            guard status == .missing, token == nil else {
+                throw BridgeContractError.invalidValue
+            }
+        case .rejected:
+            guard status == .rejected, token == nil else {
+                throw BridgeContractError.invalidValue
+            }
+        }
+    }
+
+    private func requireActiveMotionIdentity(
+        _ payload: MotionActivePayload
+    ) throws {
+        switch payload.mode {
+        case .rest:
+            return
+        case .loop, .oneShot:
+            guard let role = payload.role,
+                  let token = payload.motionToken,
+                  let expected = expectedMotionBindings[role],
+                  expected.status == .ready,
+                  expected.token == token
+            else {
+                if expectedMotionBindings.isEmpty { return }
+                throw BridgeContractError.invalidValue
+            }
+        }
     }
 
     private func acceptCounters(
@@ -430,15 +801,9 @@ public final class PresentationObservationDecoder {
         updates: UInt64,
         renders: UInt64
     ) throws {
-        if let lastFrames, frames < lastFrames {
-            throw BridgeContractError.invalidSequence
-        }
-        if let lastUpdates, updates < lastUpdates {
-            throw BridgeContractError.invalidSequence
-        }
-        if let lastRenders, renders < lastRenders {
-            throw BridgeContractError.invalidSequence
-        }
+        if let lastFrames, frames < lastFrames { throw BridgeContractError.invalidSequence }
+        if let lastUpdates, updates < lastUpdates { throw BridgeContractError.invalidSequence }
+        if let lastRenders, renders < lastRenders { throw BridgeContractError.invalidSequence }
         lastFrames = frames
         lastUpdates = updates
         lastRenders = renders
@@ -454,12 +819,38 @@ private extension PresentationCommand {
                 throw BridgeContractError.invalidValue
             }
             return .configure(ConfigurePayload(
-                profile: "lightweight",
                 reducedMotion: try payload.boolean("reduced_motion")
             ))
-        case "load_asset":
-            try payload.requireKeys(["asset_token"])
-            return .loadAsset(LoadAssetPayload(assetToken: try payload.uuid("asset_token")))
+        case "load_profile":
+            try payload.requireKeys(["profile_revision", "model_token", "motion_bindings"])
+            let profileRevision = try payload.integer("profile_revision", minimum: 1)
+            let modelToken = try payload.uuid("model_token")
+            let bindings = try payload.object("motion_bindings")
+            let expectedRoles = Set(AvatarMotionRole.allCases.map(\.rawValue))
+            guard Set(bindings.values.keys) == expectedRoles else {
+                throw BridgeContractError.invalidKeys
+            }
+            var decoded: [AvatarMotionRole: MotionBindingPayload] = [:]
+            for role in AvatarMotionRole.allCases {
+                let descriptor = try bindings.object(role.rawValue)
+                try descriptor.requireKeys(["status", "token"])
+                guard let status = MotionBindingStatus(rawValue: try descriptor.string("status")) else {
+                    throw BridgeContractError.invalidValue
+                }
+                let token = try descriptor.optionalUUID("token")
+                switch status {
+                case .ready:
+                    guard token != nil else { throw BridgeContractError.invalidValue }
+                case .missing, .rejected:
+                    guard token == nil else { throw BridgeContractError.invalidValue }
+                }
+                decoded[role] = MotionBindingPayload(status: status, token: token)
+            }
+            return .loadProfile(LoadProfilePayload(
+                profileRevision: profileRevision,
+                modelToken: modelToken,
+                motionBindings: decoded
+            ))
         case "project_phase":
             try payload.requireKeys([
                 "projection_sequence", "generation_id", "phase", "playback_id",
@@ -470,20 +861,11 @@ private extension PresentationCommand {
                 throw BridgeContractError.invalidValue
             }
             let playbackID = try payload.optionalUUID("playback_id")
-            switch phase {
-            case .speaking:
-                guard generationID != nil, playbackID != nil else {
-                    throw BridgeContractError.invalidValue
-                }
-            case .thinking, .responding, .stopped, .failed:
-                guard generationID != nil, playbackID == nil else {
-                    throw BridgeContractError.invalidValue
-                }
-            case .idle, .listening, .transcribing:
-                guard generationID == nil, playbackID == nil else {
-                    throw BridgeContractError.invalidValue
-                }
-            }
+            guard validPhaseIdentities(
+                phase: phase,
+                generationID: generationID,
+                playbackID: playbackID
+            ) else { throw BridgeContractError.invalidValue }
             return .projectPhase(ProjectPhasePayload(
                 projectionSequence: projectionSequence,
                 generationID: generationID,
@@ -496,8 +878,7 @@ private extension PresentationCommand {
                 "reduced_motion",
             ])
             let lastProjectionSequence = try payload.optionalInteger(
-                "last_projection_sequence",
-                minimum: 1
+                "last_projection_sequence", minimum: 1
             )
             let generationID = try payload.optionalUUID("generation_id")
             guard let phase = PresentationPhase(rawValue: try payload.string("phase")) else {
@@ -508,9 +889,7 @@ private extension PresentationCommand {
                 phase: phase,
                 generationID: generationID,
                 playbackID: playbackID
-            ) else {
-                throw BridgeContractError.invalidValue
-            }
+            ) else { throw BridgeContractError.invalidValue }
             return .reconcilePresentation(ReconcilePresentationPayload(
                 lastProjectionSequence: lastProjectionSequence,
                 generationID: generationID,
@@ -538,8 +917,7 @@ private extension PresentationCommand {
                 playbackID: try payload.uuid("playback_id"),
                 cueIndex: try payload.integer("cue_index", minimum: 1),
                 playbackOffsetMilliseconds: try payload.integer(
-                    "playback_offset_ms",
-                    maximum: 86_400_000
+                    "playback_offset_ms", maximum: 86_400_000
                 ),
                 scalar: try payload.number("scalar", minimum: 0, maximum: 1)
             ))
@@ -549,7 +927,7 @@ private extension PresentationCommand {
                 throw BridgeContractError.invalidValue
             }
             let generationID = try payload.optionalUUID("generation_id")
-            if generationID == nil, reason != .operator {
+            guard generationID != nil || reason == .operator else {
                 throw BridgeContractError.invalidValue
             }
             return .reset(ResetPayload(generationID: generationID, reason: reason))
@@ -586,9 +964,7 @@ private extension PresentationObservation {
         case "wrapper_ready":
             try payload.requireKeys(["bridge_version"])
             let version = try payload.integer("bridge_version")
-            guard version == 1 else {
-                throw BridgeContractError.invalidValue
-            }
+            guard version == 2 else { throw BridgeContractError.invalidValue }
             return .wrapperReady(WrapperReadyPayload(bridgeVersion: version))
         case "renderer_ready":
             try payload.requireKeys(["webgl"])
@@ -596,12 +972,13 @@ private extension PresentationObservation {
                 throw BridgeContractError.invalidValue
             }
             return .rendererReady(RendererReadyPayload(webgl: "webgl2"))
-        case "asset_loaded":
-            try payload.requireKeys(["asset_token", "capabilities"])
+        case "profile_model_loaded":
+            try payload.requireKeys(["profile_revision", "model_token", "capabilities"])
             let capabilities = try payload.object("capabilities")
             try capabilities.requireKeys(["aa", "look_at", "spring_bone", "mtoon_materials"])
-            return .assetLoaded(AssetLoadedPayload(
-                assetToken: try payload.uuid("asset_token"),
+            return .profileModelLoaded(ProfileModelLoadedPayload(
+                profileRevision: try payload.integer("profile_revision", minimum: 1),
+                modelToken: try payload.uuid("model_token"),
                 capabilities: AssetCapabilities(
                     aa: try capabilities.boolean("aa"),
                     lookAt: try capabilities.boolean("look_at"),
@@ -611,11 +988,12 @@ private extension PresentationObservation {
             ))
         case "first_frame":
             try payload.requireKeys([
-                "asset_token", "viewport_width", "viewport_height", "visible_meshes",
-                "decoded_textures", "material_bindings", "alpha_probe_pixels",
+                "profile_revision", "model_token", "viewport_width", "viewport_height",
+                "visible_meshes", "decoded_textures", "material_bindings", "alpha_probe_pixels",
             ])
             return .firstFrame(FirstFramePayload(
-                assetToken: try payload.uuid("asset_token"),
+                profileRevision: try payload.integer("profile_revision", minimum: 1),
+                modelToken: try payload.uuid("model_token"),
                 viewportWidth: try payload.integer("viewport_width", minimum: 1, maximum: 8_192),
                 viewportHeight: try payload.integer("viewport_height", minimum: 1, maximum: 8_192),
                 visibleMeshes: try payload.integer("visible_meshes", minimum: 1, maximum: 2_048),
@@ -623,13 +1001,84 @@ private extension PresentationObservation {
                 materialBindings: try payload.integer("material_bindings", minimum: 1, maximum: 512),
                 alphaProbePixels: try payload.integer("alpha_probe_pixels", minimum: 1, maximum: 4_096)
             ))
+        case "motion_status":
+            try payload.requireKeys([
+                "profile_revision", "model_token", "motion_token", "role", "status", "motion_code",
+            ])
+            guard let role = AvatarMotionRole(rawValue: try payload.string("role")),
+                  let status = MotionStatus(rawValue: try payload.string("status"))
+            else { throw BridgeContractError.invalidValue }
+            let token = try payload.optionalUUID("motion_token")
+            let code = try payload.optionalMotionFailureCode("motion_code")
+            switch status {
+            case .ready, .missing, .rejected:
+                guard (status == .ready) == (token != nil), code == nil else {
+                    throw BridgeContractError.invalidValue
+                }
+            case .loadFailed:
+                guard token != nil, code == .motionLoadFailed else {
+                    throw BridgeContractError.invalidValue
+                }
+            case .timedOut:
+                guard token != nil, code == .motionLoadTimeout else {
+                    throw BridgeContractError.invalidValue
+                }
+            case .runtimeFailed:
+                guard token != nil, code == .motionRuntimeFailed else {
+                    throw BridgeContractError.invalidValue
+                }
+            }
+            return .motionStatus(MotionStatusPayload(
+                profileRevision: try payload.integer("profile_revision", minimum: 1),
+                modelToken: try payload.uuid("model_token"),
+                motionToken: token,
+                role: role,
+                status: status,
+                motionCode: code
+            ))
+        case "motion_active":
+            try payload.requireKeys([
+                "profile_revision", "model_token", "motion_token", "role", "mode",
+            ])
+            guard let mode = MotionActiveMode(rawValue: try payload.string("mode")) else {
+                throw BridgeContractError.invalidValue
+            }
+            let token = try payload.optionalUUID("motion_token")
+            let role: AvatarMotionRole?
+            if payload.values["role"] is NSNull {
+                role = nil
+            } else if let rawRole = payload.values["role"] as? String {
+                guard let decodedRole = AvatarMotionRole(rawValue: rawRole) else {
+                    throw BridgeContractError.invalidValue
+                }
+                role = decodedRole
+            } else {
+                throw BridgeContractError.invalidValue
+            }
+            switch mode {
+            case .rest:
+                guard token == nil, role == nil else { throw BridgeContractError.invalidValue }
+            case .loop:
+                guard token != nil, role?.isSteady == true else {
+                    throw BridgeContractError.invalidValue
+                }
+            case .oneShot:
+                guard token != nil, role == .success || role == .failure else {
+                    throw BridgeContractError.invalidValue
+                }
+            }
+            return .motionActive(MotionActivePayload(
+                profileRevision: try payload.integer("profile_revision", minimum: 1),
+                modelToken: try payload.uuid("model_token"),
+                motionToken: token,
+                role: role,
+                mode: mode
+            ))
         case "suspended":
             try payload.requireKeys(["visibility", "frames", "updates", "renders"])
             guard let visibility = PresentationVisibility(rawValue: try payload.string("visibility")),
                   visibility != .visible
-            else {
-                throw BridgeContractError.invalidValue
-            }
+            else { throw BridgeContractError.invalidValue }
             return .suspended(SuspendedPayload(
                 visibility: visibility,
                 frames: try payload.integer("frames"),
@@ -653,9 +1102,7 @@ private extension PresentationObservation {
             try payload.requireKeys(["code", "operation"])
             guard let code = FailureCode(rawValue: try payload.string("code")),
                   let operation = FailureOperation(rawValue: try payload.string("operation"))
-            else {
-                throw BridgeContractError.invalidValue
-            }
+            else { throw BridgeContractError.invalidValue }
             return .failed(FailedPayload(code: code, operation: operation))
         default:
             throw BridgeContractError.invalidValue
@@ -667,15 +1114,11 @@ private struct BridgeObject {
     let values: [String: Any]
 
     func requireKeys(_ keys: Set<String>) throws {
-        guard Set(values.keys) == keys else {
-            throw BridgeContractError.invalidKeys
-        }
+        guard Set(values.keys) == keys else { throw BridgeContractError.invalidKeys }
     }
 
     func string(_ key: String) throws -> String {
-        guard let value = values[key] as? String else {
-            throw BridgeContractError.invalidValue
-        }
+        guard let value = values[key] as? String else { throw BridgeContractError.invalidValue }
         return value
     }
 
@@ -695,19 +1138,13 @@ private struct BridgeObject {
               let integer = BridgeValue.safeInteger(value),
               integer >= minimum,
               integer <= maximum
-        else {
-            throw BridgeContractError.invalidValue
-        }
+        else { throw BridgeContractError.invalidValue }
         return integer
     }
 
     func optionalInteger(_ key: String, minimum: UInt64 = 0) throws -> UInt64? {
-        guard let value = values[key] else {
-            throw BridgeContractError.invalidValue
-        }
-        if value is NSNull {
-            return nil
-        }
+        guard let value = values[key] else { throw BridgeContractError.invalidValue }
+        if value is NSNull { return nil }
         guard let integer = BridgeValue.safeInteger(value), integer >= minimum else {
             throw BridgeContractError.invalidValue
         }
@@ -718,9 +1155,7 @@ private struct BridgeObject {
         guard let value = values[key],
               !BridgeValue.isBoolean(value),
               let number = value as? NSNumber
-        else {
-            throw BridgeContractError.invalidValue
-        }
+        else { throw BridgeContractError.invalidValue }
         let result = number.doubleValue
         guard result.isFinite, result >= minimum, result <= maximum else {
             throw BridgeContractError.invalidValue
@@ -729,20 +1164,24 @@ private struct BridgeObject {
     }
 
     func uuid(_ key: String) throws -> UUID {
-        try BridgeValue.uuid(string(key))
+        try BridgeValue.uuid(try string(key))
     }
 
     func optionalUUID(_ key: String) throws -> UUID? {
-        guard let value = values[key] else {
-            throw BridgeContractError.invalidValue
-        }
-        if value is NSNull {
-            return nil
-        }
-        guard let string = value as? String else {
-            throw BridgeContractError.invalidValue
-        }
+        guard let value = values[key] else { throw BridgeContractError.invalidValue }
+        if value is NSNull { return nil }
+        guard let string = value as? String else { throw BridgeContractError.invalidValue }
         return try BridgeValue.uuid(string)
+    }
+
+    func optionalMotionFailureCode(_ key: String) throws -> MotionFailureCode? {
+        guard let value = values[key] else { throw BridgeContractError.invalidValue }
+        if value is NSNull { return nil }
+        guard let string = value as? String,
+              let code = MotionFailureCode(rawValue: string)
+        else { throw BridgeContractError.invalidValue }
+        guard code != .cancelled else { throw BridgeContractError.invalidValue }
+        return code
     }
 
     func object(_ key: String) throws -> BridgeObject {
@@ -753,47 +1192,32 @@ private struct BridgeObject {
     }
 }
 
-/// Checks JSON grammar that `JSONSerialization` normalizes away, notably
-/// duplicate object keys. The contract rejects those messages rather than
-/// allowing an implementation-defined last-key-wins decode.
+/// Checks JSON grammar that JSONSerialization otherwise normalizes away,
+/// notably duplicate object keys.
 private struct StrictBridgeJSONValidator {
     private let bytes: [UInt8]
     private var index = 0
 
-    init(data: Data) {
-        bytes = Array(data)
-    }
+    init(data: Data) { bytes = Array(data) }
 
     mutating func validate() throws {
         try parseValue(containerDepth: 0)
         skipWhitespace()
-        guard index == bytes.count else {
-            throw BridgeContractError.invalidJSON
-        }
+        guard index == bytes.count else { throw BridgeContractError.invalidJSON }
     }
 
     private mutating func parseValue(containerDepth: Int) throws {
         skipWhitespace()
-        guard index < bytes.count else {
-            throw BridgeContractError.invalidJSON
-        }
+        guard index < bytes.count else { throw BridgeContractError.invalidJSON }
         switch bytes[index] {
-        case 0x7B:
-            try parseObject(depth: containerDepth + 1)
-        case 0x5B:
-            try parseArray(depth: containerDepth + 1)
-        case 0x22:
-            _ = try parseString()
-        case 0x74:
-            try consume("true")
-        case 0x66:
-            try consume("false")
-        case 0x6E:
-            try consume("null")
-        case 0x2D, 0x30...0x39:
-            try parseNumber()
-        default:
-            throw BridgeContractError.invalidJSON
+        case 0x7B: try parseObject(depth: containerDepth + 1)
+        case 0x5B: try parseArray(depth: containerDepth + 1)
+        case 0x22: _ = try parseString()
+        case 0x74: try consume("true")
+        case 0x66: try consume("false")
+        case 0x6E: try consume("null")
+        case 0x2D, 0x30...0x39: try parseNumber()
+        default: throw BridgeContractError.invalidJSON
         }
     }
 
@@ -808,19 +1232,13 @@ private struct StrictBridgeJSONValidator {
         while true {
             skipWhitespace()
             let key = try parseString()
-            guard keys.insert(key).inserted else {
-                throw BridgeContractError.invalidKeys
-            }
+            guard keys.insert(key).inserted else { throw BridgeContractError.invalidKeys }
             skipWhitespace()
-            guard consumeIf(0x3A) else {
-                throw BridgeContractError.invalidJSON
-            }
+            guard consumeIf(0x3A) else { throw BridgeContractError.invalidJSON }
             try parseValue(containerDepth: depth)
             skipWhitespace()
             if consumeIf(0x7D) { return }
-            guard consumeIf(0x2C) else {
-                throw BridgeContractError.invalidJSON
-            }
+            guard consumeIf(0x2C) else { throw BridgeContractError.invalidJSON }
         }
     }
 
@@ -840,16 +1258,12 @@ private struct StrictBridgeJSONValidator {
             try parseValue(containerDepth: depth)
             skipWhitespace()
             if consumeIf(0x5D) { return }
-            guard consumeIf(0x2C) else {
-                throw BridgeContractError.invalidJSON
-            }
+            guard consumeIf(0x2C) else { throw BridgeContractError.invalidJSON }
         }
     }
 
     private mutating func parseString() throws -> String {
-        guard consumeIf(0x22) else {
-            throw BridgeContractError.invalidJSON
-        }
+        guard consumeIf(0x22) else { throw BridgeContractError.invalidJSON }
         let start = index - 1
         while index < bytes.count {
             let byte = bytes[index]
@@ -859,26 +1273,18 @@ private struct StrictBridgeJSONValidator {
                 guard let decoded = try JSONSerialization.jsonObject(
                     with: encoded,
                     options: [.fragmentsAllowed]
-                ) as? String else {
-                    throw BridgeContractError.invalidJSON
-                }
+                ) as? String else { throw BridgeContractError.invalidJSON }
                 return decoded
             }
-            guard byte >= 0x20 else {
-                throw BridgeContractError.invalidJSON
-            }
+            guard byte >= 0x20 else { throw BridgeContractError.invalidJSON }
             if byte == 0x5C {
-                guard index < bytes.count else {
-                    throw BridgeContractError.invalidJSON
-                }
+                guard index < bytes.count else { throw BridgeContractError.invalidJSON }
                 let escaped = bytes[index]
                 index += 1
                 if escaped == 0x75 {
                     guard index <= bytes.count - 4,
                           bytes[index..<(index + 4)].allSatisfy(Self.isHex)
-                    else {
-                        throw BridgeContractError.invalidJSON
-                    }
+                    else { throw BridgeContractError.invalidJSON }
                     index += 4
                 } else if ![0x22, 0x5C, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(escaped) {
                     throw BridgeContractError.invalidJSON
@@ -901,42 +1307,30 @@ private struct StrictBridgeJSONValidator {
         if consumeIf(0x2E) { try consumeDigits() }
         if index < bytes.count, bytes[index] == 0x65 || bytes[index] == 0x45 {
             index += 1
-            if index < bytes.count, bytes[index] == 0x2B || bytes[index] == 0x2D {
-                index += 1
-            }
+            if index < bytes.count, bytes[index] == 0x2B || bytes[index] == 0x2D { index += 1 }
             try consumeDigits()
         }
         guard let string = String(bytes: bytes[start..<index], encoding: .utf8),
               let value = Double(string), value.isFinite
-        else {
-            throw BridgeContractError.invalidJSON
-        }
+        else { throw BridgeContractError.invalidJSON }
     }
 
     private mutating func consumeDigits() throws {
         let start = index
-        while index < bytes.count, (0x30...0x39).contains(bytes[index]) {
-            index += 1
-        }
-        guard index > start else {
-            throw BridgeContractError.invalidJSON
-        }
+        while index < bytes.count, (0x30...0x39).contains(bytes[index]) { index += 1 }
+        guard index > start else { throw BridgeContractError.invalidJSON }
     }
 
     private mutating func consume(_ text: StaticString) throws {
         let target = Array("\(text)".utf8)
         guard index <= bytes.count - target.count,
               Array(bytes[index..<(index + target.count)]) == target
-        else {
-            throw BridgeContractError.invalidJSON
-        }
+        else { throw BridgeContractError.invalidJSON }
         index += target.count
     }
 
     private mutating func skipWhitespace() {
-        while index < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[index]) {
-            index += 1
-        }
+        while index < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[index]) { index += 1 }
     }
 
     private mutating func consumeIf(_ byte: UInt8) -> Bool {
@@ -957,20 +1351,12 @@ private enum BridgeValue {
         guard data.count <= BridgeContract.maximumMessageBytes else {
             throw BridgeContractError.messageTooLarge
         }
-        do {
-            var validator = StrictBridgeJSONValidator(data: data)
-            try validator.validate()
-        } catch let error as BridgeContractError {
-            throw error
-        } catch {
-            throw BridgeContractError.invalidJSON
-        }
+        var validator = StrictBridgeJSONValidator(data: data)
+        try validator.validate()
         let value: Any
         do {
             value = try JSONSerialization.jsonObject(with: data)
-        } catch {
-            throw BridgeContractError.invalidJSON
-        }
+        } catch { throw BridgeContractError.invalidJSON }
         try validate(value, depth: 0)
         guard let object = value as? [String: Any] else {
             throw BridgeContractError.invalidShape
@@ -994,21 +1380,15 @@ private enum BridgeValue {
             let nextDepth = depth + 1
             guard nextDepth <= BridgeContract.maximumContainerDepth,
                   array.count <= BridgeContract.maximumArrayLength
-            else {
-                throw BridgeContractError.invalidShape
-            }
-            for child in array {
-                try validate(child, depth: nextDepth)
-            }
+            else { throw BridgeContractError.invalidShape }
+            for child in array { try validate(child, depth: nextDepth) }
             return
         }
         if let string = value as? String {
             try validateString(string)
             return
         }
-        if value is NSNull || isBoolean(value) {
-            return
-        }
+        if value is NSNull || isBoolean(value) { return }
         guard let number = value as? NSNumber, number.doubleValue.isFinite else {
             throw BridgeContractError.invalidValue
         }
@@ -1019,30 +1399,22 @@ private enum BridgeValue {
               !value.unicodeScalars.contains(where: { scalar in
                   scalar.value <= 0x1F || scalar.value == 0x7F
               })
-        else {
-            throw BridgeContractError.invalidValue
-        }
+        else { throw BridgeContractError.invalidValue }
     }
 
     static func isBoolean(_ value: Any) -> Bool {
-        guard let number = value as? NSNumber else {
-            return false
-        }
+        guard let number = value as? NSNumber else { return false }
         return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
     static func safeInteger(_ value: Any) -> UInt64? {
-        guard !isBoolean(value), let number = value as? NSNumber else {
-            return nil
-        }
+        guard !isBoolean(value), let number = value as? NSNumber else { return nil }
         let double = number.doubleValue
         guard double.isFinite,
               double.rounded(.towardZero) == double,
               double >= 0,
               double <= Double(BridgeContract.maximumSafeInteger)
-        else {
-            return nil
-        }
+        else { return nil }
         return UInt64(double)
     }
 
@@ -1051,9 +1423,7 @@ private enum BridgeValue {
               value == value.lowercased(),
               let uuid = UUID(uuidString: value),
               uuid.uuidString.lowercased() == value
-        else {
-            throw BridgeContractError.invalidValue
-        }
+        else { throw BridgeContractError.invalidValue }
         return uuid
     }
 }

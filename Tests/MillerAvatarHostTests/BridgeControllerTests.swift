@@ -11,9 +11,7 @@ import MillerAvatarCore
         let bridge = BridgeController(sessionID: sessionID, caller: caller)
 
         try await bridge.send(.configure(reducedMotion: true))
-        try await bridge.send(.loadAsset(token: UUID(
-            uuidString: "22222222-2222-4222-8222-222222222222"
-        )!))
+        try await bridge.send(.loadProfile(profilePayload()))
 
         #expect(caller.calls.count == 2)
         #expect(caller.calls.allSatisfy { $0.source == BridgeController.receiverSource })
@@ -39,9 +37,7 @@ import MillerAvatarCore
         let first = Task { try await bridge.send(.configure(reducedMotion: false)) }
         await caller.waitForFirstCall()
         let second = Task {
-            try await bridge.send(.loadAsset(token: UUID(
-                uuidString: "22222222-2222-4222-8222-222222222222"
-            )!))
+            try await bridge.send(.loadProfile(profilePayload()))
         }
         await Task.yield()
 
@@ -88,6 +84,37 @@ import MillerAvatarCore
         #expect(payload["reduced_motion"] as? Bool == true)
     }
 
+    @Test
+    func reservesEachSequenceAndPreparesExpectationBeforeDispatch() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let sessionID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let bridge = BridgeController(sessionID: sessionID, caller: caller)
+        var prepared: [UInt64] = []
+        var dispatchCountAtPreparation: [Int] = []
+
+        try await bridge.send(.loadProfile(profilePayload())) { sequence in
+            prepared.append(sequence)
+            dispatchCountAtPreparation.append(caller.calls.count)
+        }
+        try await bridge.send(.configure(reducedMotion: false)) { sequence in
+            prepared.append(sequence)
+            dispatchCountAtPreparation.append(caller.calls.count)
+        }
+
+        #expect(prepared == [1, 2])
+        #expect(dispatchCountAtPreparation == [0, 1])
+    }
+
+}
+
+private func profilePayload() -> LoadProfilePayload {
+    LoadProfilePayload(
+        profileRevision: 1,
+        modelToken: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
+        motionBindings: Dictionary(uniqueKeysWithValues: AvatarMotionRole.allCases.map {
+            ($0, MotionBindingPayload.missing)
+        })
+    )
 }
 
 @MainActor

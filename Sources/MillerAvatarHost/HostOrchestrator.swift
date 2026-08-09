@@ -18,7 +18,14 @@ public struct HostCounters: Equatable, Sendable {
 public enum HostObservation: Equatable, Sendable {
     case wrapperReady
     case rendererReady
-    case firstFrame(assetToken: UUID, counters: HostCounters)
+    case profileModelLoaded(ProfileModelLoadedPayload)
+    case firstFrame(
+        profileRevision: UInt64,
+        modelToken: UUID,
+        counters: HostCounters
+    )
+    case motionStatus(MotionStatusPayload)
+    case motionActive(MotionActivePayload)
     case suspended(visibility: PresentationVisibility, counters: HostCounters)
     case resumed(counters: HostCounters)
     case failed(FailureCode)
@@ -26,15 +33,16 @@ public enum HostObservation: Equatable, Sendable {
 }
 
 @MainActor
-public protocol HostRendererDriving: AnyObject {
+package protocol HostRendererDriving: AnyObject {
     func start(sessionID: UUID, receive: @escaping (UUID, HostObservation) -> Void)
-    func install(_ asset: AdmittedAsset)
+    @discardableResult
+    func install(_ profile: LoadedAvatarProfile) -> Bool
     func send(_ command: BridgeCommand)
     func dispose(reason: DisposalReason)
 }
 
 @MainActor
-internal protocol HostTestAssetLoading {
+package protocol HostTestAssetLoading {
     func installForTesting(assetToken: UUID, bytes: Data)
 }
 
@@ -60,26 +68,33 @@ public struct HostSnapshot: Equatable, Sendable {
     public let counters: HostCounters
     public let reducedMotion: Bool
     public let retryAvailable: Bool
+    public let profileRevision: UInt64?
+    public let modelToken: UUID?
+    public let motionStatuses: [AvatarMotionRole: MotionStatus]
 }
 
 @MainActor
-public final class HostOrchestrator {
-    public var onChange: ((HostSnapshot) -> Void)?
-    public var onObservation: ((HostObservation) -> Void)?
+package final class HostOrchestrator {
+    package var onChange: ((HostSnapshot) -> Void)?
+    package var onObservation: ((HostObservation) -> Void)?
 
-    public private(set) var snapshot: HostSnapshot
+    package private(set) var snapshot: HostSnapshot
     private let driver: any HostRendererDriving
     private let now: () -> TimeInterval
     private var deadline: Deadline?
     private var activeAssetToken: UUID?
+    private var activeProfilePayload: LoadProfilePayload?
+    private var hasProfileModelLoaded = false
+    private var motionStatuses: [AvatarMotionRole: MotionStatus] = [:]
     private var consecutiveFailures = 0
     private var projectionState = ProjectionState()
     private var visibilityState = VisibilityCoordinatorState(
         sessionID: nil,
         lifecycle: .absent
     )
+    private var mutationEpoch: UInt64 = 0
 
-    public init(
+    package init(
         driver: any HostRendererDriving,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
@@ -95,114 +110,181 @@ public final class HostOrchestrator {
             lastFailure: nil,
             counters: .zero,
             reducedMotion: false,
-            retryAvailable: false
+            retryAvailable: false,
+            profileRevision: nil,
+            modelToken: nil,
+            motionStatuses: [:]
         )
     }
 
-    public func startRenderer() {
+    package func startRenderer() {
+        let mutation = beginMutation()
         guard snapshot.lifecycle == .absent,
               consecutiveFailures == 0
         else {
             return
         }
-        beginRenderer(preservingFailureCount: false)
+        beginRenderer(preservingFailureCount: false, mutation: mutation)
     }
 
-    public func retry() {
+    package func retry() {
+        let mutation = beginMutation()
         guard snapshot.retryAvailable else { return }
-        beginRenderer(preservingFailureCount: true)
+        beginRenderer(preservingFailureCount: true, mutation: mutation)
     }
 
     @discardableResult
-    public func load(_ asset: AdmittedAsset) -> AssetLoadDisposition {
+    package func load(_ profile: LoadedAvatarProfile) -> AssetLoadDisposition {
+        let mutation = beginMutation()
         guard snapshot.lifecycle == .rendererReady else { return .notReady }
-        driver.install(asset)
-        beginAssetLoad(assetToken: asset.token)
+        let sessionID = snapshot.sessionID
+        guard driver.install(profile) else { return .notReady }
+        guard isCurrentMutation(mutation),
+              snapshot.lifecycle == .rendererReady,
+              snapshot.sessionID == sessionID,
+              beginAssetLoad(profile.loadPayload)
+        else { return .notReady }
         return .accepted
     }
 
     @discardableResult
-    internal func load(assetToken: UUID, bytes: Data = Data()) -> AssetLoadDisposition {
+    package func load(assetToken: UUID, bytes: Data = Data()) -> AssetLoadDisposition {
+        let mutation = beginMutation()
         guard snapshot.lifecycle == .rendererReady,
               let testDriver = driver as? any HostTestAssetLoading
         else { return .notReady }
+        let sessionID = snapshot.sessionID
         testDriver.installForTesting(assetToken: assetToken, bytes: bytes)
-        beginAssetLoad(assetToken: assetToken)
+        var bindings: [AvatarMotionRole: MotionBindingPayload] = [:]
+        for role in AvatarMotionRole.allCases { bindings[role] = .missing }
+        guard isCurrentMutation(mutation),
+              snapshot.lifecycle == .rendererReady,
+              snapshot.sessionID == sessionID,
+              beginAssetLoad(LoadProfilePayload(
+            profileRevision: 1,
+            modelToken: assetToken,
+            motionBindings: bindings
+        ))
+        else { return .notReady }
         return .accepted
     }
 
-    private func beginAssetLoad(assetToken: UUID) {
-        activeAssetToken = assetToken
-        applyLifecycle(.beginAssetLoad)
-        update(admission: .admitted)
-        driver.send(.loadAsset(token: assetToken))
+    @discardableResult
+    private func beginAssetLoad(_ profile: LoadProfilePayload) -> Bool {
+        let mutation = mutationEpoch
+        let sessionID = snapshot.sessionID
+        activeAssetToken = profile.modelToken
+        activeProfilePayload = profile
+        hasProfileModelLoaded = false
+        motionStatuses = [:]
+        guard applyLifecycle(.beginAssetLoad),
+              isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID,
+              snapshot.lifecycle == .loadingAsset
+        else { return false }
+        update(
+            admission: .admitted,
+            profileRevision: .set(profile.profileRevision),
+            modelToken: .set(profile.modelToken),
+            motionStatuses: [:]
+        )
+        guard isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID,
+              snapshot.lifecycle == .loadingAsset
+        else { return false }
+        driver.send(.loadProfile(profile))
+        guard isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID,
+              snapshot.lifecycle == .loadingAsset
+        else { return false }
         deadline = .init(kind: .load, instant: now() + 15)
+        return true
     }
 
-    public func rejectAsset(_ code: FailureCode) {
+    package func rejectAsset(_ code: FailureCode) {
+        _ = beginMutation()
         update(admission: .rejected(code), lastFailure: .set(code))
     }
 
-    public func setReducedMotion(_ enabled: Bool) {
+    package func setReducedMotion(_ enabled: Bool) {
+        let mutation = beginMutation()
+        let sessionID = snapshot.sessionID
         let result = ProjectionReducer.reduce(
             state: projectionState,
             input: .setReducedMotion(enabled)
         )
         projectionState = result.state
         update(reducedMotion: result.state.reducedMotion)
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         execute(result.effects)
     }
 
-    public func project(_ payload: ProjectPhasePayload) {
+    package func project(_ payload: ProjectPhasePayload) {
+        let mutation = beginMutation()
+        let sessionID = snapshot.sessionID
         let result = ProjectionReducer.reduce(
             state: projectionState,
             input: .project(payload)
         )
         projectionState = result.state
         update()
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         execute(result.effects)
     }
 
-    public func setMouth(_ payload: SetMouthPayload) {
+    package func setMouth(_ payload: SetMouthPayload) {
+        let mutation = beginMutation()
+        let sessionID = snapshot.sessionID
         let result = ProjectionReducer.reduce(
             state: projectionState,
             input: .mouth(payload)
         )
         projectionState = result.state
         update()
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         execute(result.effects)
     }
 
-    public func reset(generationID: UUID?, reason: ResetReason) {
+    package func reset(generationID: UUID?, reason: ResetReason) {
+        let mutation = beginMutation()
+        let sessionID = snapshot.sessionID
         let result = ProjectionReducer.reduce(
             state: projectionState,
             input: .reset(generationID: generationID, reason: reason)
         )
         projectionState = result.state
         update()
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         execute(result.effects)
     }
 
-    public func simulateRendererFailure() {
+    package func simulateRendererFailure() {
         fail(.renderFailed)
     }
 
-    public func setVisibility(_ visibility: EffectiveVisibility) {
+    package func setVisibility(_ visibility: EffectiveVisibility) {
         driveVisibility(.desired(visibility))
     }
 
-    public func dispose(reason: DisposalReason = .operator) {
+    package func dispose(reason: DisposalReason = .operator) {
+        let mutation = beginMutation()
         guard snapshot.sessionID != nil else { return }
+        let sessionID = snapshot.sessionID
         deadline = nil
         let result = ProjectionReducer.reduce(state: projectionState, input: .dispose)
         projectionState = result.state
         execute(result.effects)
-        applyLifecycle(.dispose(reason))
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
+        guard applyLifecycle(.dispose(reason)),
+              isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID
+        else { return }
         driver.dispose(reason: reason)
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         finishDisposal()
     }
 
-    public func checkDeadlines() {
+    package func checkDeadlines() {
         guard let deadline, now() >= deadline.instant else { return }
         switch deadline.kind {
         case .wrapper:
@@ -214,23 +296,40 @@ public final class HostOrchestrator {
         }
     }
 
-    private func beginRenderer(preservingFailureCount: Bool) {
+    private func beginRenderer(
+        preservingFailureCount: Bool,
+        mutation: UInt64
+    ) {
         if snapshot.sessionID != nil {
             driver.dispose(reason: .retry)
+            guard isCurrentMutation(mutation) else { return }
         }
         if !preservingFailureCount {
             consecutiveFailures = 0
         }
         let sessionID = UUID()
         activeAssetToken = nil
+        activeProfilePayload = nil
+        hasProfileModelLoaded = false
+        motionStatuses = [:]
         projectionState = ProjectionState(reducedMotion: snapshot.reducedMotion)
         applyLifecycleFromAbsent(.startRenderer)
+        guard isCurrentMutation(mutation),
+              snapshot.lifecycle == .startingRenderer
+        else { return }
         update(
             sessionID: .set(sessionID),
             admission: HostAdmissionStatus.none,
             lastFailure: .set(nil),
-            retryAvailable: false
+            retryAvailable: false,
+            profileRevision: .set(nil),
+            modelToken: .set(nil),
+            motionStatuses: [:]
         )
+        guard isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID,
+              snapshot.lifecycle == .startingRenderer
+        else { return }
         visibilityState = VisibilityCoordinator.reduce(
             state: visibilityState,
             input: .replaceSession(sessionID: sessionID, lifecycle: .startingRenderer)
@@ -245,46 +344,102 @@ public final class HostOrchestrator {
 
     private func receive(sessionID: UUID, observation: HostObservation) {
         guard sessionID == snapshot.sessionID else { return }
+        let mutation = beginMutation()
         onObservation?(observation)
+        guard isCurrentMutation(mutation),
+              sessionID == snapshot.sessionID
+        else { return }
         switch observation {
         case .wrapperReady:
             guard snapshot.lifecycle == .startingRenderer,
                   deadline?.kind == .wrapper
             else { return }
             driver.send(.configure(reducedMotion: snapshot.reducedMotion))
+            guard isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID,
+                  snapshot.lifecycle == .startingRenderer
+            else { return }
             deadline = .init(kind: .renderer, instant: now() + 5)
         case .rendererReady:
             guard snapshot.lifecycle == .startingRenderer else { return }
             deadline = nil
-            applyLifecycle(.rendererReady)
-        case .firstFrame(let token, let counters):
+            guard applyLifecycle(.rendererReady),
+                  isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
+        case .profileModelLoaded(let payload):
             guard snapshot.lifecycle == .loadingAsset,
-                  token == activeAssetToken
+                  isCurrentProfileIdentity(
+                      profileRevision: payload.profileRevision,
+                      modelToken: payload.modelToken
+                  )
+            else { return }
+            hasProfileModelLoaded = true
+        case .firstFrame(
+            profileRevision: let profileRevision,
+            modelToken: let modelToken,
+            counters: let counters
+        ):
+            guard snapshot.lifecycle == .loadingAsset,
+                  hasProfileModelLoaded,
+                  isCurrentProfileIdentity(
+                      profileRevision: profileRevision,
+                      modelToken: modelToken
+                  )
             else { return }
             deadline = nil
             consecutiveFailures = 0
-            applyLifecycle(.firstFrame)
+            guard applyLifecycle(.firstFrame),
+                  isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
             update(counters: counters, retryAvailable: false)
+        case .motionStatus(let payload):
+            guard isCurrentMotionIdentity(payload),
+                  snapshot.lifecycle == .loadingAsset
+                      || snapshot.lifecycle == .live
+                      || snapshot.lifecycle == .liveSuspended
+            else { return }
+            motionStatuses[payload.role] = payload.status
+            update(motionStatuses: motionStatuses)
+        case .motionActive(let payload):
+            guard isCurrentMotionIdentity(payload),
+                  snapshot.lifecycle == .loadingAsset
+                      || snapshot.lifecycle == .live
+                      || snapshot.lifecycle == .liveSuspended
+            else { return }
         case .suspended(let visibility, let counters):
             driveVisibility(.observed(
                 sessionID: sessionID,
                 visibility: effective(visibility)
             ))
+            guard isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
             let result = ProjectionReducer.reduce(
                 state: projectionState,
                 input: .suspend
             )
             projectionState = result.state
             update(counters: counters)
+            guard isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
             execute(result.effects)
         case .resumed(let counters):
             driveVisibility(.observed(sessionID: sessionID, visibility: .visible))
+            guard isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
             let result = ProjectionReducer.reduce(
                 state: projectionState,
                 input: .resume
             )
             projectionState = result.state
             update(counters: counters)
+            guard isCurrentMutation(mutation),
+                  sessionID == snapshot.sessionID
+            else { return }
             execute(result.effects)
         case .failed(let code):
             fail(code)
@@ -294,7 +449,9 @@ public final class HostOrchestrator {
     }
 
     private func fail(_ code: FailureCode) {
+        let mutation = beginMutation()
         guard snapshot.sessionID != nil else { return }
+        let sessionID = snapshot.sessionID
         deadline = nil
         consecutiveFailures += 1
         let result = ProjectionReducer.reduce(
@@ -303,23 +460,49 @@ public final class HostOrchestrator {
         )
         projectionState = result.state
         execute(result.effects)
-        applyLifecycle(.fail(code))
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
+        guard applyLifecycle(.fail(code)),
+              isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID
+        else { return }
         driver.dispose(reason: .failure)
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
+        activeAssetToken = nil
+        activeProfilePayload = nil
+        hasProfileModelLoaded = false
+        motionStatuses = [:]
         update(
             sessionID: .set(nil),
             lastFailure: .set(code),
-            retryAvailable: consecutiveFailures == 1
+            retryAvailable: consecutiveFailures == 1,
+            profileRevision: .set(nil),
+            modelToken: .set(nil),
+            motionStatuses: [:]
         )
     }
 
     private func finishDisposal() {
+        let mutation = mutationEpoch
         deadline = nil
         activeAssetToken = nil
+        activeProfilePayload = nil
+        hasProfileModelLoaded = false
+        motionStatuses = [:]
         if snapshot.lifecycle != .disposing {
-            applyLifecycle(.dispose(.operator))
+            guard applyLifecycle(.dispose(.operator)),
+                  isCurrentMutation(mutation)
+            else { return }
         }
-        applyLifecycle(.disposalFinished)
-        update(sessionID: .set(nil))
+        guard applyLifecycle(.disposalFinished),
+              isCurrentMutation(mutation),
+              snapshot.lifecycle == .absent
+        else { return }
+        update(
+            sessionID: .set(nil),
+            profileRevision: .set(nil),
+            modelToken: .set(nil),
+            motionStatuses: [:]
+        )
     }
 
     private func applyLifecycleFromAbsent(_ input: LifecycleInput) {
@@ -327,32 +510,53 @@ public final class HostOrchestrator {
         update(lifecycle: result.state)
     }
 
-    private func applyLifecycle(_ input: LifecycleInput) {
+    @discardableResult
+    private func applyLifecycle(_ input: LifecycleInput) -> Bool {
+        let mutation = mutationEpoch
         let result = LifecycleReducer.reduce(state: snapshot.lifecycle, input: input)
         update(lifecycle: result.state)
+        guard isCurrentMutation(mutation) else { return false }
         visibilityState = VisibilityCoordinator.reduce(
             state: visibilityState,
             input: .lifecycle(result.state)
         ).state
+        return true
     }
 
     private func driveVisibility(_ input: VisibilityInput) {
+        let mutation = mutationEpoch
+        let sessionID = snapshot.sessionID
         let result = VisibilityCoordinator.reduce(state: visibilityState, input: input)
         visibilityState = result.state
         update(lifecycle: result.state.lifecycle, visibility: result.state.desired)
+        guard isCurrentMutation(mutation),
+              snapshot.sessionID == sessionID
+        else { return }
         for effect in result.effects {
+            guard isCurrentMutation(mutation),
+                  snapshot.sessionID == sessionID
+            else { return }
             switch effect {
             case .sendVisibility(_, let visibility):
                 driver.send(.setVisibility(presentation(visibility)))
             case .requestDisposal(_, let reason):
                 dispose(reason: reason)
+                return
             }
         }
     }
 
     private func execute(_ effects: [ProjectionEffect]) {
-        guard isBridgeReady else { return }
+        let mutation = mutationEpoch
+        let sessionID = snapshot.sessionID
+        guard isBridgeReady,
+              isCurrentMutation(mutation)
+        else { return }
         for effect in effects {
+            guard isCurrentMutation(mutation),
+                  snapshot.sessionID == sessionID,
+                  isBridgeReady
+            else { return }
             switch effect {
             case .applyProjection(let payload):
                 driver.send(.projectPhase(
@@ -404,7 +608,10 @@ public final class HostOrchestrator {
         lastFailure: OptionalUpdate<FailureCode> = .unchanged,
         counters: HostCounters? = nil,
         reducedMotion: Bool? = nil,
-        retryAvailable: Bool? = nil
+        retryAvailable: Bool? = nil,
+        profileRevision: OptionalUpdate<UInt64> = .unchanged,
+        modelToken: OptionalUpdate<UUID> = .unchanged,
+        motionStatuses: [AvatarMotionRole: MotionStatus]? = nil
     ) {
         let nextLifecycle = lifecycle ?? snapshot.lifecycle
         snapshot = HostSnapshot(
@@ -417,9 +624,78 @@ public final class HostOrchestrator {
             lastFailure: lastFailure.value(or: snapshot.lastFailure),
             counters: counters ?? snapshot.counters,
             reducedMotion: reducedMotion ?? snapshot.reducedMotion,
-            retryAvailable: retryAvailable ?? snapshot.retryAvailable
+            retryAvailable: retryAvailable ?? snapshot.retryAvailable,
+            profileRevision: profileRevision.value(or: snapshot.profileRevision),
+            modelToken: modelToken.value(or: snapshot.modelToken),
+            motionStatuses: motionStatuses ?? snapshot.motionStatuses
         )
         onChange?(snapshot)
+    }
+
+    private func beginMutation() -> UInt64 {
+        mutationEpoch &+= 1
+        return mutationEpoch
+    }
+
+    private func isCurrentMutation(_ mutation: UInt64) -> Bool {
+        mutationEpoch == mutation
+    }
+
+    private func isCurrentProfileIdentity(
+        profileRevision: UInt64,
+        modelToken: UUID
+    ) -> Bool {
+        guard let activeProfilePayload else { return false }
+        return activeProfilePayload.profileRevision == profileRevision
+            && activeProfilePayload.modelToken == modelToken
+    }
+
+    private func isCurrentMotionIdentity(_ payload: MotionStatusPayload) -> Bool {
+        guard isCurrentProfileIdentity(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken
+        ) else {
+            return false
+        }
+        guard let profile = activeProfilePayload,
+              let binding = profile.motionBindings[payload.role]
+        else { return false }
+        switch binding.status {
+        case .ready:
+            guard let token = binding.token else { return false }
+            return payload.motionToken == token
+                && (payload.status == .ready
+                    || payload.status == .loadFailed
+                    || payload.status == .timedOut
+                    || payload.status == .runtimeFailed)
+        case .missing:
+            return payload.motionToken == nil && payload.status == .missing
+        case .rejected:
+            return payload.motionToken == nil && payload.status == .rejected
+        }
+    }
+
+    private func isCurrentMotionIdentity(_ payload: MotionActivePayload) -> Bool {
+        guard isCurrentProfileIdentity(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken
+        ) else {
+            return false
+        }
+        switch payload.mode {
+        case .rest:
+            return payload.role == nil && payload.motionToken == nil
+        case .loop, .oneShot:
+            guard let role = payload.role,
+                  let token = payload.motionToken,
+                  let profile = activeProfilePayload,
+                  let binding = profile.motionBindings[role]
+            else { return false }
+            let validRole = payload.mode == .loop
+                ? role.isSteady
+                : (role == .success || role == .failure)
+            return validRole && binding.status == .ready && binding.token == token
+        }
     }
 
     private func presentation(_ visibility: EffectiveVisibility) -> PresentationVisibility {

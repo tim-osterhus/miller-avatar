@@ -86,9 +86,12 @@ private struct SyntheticProjectionState {
 @MainActor
 final class DiagnosticsViewController: NSViewController {
     var onSnapshotChange: ((HostSnapshot) -> Void)?
+    package var onSelectionIntent: ((AdmittedAsset?) -> Void)?
+    package var diagnosticSelection: AdmittedAsset? { latestDiagnosticSelection }
     var initialFocusView: NSView { startButton }
 
-    private let surfaceController: AvatarSurfaceController
+    private var surfaceController: AvatarSurfaceController
+    private var latestDiagnosticSelection: AdmittedAsset?
     private let selector = AssetSelectionController()
     private let statusLabel = NSTextField(labelWithString: "")
     private let fallbackView = NSView()
@@ -105,19 +108,57 @@ final class DiagnosticsViewController: NSViewController {
     )
     private let disposeButton = FocusableButton(title: "Dispose", target: nil, action: nil)
     private var nativeFocusViews: [NSView] = []
+    private var surfaceConstraints: [NSLayoutConstraint] = []
     private var syntheticProjection = SyntheticProjectionState()
 
     init(surface: AvatarSurfaceController) {
         surfaceController = surface
         super.init(nibName: nil, bundle: nil)
-        surface.onSnapshot = { [weak self] snapshot in
-            self?.render(snapshot)
-            self?.onSnapshotChange?(snapshot)
-        }
+        bindSurfaceCallbacks()
     }
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    package func detachSurface() {
+        surfaceController.onSnapshot = nil
+        surfaceController.onObservation = nil
+        NSLayoutConstraint.deactivate(surfaceConstraints)
+        surfaceConstraints.removeAll()
+        surfaceController.view.removeFromSuperview()
+    }
+
+    package func attachSurface(_ surface: AvatarSurfaceController) {
+        surfaceController = surface
+        bindSurfaceCallbacks()
+        if isViewLoaded {
+            attachSurfaceView()
+            render(surface.snapshot)
+        }
+    }
+
+    package func prepareDiagnosticSelection(_ selection: AdmittedAsset) {
+        latestDiagnosticSelection = selection
+        onSelectionIntent?(selection)
+    }
+
+    package func retryDiagnosticSelection() {
+        onSelectionIntent?(latestDiagnosticSelection)
+    }
+
+    package func processDiagnosticCapture(_ result: AssetCaptureResult) async {
+        switch result {
+        case .cancelled, .rejected:
+            return
+        case .captured(let bytes):
+            switch await AssetAdmission().admit(bytes) {
+            case .admitted(let asset):
+                prepareDiagnosticSelection(asset)
+            case .rejected:
+                return
+            }
+        }
     }
 
     override func loadView() {
@@ -155,6 +196,28 @@ final class DiagnosticsViewController: NSViewController {
         guard window.makeFirstResponder(target) else { return false }
         target.needsDisplay = true
         return true
+    }
+
+    private func bindSurfaceCallbacks() {
+        let surface = surfaceController
+        surface.onSnapshot = { [weak self, weak surface] snapshot in
+            guard let self, let surface, self.surfaceController === surface else { return }
+            self.render(snapshot)
+            self.onSnapshotChange?(snapshot)
+        }
+    }
+
+    private func attachSurfaceView() {
+        guard surfaceController.view.superview !== liveView else { return }
+        surfaceController.view.translatesAutoresizingMaskIntoConstraints = false
+        liveView.addSubview(surfaceController.view)
+        surfaceConstraints = [
+            surfaceController.view.leadingAnchor.constraint(equalTo: liveView.leadingAnchor),
+            surfaceController.view.trailingAnchor.constraint(equalTo: liveView.trailingAnchor),
+            surfaceController.view.topAnchor.constraint(equalTo: liveView.topAnchor),
+            surfaceController.view.bottomAnchor.constraint(equalTo: liveView.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(surfaceConstraints)
     }
 
     private func buildInterface() {
@@ -215,14 +278,7 @@ final class DiagnosticsViewController: NSViewController {
         liveView.wantsLayer = true
         liveView.layer?.backgroundColor = NSColor.black.cgColor
         liveView.isHidden = true
-        surfaceController.view.translatesAutoresizingMaskIntoConstraints = false
-        liveView.addSubview(surfaceController.view)
-        NSLayoutConstraint.activate([
-            surfaceController.view.leadingAnchor.constraint(equalTo: liveView.leadingAnchor),
-            surfaceController.view.trailingAnchor.constraint(equalTo: liveView.trailingAnchor),
-            surfaceController.view.topAnchor.constraint(equalTo: liveView.topAnchor),
-            surfaceController.view.bottomAnchor.constraint(equalTo: liveView.bottomAnchor),
-        ])
+        attachSurfaceView()
 
         phaseBadgeLabel.wantsLayer = true
         phaseBadgeLabel.drawsBackground = true
@@ -358,11 +414,12 @@ final class DiagnosticsViewController: NSViewController {
 
     private func restoreUsableFocus() {
         guard let window = view.window else { return }
-        if let control = window.firstResponder as? NSControl, control.isEnabled {
+        if let current = nativeFocusViews.first(where: {
+            responder(window.firstResponder, belongsTo: $0)
+        }), focusEligible(current) {
             return
         }
-        let target = [startButton, selectButton, phasePopup, mouthSlider, reducedMotion]
-            .first(where: \.isEnabled)
+        let target = nativeFocusViews.first(where: focusEligible)
         if let target {
             window.makeFirstResponder(target)
         }
@@ -370,7 +427,7 @@ final class DiagnosticsViewController: NSViewController {
 
     @objc private func startRenderer() {
         if surfaceController.snapshot.retryAvailable {
-            surfaceController.retry()
+            retryDiagnosticSelection()
         } else {
             surfaceController.start()
         }
@@ -378,19 +435,7 @@ final class DiagnosticsViewController: NSViewController {
 
     @objc private func selectAsset() {
         Task { @MainActor in
-            switch await selector.selectAndCapture() {
-            case .cancelled:
-                return
-            case .rejected(let code):
-                surfaceController.rejectAsset(code)
-            case .captured(let bytes):
-                switch await AssetAdmission().admit(bytes) {
-                case .admitted(let asset):
-                    surfaceController.load(asset)
-                case .rejected(let code):
-                    surfaceController.rejectAsset(code)
-                }
-            }
+            await processDiagnosticCapture(await selector.selectAndCapture())
         }
     }
 

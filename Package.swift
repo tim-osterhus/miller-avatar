@@ -31,5 +31,9 @@ let package = Package(
             name: "MillerAvatarHostTests",
             dependencies: ["MillerAvatarHost"]
         ),
+        .testTarget(
+            name: "MillerAvatarAppTests",
+            dependencies: ["MillerAvatarApp", "MillerAvatarHost", "MillerAvatarCore"]
+        ),
     ]
 )

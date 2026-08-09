@@ -4,7 +4,7 @@ import MillerAvatarCore
 @preconcurrency import WebKit
 
 @MainActor
-internal protocol AvatarSurfaceRendererDriving: HostRendererDriving {
+package protocol AvatarSurfaceRendererDriving: HostRendererDriving {
     var onWebViewChange: ((WKWebView?) -> Void)? { get set }
 }
 
@@ -102,6 +102,8 @@ public final class AvatarSurfaceController {
     private var hasStarted = false
     private var isDisposed = false
     private var timerWasInvalidated = false
+    private var nextProfileLoadID: UInt64 = 0
+    private var activeProfileLoad: PendingProfileLoad?
 
     public convenience init() {
         self.init(
@@ -122,9 +124,11 @@ public final class AvatarSurfaceController {
         host = HostOrchestrator(driver: driver)
 
         host.onChange = { [weak self] snapshot in
+            self?.observe(snapshot)
             self?.onSnapshot?(snapshot)
         }
         host.onObservation = { [weak self] observation in
+            self?.observe(observation)
             self?.onObservation?(observation)
         }
         driver.onWebViewChange = { [weak self] webView in
@@ -148,10 +152,78 @@ public final class AvatarSurfaceController {
         host.startRenderer()
     }
 
+    public func load(
+        profileID: UUID,
+        from store: AvatarProfileStore
+    ) async -> ProfileLoadDisposition {
+        guard !isDisposed else { return .disposed }
+        guard host.snapshot.lifecycle == .rendererReady,
+              let sessionID = host.snapshot.sessionID
+        else {
+            return .notReady
+        }
+
+        invalidateActiveProfileLoad()
+        nextProfileLoadID &+= 1
+        let request = PendingProfileLoad(
+            id: nextProfileLoadID,
+            sessionID: sessionID,
+            lease: ProfileMaterializationLease()
+        )
+        activeProfileLoad = request
+        defer {
+            request.lease.invalidate()
+            if activeProfileLoad?.id == request.id {
+                activeProfileLoad = nil
+            }
+        }
+
+        do {
+            try await store.materializeForRendering(
+                id: profileID,
+                lease: request.lease
+            )
+        } catch is CancellationError {
+            return .superseded
+        } catch let error as AvatarProfileStoreError {
+            guard isCurrentProfileLoad(request) else { return .superseded }
+            if error == .cancelled {
+                return .superseded
+            }
+            return .rejected(profileLoadFailure(for: error))
+        } catch {
+            guard isCurrentProfileLoad(request) else { return .superseded }
+            return .rejected(.persistenceFailed)
+        }
+
+        guard isCurrentProfileLoad(request),
+              request.lease.isActive,
+              let prepared = request.lease.takePreparedProfile()
+        else {
+            return .superseded
+        }
+
+        installingProfile = true
+        defer { installingProfile = false }
+        guard isCurrentProfileLoad(request),
+              host.snapshot.lifecycle == .rendererReady,
+              host.snapshot.sessionID == request.sessionID,
+              host.load(prepared) == .accepted
+        else {
+            return .superseded
+        }
+        return .accepted
+    }
+
     @discardableResult
-    public func load(_ asset: AdmittedAsset) -> AssetLoadDisposition {
+    package func load(_ profile: LoadedAvatarProfile) -> AssetLoadDisposition {
         guard !isDisposed else { return .notReady }
-        return host.load(asset)
+        return host.load(profile)
+    }
+
+    @discardableResult
+    package func loadForDiagnostics(_ asset: AdmittedAsset) -> AssetLoadDisposition {
+        load(LoadedAvatarProfile(profileRevision: 1, model: asset))
     }
 
     public func rejectAsset(_ code: FailureCode) {
@@ -191,6 +263,7 @@ public final class AvatarSurfaceController {
 
     public func dispose(reason: DisposalReason = .operator) {
         guard !isDisposed else { return }
+        invalidateActiveProfileLoad()
         isDisposed = true
         invalidateTimer()
         driver.onWebViewChange = nil
@@ -200,6 +273,9 @@ public final class AvatarSurfaceController {
 
     private func install(_ webView: WKWebView?) {
         guard !isDisposed else { return }
+        if rendererView !== webView {
+            invalidateActiveProfileLoad()
+        }
         detachRenderer()
 
         guard let webView else { return }
@@ -224,5 +300,91 @@ public final class AvatarSurfaceController {
         guard !timerWasInvalidated else { return }
         timerWasInvalidated = true
         timer.invalidate()
+    }
+
+    private var installingProfile = false
+
+    private func observe(_ snapshot: HostSnapshot) {
+        guard let activeProfileLoad else { return }
+        guard snapshot.sessionID == activeProfileLoad.sessionID else {
+            invalidateActiveProfileLoad()
+            return
+        }
+        switch snapshot.lifecycle {
+        case .failed, .disposing, .absent:
+            invalidateActiveProfileLoad()
+        case .rendererReady, .loadingAsset, .live, .liveSuspended:
+            if !installingProfile && snapshot.lifecycle != .rendererReady {
+                invalidateActiveProfileLoad()
+            }
+        case .startingRenderer:
+            invalidateActiveProfileLoad()
+        }
+    }
+
+    private func observe(_ observation: HostObservation) {
+        switch observation {
+        case .failed, .disposed:
+            invalidateActiveProfileLoad()
+        default:
+            break
+        }
+    }
+
+    private func invalidateActiveProfileLoad() {
+        activeProfileLoad?.lease.invalidate()
+        activeProfileLoad = nil
+    }
+
+    private func isCurrentProfileLoad(_ request: PendingProfileLoad) -> Bool {
+        guard !isDisposed,
+              let activeProfileLoad,
+              activeProfileLoad.id == request.id,
+              activeProfileLoad.sessionID == request.sessionID,
+              activeProfileLoad.lease === request.lease
+        else {
+            return false
+        }
+        return host.snapshot.sessionID == request.sessionID
+            && host.snapshot.lifecycle == .rendererReady
+    }
+
+    private func profileLoadFailure(
+        for error: AvatarProfileStoreError
+    ) -> ProfileLoadFailure {
+        switch error {
+        case .unknownProfile:
+            .unknownProfile
+        case .corruptStore, .invalidDisplayName, .profileLimit,
+             .motionLimit, .unknownMotion, .motionQuarantined:
+            .corruptStore
+        case .persistenceFailed:
+            .persistenceFailed
+        case .bookmarkCreationFailed, .bookmarkResolutionFailed,
+             .securityScopeDenied:
+            .modelUnavailable
+        case .assetRejected, .resourceLimit, .motionRejected:
+            .modelRejected
+        case .quarantined:
+            .modelQuarantined
+        case .cancelled:
+            .persistenceFailed
+        }
+    }
+
+    private final class PendingProfileLoad {
+        let id: UInt64
+        let sessionID: UUID
+        let lease: ProfileMaterializationLease
+
+        init(
+            id: UInt64,
+            sessionID: UUID,
+            lease: ProfileMaterializationLease
+        ) {
+            self.id = id
+            self.sessionID = sessionID
+            self.lease = lease
+        }
     }
 }

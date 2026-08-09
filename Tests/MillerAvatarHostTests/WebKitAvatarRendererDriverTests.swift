@@ -204,7 +204,7 @@ import Testing
                 sessionID: sessionID,
                 sequence: 1,
                 type: "wrapper_ready",
-                payload: ["bridge_version": 1]
+                payload: ["bridge_version": 2]
             )
         )
         await Task.yield()
@@ -246,7 +246,7 @@ import Testing
                 sessionID: sessionID,
                 sequence: 1,
                 type: "wrapper_ready",
-                payload: ["bridge_version": 1]
+                payload: ["bridge_version": 2]
             )
         )
         await Task.yield()
@@ -269,7 +269,7 @@ import Testing
                 sessionID: sessionID,
                 sequence: 1,
                 type: "wrapper_ready",
-                payload: ["bridge_version": 1]
+                payload: ["bridge_version": 2]
             )
         )
         driver.start(sessionID: sessionID) { _, observation in
@@ -361,7 +361,7 @@ import Testing
                 sessionID: sessionID,
                 sequence: 1,
                 type: "wrapper_ready",
-                payload: ["bridge_version": 1]
+                payload: ["bridge_version": 2]
             )
         )
         await Task.yield()

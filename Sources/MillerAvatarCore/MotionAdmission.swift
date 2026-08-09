@@ -8,12 +8,34 @@ package struct MotionAdmissionSummary: Equatable, Sendable {
     package let durationMilliseconds: UInt64
     package let hasExpressionTracks: Bool
     package let hasLookAtTrack: Bool
+
+    package init(
+        nodeCount: UInt64,
+        channelCount: UInt64,
+        keyframeScalarValues: UInt64,
+        durationMilliseconds: UInt64,
+        hasExpressionTracks: Bool,
+        hasLookAtTrack: Bool
+    ) {
+        self.nodeCount = nodeCount
+        self.channelCount = channelCount
+        self.keyframeScalarValues = keyframeScalarValues
+        self.durationMilliseconds = durationMilliseconds
+        self.hasExpressionTracks = hasExpressionTracks
+        self.hasLookAtTrack = hasLookAtTrack
+    }
 }
 
 package struct AdmittedMotion: Equatable, Sendable {
     package let token: UUID
     package let bytes: Data
     package let summary: MotionAdmissionSummary
+
+    package init(token: UUID, bytes: Data, summary: MotionAdmissionSummary) {
+        self.token = token
+        self.bytes = bytes
+        self.summary = summary
+    }
 }
 
 package enum MotionAdmissionResult: Equatable, Sendable {

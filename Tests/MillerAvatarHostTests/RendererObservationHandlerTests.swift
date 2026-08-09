@@ -71,7 +71,7 @@ import Testing
         #expect(lease.isValid == false)
     }
 
-    @Test func staleObservationSessionTearsDownTheCurrentObservationSession() {
+    @Test func staleObservationSessionIsFilteredWithoutCallingConsumers() {
         let controller = RendererSessionController()
         let lease = controller.begin()
         var invalidObservations = 0
@@ -83,8 +83,8 @@ import Testing
 
         handler.accept(observation(sessionID: UUID(), sequence: 1))
 
-        #expect(invalidObservations == 1)
-        #expect(lease.isValid == false)
+        #expect(invalidObservations == 0)
+        #expect(lease.isValid)
     }
 
     @Test func outOfSequenceObservationTearsDownTheCurrentObservationSession() {
@@ -173,12 +173,12 @@ import Testing
 
 private func observation(sessionID: UUID, sequence: UInt64) -> String {
     let object: [String: Any] = [
-        "schema": "miller-avatar.presentation-observation/v1",
+        "schema": "miller-avatar.presentation-observation/v2",
         "session_id": sessionID.uuidString.lowercased(),
         "sequence": sequence,
         "caused_by_sequence": NSNull(),
         "type": "wrapper_ready",
-        "payload": ["bridge_version": 1],
+        "payload": ["bridge_version": 2],
     ]
     let data = try! JSONSerialization.data(withJSONObject: object)
     return String(decoding: data, as: UTF8.self)

@@ -1,11 +1,23 @@
 import {
+  avatarMotionRoles,
   bridgeContract,
   disposalReasons,
   failureCodes,
   failureOperations,
+  motionActiveModes,
+  motionBindingStatuses,
+  motionFailureCodes,
+  motionStatuses,
   presentationPhases,
   presentationVisibilities,
   resetReasons,
+  steadyMotionRoles,
+  terminalMotionRoles,
+  type AvatarMotionRole,
+  type LoadProfilePayload,
+  type MotionBindingPayload,
+  type MotionBindings,
+  type MotionStatus,
   type PresentationCommand,
   type PresentationCommandEnvelope,
   type PresentationObservation,
@@ -40,6 +52,7 @@ export class PresentationCommandDecoder {
   private activePlaybackID: string | null = null;
   private lastCueIndex: number | undefined;
   private lastPlaybackOffsetMilliseconds: number | undefined;
+  private hasLoadedProfile = false;
   private disposed = false;
 
   constructor(private readonly sessionID: string) {
@@ -52,41 +65,35 @@ export class PresentationCommandDecoder {
   }
 
   decode(input: string | Uint8Array): PresentationCommandEnvelope {
-    if (this.disposed) {
-      fail("disposed");
-    }
+    if (this.disposed) fail("disposed");
     const object = decodeObject(input);
     requireKeys(object, ["schema", "session_id", "sequence", "type", "payload"]);
-    if (requireString(object.schema) !== bridgeContract.commandSchema) {
-      fail("invalid_value");
-    }
+    if (requireString(object.schema) !== bridgeContract.commandSchema) fail("invalid_value");
     const sessionID = requireUUID(object.session_id);
-    if (sessionID !== this.sessionID) {
-      fail("stale_session");
-    }
-    const sequence = requireInteger(object.sequence);
-    if (sequence !== this.nextSequence) {
-      fail("invalid_sequence");
-    }
+    if (sessionID !== this.sessionID) fail("stale_session");
+    const sequence = requireInteger(object.sequence, 1);
+    if (sequence !== this.nextSequence) fail("invalid_sequence");
     const type = requireString(object.type);
     const payload = requireObject(object.payload);
     const command = decodeCommand(type, payload);
     this.accept(command);
 
     this.nextSequence += 1;
-    if (command.type === "dispose") {
-      this.dispose();
-    }
+    if (command.type === "dispose") this.dispose();
     return { session_id: sessionID, sequence, command };
   }
 
   private accept(command: PresentationCommand): void {
     switch (command.type) {
+      case "load_profile":
+        if (this.hasLoadedProfile) fail("invalid_sequence");
+        this.hasLoadedProfile = true;
+        return;
       case "project_phase": {
         const projection = command.payload;
         if (
-          this.lastProjectionSequence !== undefined &&
-          projection.projection_sequence <= this.lastProjectionSequence
+          this.lastProjectionSequence !== undefined
+          && projection.projection_sequence <= this.lastProjectionSequence
         ) {
           fail("invalid_sequence");
         }
@@ -119,10 +126,10 @@ export class PresentationCommandDecoder {
       case "set_mouth": {
         const cue = command.payload;
         if (
-          cue.generation_id !== this.activeGenerationID ||
-          cue.playback_id !== this.activePlaybackID ||
-          cue.cue_index <= (this.lastCueIndex ?? 0) ||
-          cue.playback_offset_ms < (this.lastPlaybackOffsetMilliseconds ?? 0)
+          cue.generation_id !== this.activeGenerationID
+          || cue.playback_id !== this.activePlaybackID
+          || cue.cue_index <= (this.lastCueIndex ?? 0)
+          || cue.playback_offset_ms < (this.lastPlaybackOffsetMilliseconds ?? 0)
         ) {
           fail("invalid_sequence");
         }
@@ -131,7 +138,10 @@ export class PresentationCommandDecoder {
         return;
       }
       case "reset":
-        if (command.payload.generation_id === null || command.payload.generation_id === this.activeGenerationID) {
+        if (
+          command.payload.generation_id === null
+          || command.payload.generation_id === this.activeGenerationID
+        ) {
           this.clearActiveLease();
         }
         return;
@@ -167,12 +177,42 @@ export class PresentationObservationDecoder {
   private lastFrames: number | undefined;
   private lastUpdates: number | undefined;
   private lastRenders: number | undefined;
+  private activeProfileRevision: number | undefined;
+  private activeModelToken: string | undefined;
+  private activeProfileLoadSequence: number | undefined;
+  private expectedProfile: LoadProfilePayload | undefined;
+  private expectedProfileLoadSequence: number | undefined;
+  private expectedPhaseCauseSequence: number | undefined;
+  private expectedMotionBindings: Partial<Record<AvatarMotionRole, MotionBindingPayload>> = {};
+  private hasDisposed = false;
 
-  constructor(private readonly sessionID: string) {
+  constructor(
+    private readonly sessionID: string,
+    expectedProfile?: LoadProfilePayload,
+    expectedProfileLoadSequence?: number | null,
+  ) {
     requireUUID(sessionID);
+    if (expectedProfile !== undefined) {
+      this.setExpectedProfile(expectedProfile, expectedProfileLoadSequence);
+    }
+  }
+
+  setExpectedProfile(profile: LoadProfilePayload | null, causedBySequence?: number | null): void {
+    this.expectedProfile = profile ?? undefined;
+    this.expectedProfileLoadSequence = causedBySequence ?? undefined;
+    this.expectedMotionBindings = profile?.motion_bindings ?? {};
+  }
+
+  setExpectedProfileLoadSequence(sequence: number | null): void {
+    this.expectedProfileLoadSequence = sequence ?? undefined;
+  }
+
+  setExpectedPhaseCauseSequence(sequence: number | null): void {
+    this.expectedPhaseCauseSequence = sequence ?? undefined;
   }
 
   decode(input: string | Uint8Array): PresentationObservationEnvelope {
+    if (this.hasDisposed) fail("disposed");
     const object = decodeObject(input);
     requireKeys(object, [
       "schema",
@@ -182,33 +222,21 @@ export class PresentationObservationDecoder {
       "type",
       "payload",
     ]);
-    if (requireString(object.schema) !== bridgeContract.observationSchema) {
-      fail("invalid_value");
-    }
+    if (requireString(object.schema) !== bridgeContract.observationSchema) fail("invalid_value");
     const sessionID = requireUUID(object.session_id);
-    if (sessionID !== this.sessionID) {
-      fail("stale_session");
-    }
-    const sequence = requireInteger(object.sequence);
-    if (sequence !== this.nextSequence) {
-      fail("invalid_sequence");
-    }
-    const causedBySequence =
-      object.caused_by_sequence === null
-        ? null
-        : requireInteger(object.caused_by_sequence, 1);
+    if (sessionID !== this.sessionID) fail("stale_session");
+    const sequence = requireInteger(object.sequence, 1);
+    if (sequence !== this.nextSequence) fail("invalid_sequence");
+    const causedBySequence = object.caused_by_sequence === null
+      ? null
+      : requireInteger(object.caused_by_sequence, 1);
     const type = requireString(object.type);
     const payload = requireObject(object.payload);
     const observation = decodeObservation(type, payload);
-    if (observation.type === "suspended" || observation.type === "resumed") {
-      this.acceptCounters(
-        observation.payload.frames,
-        observation.payload.updates,
-        observation.payload.renders,
-      );
-    }
+    this.accept(observation, causedBySequence);
 
     this.nextSequence += 1;
+    if (observation.type === "disposed") this.hasDisposed = true;
     return {
       session_id: sessionID,
       sequence,
@@ -217,11 +245,156 @@ export class PresentationObservationDecoder {
     };
   }
 
+  private accept(
+    observation: PresentationObservation,
+    causedBySequence: number | null,
+  ): void {
+    switch (observation.type) {
+      case "profile_model_loaded": {
+        if (causedBySequence === null) fail("invalid_sequence");
+        if (
+          this.expectedProfileLoadSequence !== undefined
+          && causedBySequence !== this.expectedProfileLoadSequence
+        ) {
+          fail("invalid_sequence");
+        }
+        if (this.activeProfileRevision !== undefined) fail("invalid_sequence");
+        if (this.expectedProfile !== undefined) {
+          if (
+            this.expectedProfile.profile_revision !== observation.payload.profile_revision
+            || this.expectedProfile.model_token !== observation.payload.model_token
+          ) {
+            fail("stale_session");
+          }
+        }
+        this.activeProfileRevision = observation.payload.profile_revision;
+        this.activeModelToken = observation.payload.model_token;
+        this.activeProfileLoadSequence = causedBySequence;
+        return;
+      }
+      case "first_frame":
+        this.requireProfileLoadCause(causedBySequence);
+        this.requireIdentity(
+          observation.payload.profile_revision,
+          observation.payload.model_token,
+          causedBySequence,
+        );
+        return;
+      case "motion_status":
+        this.requireProfileLoadCause(causedBySequence);
+        this.requireIdentity(
+          observation.payload.profile_revision,
+          observation.payload.model_token,
+          causedBySequence,
+        );
+        this.requireMotionIdentity(
+          observation.payload.role,
+          observation.payload.motion_token,
+          observation.payload.status,
+        );
+        return;
+      case "motion_active":
+        if (
+          this.expectedPhaseCauseSequence !== undefined
+          && causedBySequence !== this.expectedPhaseCauseSequence
+        ) {
+          fail("invalid_sequence");
+        }
+        this.requireIdentity(
+          observation.payload.profile_revision,
+          observation.payload.model_token,
+          causedBySequence,
+        );
+        this.requireActiveMotionIdentity(observation.payload);
+        return;
+      case "suspended":
+      case "resumed":
+        this.acceptCounters(
+          observation.payload.frames,
+          observation.payload.updates,
+          observation.payload.renders,
+        );
+        return;
+      default:
+        return;
+    }
+  }
+
+  private requireIdentity(
+    profileRevision: number,
+    modelToken: string,
+    causedBySequence: number | null,
+  ): void {
+    if (
+      causedBySequence === null
+      || this.activeProfileRevision !== profileRevision
+      || this.activeModelToken !== modelToken
+    ) {
+      fail("stale_session");
+    }
+  }
+
+  private requireProfileLoadCause(causedBySequence: number | null): void {
+    if (
+      causedBySequence === null
+      || this.activeProfileLoadSequence === undefined
+      || causedBySequence !== this.activeProfileLoadSequence
+    ) {
+      fail("invalid_sequence");
+    }
+  }
+
+  private requireMotionIdentity(
+    role: AvatarMotionRole,
+    token: string | null,
+    status: MotionStatus,
+  ): void {
+    const expectedRoles = Object.keys(this.expectedMotionBindings);
+    const expected = this.expectedMotionBindings[role];
+    if (expected === undefined) {
+      if (expectedRoles.length === 0) return;
+      fail("invalid_value");
+    }
+    switch (expected.status) {
+      case "ready":
+        if (
+          expected.token === null
+          || token !== expected.token
+          || !["ready", "load_failed", "timed_out", "runtime_failed"].includes(status)
+        ) {
+          fail("invalid_value");
+        }
+        return;
+      case "missing":
+        if (status !== "missing" || token !== null) fail("invalid_value");
+        return;
+      case "rejected":
+        if (status !== "rejected" || token !== null) fail("invalid_value");
+        return;
+      default:
+        return;
+    }
+  }
+
+  private requireActiveMotionIdentity(payload: Extract<PresentationObservation, { type: "motion_active" }>['payload']): void {
+    if (payload.mode === "rest") return;
+    const expected = payload.role === null ? undefined : this.expectedMotionBindings[payload.role];
+    if (Object.keys(this.expectedMotionBindings).length === 0) return;
+    if (
+      expected === undefined
+      || expected.status !== "ready"
+      || expected.token === null
+      || payload.motion_token !== expected.token
+    ) {
+      fail("invalid_value");
+    }
+  }
+
   private acceptCounters(frames: number, updates: number, renders: number): void {
     if (
-      (this.lastFrames !== undefined && frames < this.lastFrames) ||
-      (this.lastUpdates !== undefined && updates < this.lastUpdates) ||
-      (this.lastRenders !== undefined && renders < this.lastRenders)
+      (this.lastFrames !== undefined && frames < this.lastFrames)
+      || (this.lastUpdates !== undefined && updates < this.lastUpdates)
+      || (this.lastRenders !== undefined && renders < this.lastRenders)
     ) {
       fail("invalid_sequence");
     }
@@ -237,11 +410,36 @@ function decodeCommand(type: string, payload: BridgeObject): PresentationCommand
       requireKeys(payload, ["profile", "reduced_motion"]);
       const profile = requireString(payload.profile);
       if (profile !== "lightweight") fail("invalid_value");
-      return { type, payload: { profile, reduced_motion: requireBoolean(payload.reduced_motion) } };
+      return {
+        type,
+        payload: { profile, reduced_motion: requireBoolean(payload.reduced_motion) },
+      };
     }
-    case "load_asset":
-      requireKeys(payload, ["asset_token"]);
-      return { type, payload: { asset_token: requireUUID(payload.asset_token) } };
+    case "load_profile": {
+      requireKeys(payload, ["profile_revision", "model_token", "motion_bindings"]);
+      const profileRevision = requireInteger(payload.profile_revision, 1);
+      const modelToken = requireUUID(payload.model_token);
+      const bindings = requireObject(payload.motion_bindings);
+      requireKeys(bindings, avatarMotionRoles);
+      const motionBindings = {} as MotionBindings;
+      for (const role of avatarMotionRoles) {
+        const descriptor = requireObject(bindings[role]);
+        requireKeys(descriptor, ["status", "token"]);
+        const status = requireVocabulary(descriptor.status, motionBindingStatuses);
+        const token = requireOptionalUUID(descriptor.token);
+        if (status === "ready" && token === null) fail("invalid_value");
+        if (status !== "ready" && token !== null) fail("invalid_value");
+        motionBindings[role] = { status, token };
+      }
+      return {
+        type,
+        payload: {
+          profile_revision: profileRevision,
+          model_token: modelToken,
+          motion_bindings: motionBindings,
+        },
+      };
+    }
     case "project_phase": {
       requireKeys(payload, ["projection_sequence", "generation_id", "phase", "playback_id"]);
       const phase = requireVocabulary(payload.phase, presentationPhases);
@@ -331,8 +529,8 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
     case "wrapper_ready": {
       requireKeys(payload, ["bridge_version"]);
       const bridgeVersion = requireInteger(payload.bridge_version);
-      if (bridgeVersion !== 1) fail("invalid_value");
-      return { type, payload: { bridge_version: bridgeVersion } };
+      if (bridgeVersion !== 2) fail("invalid_value");
+      return { type, payload: { bridge_version: 2 } };
     }
     case "renderer_ready": {
       requireKeys(payload, ["webgl"]);
@@ -340,14 +538,15 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
       if (webgl !== "webgl2") fail("invalid_value");
       return { type, payload: { webgl } };
     }
-    case "asset_loaded": {
-      requireKeys(payload, ["asset_token", "capabilities"]);
+    case "profile_model_loaded": {
+      requireKeys(payload, ["profile_revision", "model_token", "capabilities"]);
       const capabilities = requireObject(payload.capabilities);
       requireKeys(capabilities, ["aa", "look_at", "spring_bone", "mtoon_materials"]);
       return {
         type,
         payload: {
-          asset_token: requireUUID(payload.asset_token),
+          profile_revision: requireInteger(payload.profile_revision, 1),
+          model_token: requireUUID(payload.model_token),
           capabilities: {
             aa: requireBoolean(capabilities.aa),
             look_at: requireBoolean(capabilities.look_at),
@@ -359,7 +558,8 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
     }
     case "first_frame":
       requireKeys(payload, [
-        "asset_token",
+        "profile_revision",
+        "model_token",
         "viewport_width",
         "viewport_height",
         "visible_meshes",
@@ -370,7 +570,8 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
       return {
         type,
         payload: {
-          asset_token: requireUUID(payload.asset_token),
+          profile_revision: requireInteger(payload.profile_revision, 1),
+          model_token: requireUUID(payload.model_token),
           viewport_width: requireInteger(payload.viewport_width, 1, 8_192),
           viewport_height: requireInteger(payload.viewport_height, 1, 8_192),
           visible_meshes: requireInteger(payload.visible_meshes, 1, 2_048),
@@ -379,6 +580,84 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
           alpha_probe_pixels: requireInteger(payload.alpha_probe_pixels, 1, 4_096),
         },
       };
+    case "motion_status": {
+      requireKeys(payload, [
+        "profile_revision",
+        "model_token",
+        "motion_token",
+        "role",
+        "status",
+        "motion_code",
+      ]);
+      const role = requireVocabulary(payload.role, avatarMotionRoles);
+      const status = requireVocabulary(payload.status, motionStatuses);
+      const token = requireOptionalUUID(payload.motion_token);
+      const motionCode = requireOptionalMotionFailureCode(payload.motion_code);
+      switch (status) {
+        case "ready":
+        case "missing":
+        case "rejected":
+          if ((status === "ready") !== (token !== null) || motionCode !== null) {
+            fail("invalid_value");
+          }
+          break;
+        case "load_failed":
+          if (token === null || motionCode !== "motion_load_failed") fail("invalid_value");
+          break;
+        case "timed_out":
+          if (token === null || motionCode !== "motion_load_timeout") fail("invalid_value");
+          break;
+        case "runtime_failed":
+          if (token === null || motionCode !== "motion_runtime_failed") fail("invalid_value");
+          break;
+        default:
+          return fail("invalid_value");
+      }
+      return {
+        type,
+        payload: {
+          profile_revision: requireInteger(payload.profile_revision, 1),
+          model_token: requireUUID(payload.model_token),
+          motion_token: token,
+          role,
+          status,
+          motion_code: motionCode,
+        },
+      };
+    }
+    case "motion_active": {
+      requireKeys(payload, ["profile_revision", "model_token", "motion_token", "role", "mode"]);
+      const mode = requireVocabulary(payload.mode, motionActiveModes);
+      const token = requireOptionalUUID(payload.motion_token);
+      const role = requireOptionalVocabulary(payload.role, avatarMotionRoles);
+      switch (mode) {
+        case "rest":
+          if (token !== null || role !== null) fail("invalid_value");
+          break;
+        case "loop":
+          if (token === null || role === null || !steadyMotionRoles.includes(role as never)) {
+            fail("invalid_value");
+          }
+          break;
+        case "one_shot":
+          if (token === null || role === null || !terminalMotionRoles.includes(role as never)) {
+            fail("invalid_value");
+          }
+          break;
+        default:
+          return fail("invalid_value");
+      }
+      return {
+        type,
+        payload: {
+          profile_revision: requireInteger(payload.profile_revision, 1),
+          model_token: requireUUID(payload.model_token),
+          motion_token: token,
+          role,
+          mode,
+        },
+      };
+    }
     case "suspended": {
       requireKeys(payload, ["visibility", "frames", "updates", "renders"]);
       const visibility = requireVocabulary(payload.visibility, ["occluded", "hidden"] as const);
@@ -421,9 +700,7 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
 
 function decodeObject(input: string | Uint8Array): BridgeObject {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
-  if (bytes.byteLength > bridgeContract.maximumMessageBytes) {
-    fail("message_too_large");
-  }
+  if (bytes.byteLength > bridgeContract.maximumMessageBytes) fail("message_too_large");
   let source: string;
   try {
     source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -461,7 +738,7 @@ function hasDuplicateObjectKey(source: string): boolean {
       case "[":
         parseArray();
         return;
-      case "\"":
+      case '"':
         parseString();
         return;
       default:
@@ -479,7 +756,7 @@ function hasDuplicateObjectKey(source: string): boolean {
     }
     while (true) {
       skipWhitespace();
-      if (source[index] !== "\"") throw new SyntaxError("object key must be a string");
+      if (source[index] !== '"') throw new SyntaxError("object key must be a string");
       const key = parseString();
       if (keys.has(key)) duplicate = true;
       keys.add(key);
@@ -521,7 +798,7 @@ function hasDuplicateObjectKey(source: string): boolean {
     index += 1;
     while (index < source.length) {
       const character = source[index];
-      if (character === "\"") {
+      if (character === '"') {
         index += 1;
         return JSON.parse(source.slice(start, index)) as string;
       }
@@ -550,8 +827,8 @@ function validateTree(value: unknown, depth: number): void {
   if (Array.isArray(value)) {
     const nextDepth = depth + 1;
     if (
-      nextDepth > bridgeContract.maximumContainerDepth ||
-      value.length > bridgeContract.maximumArrayLength
+      nextDepth > bridgeContract.maximumContainerDepth
+      || value.length > bridgeContract.maximumArrayLength
     ) {
       fail("invalid_shape");
     }
@@ -572,9 +849,9 @@ function validateTree(value: unknown, depth: number): void {
     return;
   }
   if (
-    value !== null &&
-    typeof value !== "boolean" &&
-    (typeof value !== "number" || !Number.isFinite(value))
+    value !== null
+    && typeof value !== "boolean"
+    && (typeof value !== "number" || !Number.isFinite(value))
   ) {
     fail("invalid_value");
   }
@@ -592,7 +869,10 @@ function isObject(value: unknown): value is BridgeObject {
 function requireKeys(value: BridgeObject, keys: readonly string[]): void {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+  if (
+    actual.length !== expected.length
+    || actual.some((key, index) => key !== expected[index])
+  ) {
     fail("invalid_keys");
   }
 }
@@ -613,10 +893,10 @@ function requireInteger(
   maximum = bridgeContract.maximumSafeInteger,
 ): number {
   if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < minimum ||
-    value > maximum
+    typeof value !== "number"
+    || !Number.isSafeInteger(value)
+    || value < minimum
+    || value > maximum
   ) {
     fail("invalid_value");
   }
@@ -625,10 +905,10 @@ function requireInteger(
 
 function requireNumber(value: unknown, minimum: number, maximum: number): number {
   if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value < minimum ||
-    value > maximum
+    typeof value !== "number"
+    || !Number.isFinite(value)
+    || value < minimum
+    || value > maximum
   ) {
     fail("invalid_value");
   }
@@ -637,7 +917,7 @@ function requireNumber(value: unknown, minimum: number, maximum: number): number
 
 function requireUUID(value: unknown): string {
   const string = requireString(value);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(string)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(string)) {
     fail("invalid_value");
   }
   return string;
@@ -645,6 +925,21 @@ function requireUUID(value: unknown): string {
 
 function requireOptionalUUID(value: unknown): string | null {
   return value === null ? null : requireUUID(value);
+}
+
+function requireOptionalMotionFailureCode(value: unknown):
+  import("./contract.js").MotionFailureCode | null {
+  if (value === null) return null;
+  const code = requireVocabulary(value, motionFailureCodes);
+  if (code === "cancelled") fail("invalid_value");
+  return code;
+}
+
+function requireOptionalVocabulary<const T extends readonly string[]>(
+  value: unknown,
+  vocabulary: T,
+): T[number] | null {
+  return value === null ? null : requireVocabulary(value, vocabulary);
 }
 
 function requireVocabulary<const T extends readonly string[]>(
@@ -674,8 +969,8 @@ function requirePhaseIdentities(
 
 function validateString(value: string): void {
   if (
-    new TextEncoder().encode(value).byteLength > 64 ||
-    /[\u0000-\u001f\u007f]/u.test(value)
+    new TextEncoder().encode(value).byteLength > 64
+    || /[\u0000-\u001f\u007f]/u.test(value)
   ) {
     fail("invalid_value");
   }

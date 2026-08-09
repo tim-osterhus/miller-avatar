@@ -129,11 +129,11 @@ internal struct RendererResourceProvider {
 }
 
 @MainActor
-public final class WebKitAvatarRendererDriver:
+package final class WebKitAvatarRendererDriver:
     HostRendererDriving,
     AvatarSurfaceRendererDriving
 {
-    public var onWebViewChange: ((WKWebView?) -> Void)?
+    package var onWebViewChange: ((WKWebView?) -> Void)?
 
     private let resourceProvider: RendererResourceProvider
     private let sessionController = RendererSessionController()
@@ -146,7 +146,7 @@ public final class WebKitAvatarRendererDriver:
     private var observationHandler: RendererObservationHandler?
     private var webView: WKWebView?
 
-    public init() {
+    package init() {
         resourceProvider = .module
     }
 
@@ -154,7 +154,7 @@ public final class WebKitAvatarRendererDriver:
         self.resourceProvider = resourceProvider
     }
 
-    public func start(
+    package func start(
         sessionID: UUID,
         receive: @escaping (UUID, HostObservation) -> Void
     ) {
@@ -172,9 +172,7 @@ public final class WebKitAvatarRendererDriver:
                 bundledResources: resources,
                 resourceRecords: resources.keys.sorted().map {
                     LocalSchemeResourceRecord.make(path: $0, data: resources[$0]!)
-                },
-                assetToken: UUID(),
-                assetData: Data()
+                }
             )
             schemeHandler = handler
 
@@ -242,14 +240,16 @@ public final class WebKitAvatarRendererDriver:
         }
     }
 
-    public func install(_ asset: AdmittedAsset) {
-        guard schemeHandler?.installAsset(token: asset.token, data: asset.bytes) == true else {
+    @discardableResult
+    package func install(_ profile: LoadedAvatarProfile) -> Bool {
+        guard schemeHandler?.install(profile) == true else {
             fail(.schemeRejected)
-            return
+            return false
         }
+        return true
     }
 
-    public func send(_ command: BridgeCommand) {
+    package func send(_ command: BridgeCommand) {
         guard let bridge, let lease else {
             fail(.bridgeInvalid)
             return
@@ -257,14 +257,29 @@ public final class WebKitAvatarRendererDriver:
         let originatingIdentity = lease.identity
         Task { @MainActor [weak self] in
             do {
-                try await bridge.send(command)
+                try await bridge.send(command) { [weak self, originatingIdentity] sequence in
+                    guard let self,
+                          self.lease?.identity == originatingIdentity
+                    else { return }
+                    switch command {
+                    case .loadProfile(let profile):
+                        self.observationHandler?.expectProfile(
+                            profile,
+                            causedBySequence: sequence
+                        )
+                    case .projectPhase, .reconcilePresentation:
+                        self.observationHandler?.expectPhaseCauseSequence(sequence)
+                    default:
+                        break
+                    }
+                }
             } catch {
                 self?.fail(.bridgeInvalid, for: originatingIdentity)
             }
         }
     }
 
-    public func dispose(reason: DisposalReason) {
+    package func dispose(reason: DisposalReason) {
         if let bridge {
             Task { @MainActor in
                 try? await bridge.send(.dispose(reason))
@@ -297,7 +312,7 @@ public final class WebKitAvatarRendererDriver:
         }
         switch envelope.observation {
         case .wrapperReady(let payload):
-            if payload.bridgeVersion == 1 {
+            if payload.bridgeVersion == 2 {
                 forward(.wrapperReady, sessionID: activeLease.id)
             } else {
                 fail(.bridgeInvalid, for: originatingIdentity)
@@ -308,16 +323,21 @@ public final class WebKitAvatarRendererDriver:
             } else {
                 fail(.webglUnavailable, for: originatingIdentity)
             }
-        case .assetLoaded:
-            break
+        case .profileModelLoaded(let payload):
+            forward(.profileModelLoaded(payload), sessionID: activeLease.id)
         case .firstFrame(let payload):
             forward(
                 .firstFrame(
-                    assetToken: payload.assetToken,
+                    profileRevision: payload.profileRevision,
+                    modelToken: payload.modelToken,
                     counters: HostCounters(frames: 1, updates: 0, renders: 1)
                 ),
                 sessionID: activeLease.id
             )
+        case .motionStatus(let payload):
+            forward(.motionStatus(payload), sessionID: activeLease.id)
+        case .motionActive(let payload):
+            forward(.motionActive(payload), sessionID: activeLease.id)
         case .suspended(let payload):
             forward(
                 .suspended(

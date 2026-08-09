@@ -23,7 +23,7 @@ import MillerAvatarCore
         #expect(driver.installedTokens == [assetToken])
         #expect(host.snapshot.lifecycle == .loadingAsset)
         #expect(host.snapshot.fallbackVisible)
-        driver.observe(session, .firstFrame(assetToken: assetToken, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: assetToken)
         #expect(host.snapshot.lifecycle == .live)
         #expect(!host.snapshot.fallbackVisible)
     }
@@ -118,6 +118,124 @@ import MillerAvatarCore
         #expect(observations == [.wrapperReady, .wrapperReady])
     }
 
+    @Test
+    func reentrantChangeDuringSessionPublicationCannotStartTheOldRenderer() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.onChange = { snapshot in
+            guard snapshot.lifecycle == .startingRenderer,
+                  snapshot.sessionID != nil
+            else { return }
+            host.dispose()
+        }
+
+        host.startRenderer()
+
+        #expect(driver.startedSessions.isEmpty)
+        #expect(host.snapshot.lifecycle == .absent)
+    }
+
+    @Test
+    func reentrantObservationReplacementCannotReceiveTheOldObservationEffect() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let first = try! #require(host.snapshot.sessionID)
+        var replacement: UUID?
+        host.onObservation = { observation in
+            guard observation == .wrapperReady else { return }
+            host.dispose()
+            host.startRenderer()
+            replacement = host.snapshot.sessionID
+        }
+
+        driver.observe(first, .wrapperReady)
+
+        #expect(replacement != nil)
+        #expect(replacement != first)
+        #expect(driver.commands.isEmpty)
+    }
+
+    @Test
+    func motionFailureIsProfileLocalAndDoesNotFailTheHost() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        let modelToken = UUID()
+        let motionToken = UUID()
+        var bindings: [AvatarMotionRole: LoadedMotionBinding] = [:]
+        bindings[.idle] = .ready(
+            motionID: motionToken,
+            motion: AdmittedMotion(
+                token: motionToken,
+                bytes: Data([1]),
+                summary: MotionAdmissionSummary(
+                    nodeCount: 1,
+                    channelCount: 1,
+                    keyframeScalarValues: 4,
+                    durationMilliseconds: 1,
+                    hasExpressionTracks: false,
+                    hasLookAtTrack: false
+                )
+            )
+        )
+        let prepared = LoadedAvatarProfile(
+            profileRevision: 1,
+            model: AdmittedAsset(
+                token: modelToken,
+                bytes: Data(),
+                summary: AssetAdmissionSummary(
+                    nodeCount: 0,
+                    meshCount: 0,
+                    materialCount: 0,
+                    imageCount: 0,
+                    decodedImagePixels: 0,
+                    accessorReferencedBytes: 0,
+                    capabilities: AssetAdmissionCapabilities(
+                        lookAt: false,
+                        springBone: false,
+                        mtoonMaterials: 0
+                    )
+                )
+            ),
+            motionBindings: bindings
+        )
+        #expect(host.load(prepared) == .accepted)
+        let profile = prepared.loadPayload
+        driver.observe(session, .profileModelLoaded(.init(
+            profileRevision: profile.profileRevision,
+            modelToken: profile.modelToken,
+            capabilities: .init(
+                aa: true,
+                lookAt: false,
+                springBone: false,
+                mtoonMaterials: 0
+            )
+        )))
+        driver.observe(session, .firstFrame(
+            profileRevision: profile.profileRevision,
+            modelToken: profile.modelToken,
+            counters: .zero
+        ))
+
+        driver.observe(session, .motionStatus(.init(
+            profileRevision: profile.profileRevision,
+            modelToken: modelToken,
+            motionToken: motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )))
+
+        #expect(host.snapshot.lifecycle == .live)
+        #expect(host.snapshot.lastFailure == nil)
+        #expect(!host.snapshot.fallbackVisible)
+        #expect(driver.disposals.isEmpty)
+    }
+
     @Test func reducedMotionAndVisibilityFlowThroughPureReducerCommands() {
         let driver = RecordingHostDriver()
         let host = HostOrchestrator(driver: driver)
@@ -127,7 +245,7 @@ import MillerAvatarCore
         driver.observe(session, .rendererReady)
         let assetToken = UUID()
         host.load(assetToken: assetToken)
-        driver.observe(session, .firstFrame(assetToken: assetToken, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: assetToken)
 
         host.setReducedMotion(true)
         host.setVisibility(.hidden)
@@ -147,7 +265,7 @@ import MillerAvatarCore
         driver.observe(session, .rendererReady)
         let assetToken = UUID()
         host.load(assetToken: assetToken)
-        driver.observe(session, .firstFrame(assetToken: assetToken, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: assetToken)
 
         let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
@@ -191,7 +309,7 @@ import MillerAvatarCore
         driver.observe(session, .rendererReady)
         host.load(assetToken: UUID())
         let token = try! #require(driver.installedTokens.last)
-        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: token)
 
         let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
@@ -225,7 +343,7 @@ import MillerAvatarCore
         driver.observe(session, .rendererReady)
         host.load(assetToken: UUID())
         let token = try! #require(driver.installedTokens.last)
-        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: token)
 
         let generation = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let playback = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
@@ -273,7 +391,7 @@ import MillerAvatarCore
         driver.observe(session, .rendererReady)
         host.load(assetToken: UUID())
         let token = try! #require(driver.installedTokens.last)
-        driver.observe(session, .firstFrame(assetToken: token, counters: .zero))
+        driver.observeFirstFrame(session, assetToken: token)
 
         host.setReducedMotion(false)
         host.project(.init(
@@ -312,8 +430,9 @@ private final class RecordingHostDriver: HostRendererDriving, HostTestAssetLoadi
         commands.append(command)
     }
 
-    func install(_ asset: AdmittedAsset) {
-        installedTokens.append(asset.token)
+    func install(_ profile: LoadedAvatarProfile) -> Bool {
+        installedTokens.append(profile.model.token)
+        return true
     }
 
     func installForTesting(assetToken: UUID, bytes: Data) {
@@ -326,5 +445,26 @@ private final class RecordingHostDriver: HostRendererDriving, HostTestAssetLoadi
 
     func observe(_ sessionID: UUID, _ observation: HostObservation) {
         receive?(sessionID, observation)
+    }
+
+    func observeFirstFrame(_ sessionID: UUID, assetToken: UUID) {
+        observe(sessionID, .profileModelLoaded(.init(
+            profileRevision: 1,
+            modelToken: assetToken,
+            capabilities: .init(
+                aa: true,
+                lookAt: false,
+                springBone: false,
+                mtoonMaterials: 0
+            )
+        )))
+        observe(
+            sessionID,
+            .firstFrame(
+                profileRevision: 1,
+                modelToken: assetToken,
+                counters: .zero
+            )
+        )
     }
 }

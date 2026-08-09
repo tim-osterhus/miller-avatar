@@ -11,32 +11,70 @@ public struct AssetAdmissionSummary: Equatable, Sendable {
     public let decodedImagePixels: UInt64
     public let accessorReferencedBytes: UInt64
     public let capabilities: AssetAdmissionCapabilities
+
+    package init(
+        nodeCount: UInt64,
+        meshCount: UInt64,
+        materialCount: UInt64,
+        imageCount: UInt64,
+        decodedImagePixels: UInt64,
+        accessorReferencedBytes: UInt64,
+        capabilities: AssetAdmissionCapabilities
+    ) {
+        self.nodeCount = nodeCount
+        self.meshCount = meshCount
+        self.materialCount = materialCount
+        self.imageCount = imageCount
+        self.decodedImagePixels = decodedImagePixels
+        self.accessorReferencedBytes = accessorReferencedBytes
+        self.capabilities = capabilities
+    }
 }
 
 public struct AssetAdmissionCapabilities: Equatable, Sendable {
     public let lookAt: Bool
     public let springBone: Bool
     public let mtoonMaterials: UInt64
+
+    package init(
+        lookAt: Bool,
+        springBone: Bool,
+        mtoonMaterials: UInt64
+    ) {
+        self.lookAt = lookAt
+        self.springBone = springBone
+        self.mtoonMaterials = mtoonMaterials
+    }
 }
 
-public struct AdmittedAsset: Equatable, Sendable {
-    public let token: UUID
-    public let bytes: Data
-    public let summary: AssetAdmissionSummary
+package struct AdmittedAsset: Equatable, Sendable {
+    package let token: UUID
+    package let bytes: Data
+    package let summary: AssetAdmissionSummary
+
+    package init(
+        token: UUID,
+        bytes: Data,
+        summary: AssetAdmissionSummary
+    ) {
+        self.token = token
+        self.bytes = bytes
+        self.summary = summary
+    }
 }
 
-public enum AssetAdmissionResult: Equatable, Sendable {
+package enum AssetAdmissionResult: Equatable, Sendable {
     case admitted(AdmittedAsset)
     case rejected(FailureCode)
 }
 
-public struct AssetAdmission: Sendable {
+package struct AssetAdmission: Sendable {
     private let budget: AssetBudget
     private let timeoutNanoseconds: UInt64
     private let monotonicNow: @Sendable () -> UInt64
     private let isCancelled: @Sendable () -> Bool
 
-    public init(
+    package init(
         budget: AssetBudget = .alpha,
         timeoutNanoseconds: UInt64? = nil,
         monotonicNow: @escaping @Sendable () -> UInt64 = {
@@ -52,7 +90,7 @@ public struct AssetAdmission: Sendable {
         self.isCancelled = isCancelled
     }
 
-    public func admit(_ capturedBytes: Data) async -> AssetAdmissionResult {
+    package func admit(_ capturedBytes: Data) async -> AssetAdmissionResult {
         await withTaskGroup(
             of: AssetAdmissionResult.self,
             returning: AssetAdmissionResult.self

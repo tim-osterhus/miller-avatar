@@ -4,13 +4,13 @@ import Foundation
 import MillerAvatarCore
 import UniformTypeIdentifiers
 
-public enum AssetCaptureResult: Equatable, Sendable {
+package enum AssetCaptureResult: Equatable, Sendable {
     case cancelled
     case captured(Data)
     case rejected(FailureCode)
 }
 
-public protocol SecurityScopedAccess: AnyObject, Sendable {
+package protocol SecurityScopedAccess: AnyObject, Sendable {
     func startAccessing(_ url: URL) -> Bool
     func stopAccessing(_ url: URL)
 }
@@ -26,10 +26,10 @@ package final class SystemSecurityScopedAccess: SecurityScopedAccess, @unchecked
 }
 
 @MainActor
-public final class AssetSelectionController {
-    public init() {}
+package final class AssetSelectionController {
+    package init() {}
 
-    public func selectAndCapture() async -> AssetCaptureResult {
+    package func selectAndCapture() async -> AssetCaptureResult {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -43,7 +43,7 @@ public final class AssetSelectionController {
         return Self.capture(url: url)
     }
 
-    public nonisolated static func capture(
+    package nonisolated static func capture(
         url: URL,
         maximumBytes: UInt64 = AssetBudget.alpha.capturedBytes,
         securityScope: (any SecurityScopedAccess)? = nil

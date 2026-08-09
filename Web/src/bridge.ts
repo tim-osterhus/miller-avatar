@@ -1,6 +1,8 @@
 import {
+  avatarMotionRoles,
   bridgeContract,
   type DisposalReason,
+  type LoadProfilePayload,
   type PresentationCommand,
   type PresentationCommandEnvelope,
   type PresentationObservation,
@@ -77,6 +79,9 @@ export class WebRendererCore {
   private activeLoad: AbortController | null = null;
   private backendReleased = false;
   private awaitingReconciliation = false;
+  private activeProfile: LoadProfilePayload | null = null;
+  private activeProfileLoadSequence: number | null = null;
+  private latestPhaseCommandSequence: number | null = null;
   private readonly loadTimeoutMilliseconds: number;
   private readonly loadTimeoutScheduler: LoadTimeoutScheduler;
 
@@ -96,7 +101,7 @@ export class WebRendererCore {
   }
 
   start(): void {
-    this.observe(null, { type: "wrapper_ready", payload: { bridge_version: 1 } });
+    this.observe(null, { type: "wrapper_ready", payload: { bridge_version: 2 } });
   }
 
   async accept(input: string | Uint8Array): Promise<void> {
@@ -149,8 +154,8 @@ export class WebRendererCore {
         this.state = reduceLifecycle(this.state, { type: "configured" }).state;
         this.observe(sequence, { type: "renderer_ready", payload: { webgl: "webgl2" } });
         return;
-      case "load_asset":
-        await this.load(command.payload.asset_token, sequence);
+      case "load_profile":
+        await this.load(command.payload, sequence);
         return;
       case "set_visibility":
         this.visibility(command.payload.visibility, sequence);
@@ -159,21 +164,23 @@ export class WebRendererCore {
       case "set_policy":
       case "set_mouth":
       case "reset":
-        this.applyPresentation(command);
+        this.applyPresentation(command, sequence);
         return;
       case "reconcile_presentation":
         if (!this.awaitingReconciliation) {
           this.fail("bridge_invalid", "resume", sequence);
           return;
         }
-        this.applyPresentation(command);
+        this.applyPresentation(command, sequence);
         this.awaitingReconciliation = false;
         return;
     }
   }
 
-  private async load(assetToken: string, sequence: number): Promise<void> {
+  private async load(profile: LoadProfilePayload, sequence: number): Promise<void> {
     this.state = reduceLifecycle(this.state, { type: "load_started" }).state;
+    this.activeProfile = profile;
+    this.activeProfileLoadSequence = sequence;
     const controller = new AbortController();
     this.activeLoad = controller;
     let timeoutHandle: number | null = null;
@@ -188,23 +195,32 @@ export class WebRendererCore {
       });
       const loaded = await Promise.race([
         this.backend.loadAsset(
-          `miller-avatar-local://app/session/${this.sessionID}/${assetToken}.vrm`,
+          `miller-avatar-local://app/session/${this.sessionID}/${profile.model_token}.vrm`,
           controller.signal,
         ),
         timeout,
       ]);
       if (this.state !== "loading") return;
       this.observe(sequence, {
-        type: "asset_loaded",
-        payload: { asset_token: assetToken, capabilities: loaded.capabilities },
+        type: "profile_model_loaded",
+        payload: {
+          profile_revision: profile.profile_revision,
+          model_token: profile.model_token,
+          capabilities: loaded.capabilities,
+        },
       });
       const evidence = this.backend.renderOnce();
       if (!this.advanceCounters(1, 0, 1, "render", sequence)) return;
       this.state = reduceLifecycle(this.state, { type: "first_frame" }).state;
       this.observe(sequence, {
         type: "first_frame",
-        payload: { asset_token: assetToken, ...evidence },
+        payload: {
+          profile_revision: profile.profile_revision,
+          model_token: profile.model_token,
+          ...evidence,
+        },
       });
+      this.emitInitialMotionStatuses(profile, sequence);
       if (!this.presentation.reducedMotion) this.schedule();
     } catch {
       if (this.state === "loading") {
@@ -244,7 +260,26 @@ export class WebRendererCore {
     if (!this.presentation.reducedMotion) this.schedule();
   }
 
-  private applyPresentation(command: PresentationCommand): void {
+  private emitInitialMotionStatuses(profile: LoadProfilePayload, sequence: number): void {
+    for (const role of avatarMotionRoles) {
+      const binding = profile.motion_bindings[role];
+      if (binding.status === "ready") continue;
+      this.observe(sequence, {
+        type: "motion_status",
+        payload: {
+          profile_revision: profile.profile_revision,
+          model_token: profile.model_token,
+          motion_token: null,
+          role,
+          status: binding.status,
+          motion_code: null,
+        },
+      });
+    }
+  }
+
+  private applyPresentation(command: PresentationCommand, sequence: number): void {
+    if (command.type === "project_phase") this.latestPhaseCommandSequence = sequence;
     const beforeReducedMotion = this.presentation.reducedMotion;
     const result = reducePresentation(this.presentation, command);
     this.presentation = result.state;
@@ -297,6 +332,8 @@ export class WebRendererCore {
     this.cancelFrame();
     this.abortActiveLoad();
     this.terminatePresentation();
+    this.activeProfile = null;
+    this.activeProfileLoadSequence = null;
     this.releaseBackend();
     this.state = reduceLifecycle(this.state, { type: "disposed" }).state;
     this.observe(sequence, { type: "disposed", payload: { reason } });
@@ -311,6 +348,8 @@ export class WebRendererCore {
     this.cancelFrame();
     this.abortActiveLoad();
     this.terminatePresentation();
+    this.activeProfile = null;
+    this.activeProfileLoadSequence = null;
     this.state = reduceLifecycle(this.state, { type: "fail", code }).state;
     this.decoder.dispose();
     this.observe(sequence, { type: "failed", payload: { code, operation } });
@@ -324,6 +363,31 @@ export class WebRendererCore {
   }
 
   private observe(causedBySequence: number | null, observation: PresentationObservation): void {
+    if (
+      observation.type === "profile_model_loaded"
+      || observation.type === "first_frame"
+      || observation.type === "motion_status"
+    ) {
+      const profile = this.activeProfile;
+      if (
+        profile === null
+        || causedBySequence !== this.activeProfileLoadSequence
+        || observation.payload.profile_revision !== profile.profile_revision
+        || observation.payload.model_token !== profile.model_token
+      ) {
+        throw new Error("profile observation identity mismatch");
+      }
+    }
+    if (observation.type === "motion_active") {
+      if (
+        this.activeProfile === null
+        || causedBySequence !== this.latestPhaseCommandSequence
+        || observation.payload.profile_revision !== this.activeProfile.profile_revision
+        || observation.payload.model_token !== this.activeProfile.model_token
+      ) {
+        throw new Error("phase observation causality mismatch");
+      }
+    }
     this.observationSequence += 1;
     this.post(JSON.stringify({
       schema: bridgeContract.observationSchema,
@@ -391,7 +455,7 @@ export class WebRendererCore {
   private commandIsLegal(command: PresentationCommand): boolean {
     if (this.awaitingReconciliation && command.type !== "reconcile_presentation") return false;
     if (command.type === "configure") return this.state === "booting";
-    if (command.type === "load_asset") return this.state === "ready";
+    if (command.type === "load_profile") return this.state === "ready";
     if (command.type === "set_mouth") return this.state === "live";
     if (command.type === "reconcile_presentation") {
       return this.awaitingReconciliation && this.state === "live";
@@ -418,7 +482,7 @@ const browserLoadTimeoutScheduler: LoadTimeoutScheduler = {
 
 function operationFor(command: PresentationCommand): Extract<PresentationObservation, { type: "failed" }>['payload']['operation'] {
   if (command.type === "configure") return "configure";
-  if (command.type === "load_asset") return "load";
+  if (command.type === "load_profile") return "load";
   if (command.type === "set_visibility") return command.payload.visibility === "visible" ? "resume" : "suspend";
   if (command.type === "set_policy") return "policy";
   if (command.type === "reconcile_presentation") return "resume";
