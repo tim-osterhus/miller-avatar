@@ -1,6 +1,6 @@
 import Foundation
 
-public enum GLBParserError: Error, Equatable, Sendable {
+package enum GLBParserError: Error, Equatable, Sendable {
     case fileTooLarge
     case invalidHeader
     case invalidLength
@@ -9,23 +9,42 @@ public enum GLBParserError: Error, Equatable, Sendable {
     case jsonTooComplex
 }
 
-public struct ParsedGLB: Equatable, Sendable {
-    public let json: Data
-    public let binary: Data
-    public let hasBinaryChunk: Bool
+package struct ParsedGLB: Equatable, Sendable {
+    package let json: Data
+    package let binary: Data
+    package let hasBinaryChunk: Bool
 }
 
-public enum GLBParser {
+package struct GLBParsingLimits: Equatable, Sendable {
+    package let capturedBytes: UInt64
+    package let jsonBytes: UInt64
+    package let jsonValues: UInt64
+    package let jsonNesting: UInt64
+}
+
+package enum GLBParser {
     private static let magic: UInt32 = 0x4654_6C67
     private static let jsonChunk: UInt32 = 0x4E4F_534A
     private static let binaryChunk: UInt32 = 0x004E_4942
 
-    public static func parse(
+    package static func parse(
         _ data: Data,
         budget: AssetBudget = .alpha,
         checkpoint: (() throws -> Void)? = nil
     ) throws -> ParsedGLB {
-        guard data.count <= budget.capturedBytes else {
+        try parse(
+            data,
+            limits: budget.glbParsingLimits,
+            checkpoint: checkpoint
+        )
+    }
+
+    package static func parse(
+        _ data: Data,
+        limits: GLBParsingLimits,
+        checkpoint: (() throws -> Void)? = nil
+    ) throws -> ParsedGLB {
+        guard UInt64(data.count) <= limits.capturedBytes else {
             throw GLBParserError.fileTooLarge
         }
         guard data.count >= 20,
@@ -40,7 +59,7 @@ public enum GLBParser {
 
         var offset = 12
         let json = try readChunk(data, offset: &offset, expectedType: jsonChunk)
-        guard json.count <= budget.jsonBytes else {
+        guard UInt64(json.count) <= limits.jsonBytes else {
             throw GLBParserError.fileTooLarge
         }
         let binary: Data
@@ -58,8 +77,8 @@ public enum GLBParser {
         do {
             var validator = StrictJSONValidator(
                 data: json,
-                maximumDepth: Int(budget.jsonNesting),
-                maximumValues: budget.jsonValues,
+                maximumDepth: limits.jsonNesting,
+                maximumValues: limits.jsonValues,
                 checkpoint: checkpoint
             )
             try validator.validate()
@@ -106,7 +125,7 @@ public enum GLBParser {
 
 private struct StrictJSONValidator {
     let bytes: [UInt8]
-    let maximumDepth: Int
+    let maximumDepth: UInt64
     let maximumValues: UInt64
     let checkpoint: (() throws -> Void)?
     var index = 0
@@ -115,7 +134,7 @@ private struct StrictJSONValidator {
 
     init(
         data: Data,
-        maximumDepth: Int,
+        maximumDepth: UInt64,
         maximumValues: UInt64,
         checkpoint: (() throws -> Void)?
     ) {
@@ -133,7 +152,7 @@ private struct StrictJSONValidator {
 
     mutating private func parseValue(depth: Int) throws {
         try checkpointIfNeeded()
-        guard depth <= maximumDepth else { throw GLBParserError.jsonTooComplex }
+        guard UInt64(depth) <= maximumDepth else { throw GLBParserError.jsonTooComplex }
         valueCount = try AssetBudget.add(valueCount, 1)
         guard valueCount <= maximumValues else { throw GLBParserError.jsonTooComplex }
         skipWhitespace()

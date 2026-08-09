@@ -79,6 +79,15 @@ public struct AssetBudget: Equatable, Sendable {
         preflightNanoseconds: 5_000_000_000
     )
 
+    package var glbParsingLimits: GLBParsingLimits {
+        GLBParsingLimits(
+            capturedBytes: capturedBytes,
+            jsonBytes: jsonBytes,
+            jsonValues: jsonValues,
+            jsonNesting: jsonNesting
+        )
+    }
+
     public var allCeilings: [AssetCeiling] {
         [
             .init(name: "capturedBytes", limit: capturedBytes),

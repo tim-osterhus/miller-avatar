@@ -59,6 +59,62 @@ enum SyntheticGLBFactory {
         return result
     }
 
+    static func minimalMotionDocument() -> [String: Any] {
+        [
+            "asset": ["version": "2.0"],
+            "buffers": [["byteLength": 32]],
+            "bufferViews": [
+                ["buffer": 0, "byteLength": 8],
+                ["buffer": 0, "byteOffset": 8, "byteLength": 24],
+            ],
+            "accessors": [
+                ["bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR"],
+                ["bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"],
+            ],
+            "animations": [[
+                "channels": [[
+                    "sampler": 0,
+                    "target": ["node": 0, "path": "translation"],
+                ]],
+                "samplers": [["input": 0, "output": 1]],
+            ]],
+            "extensionsUsed": ["VRMC_vrm_animation"],
+            "extensionsRequired": ["VRMC_vrm_animation"],
+            "extensions": [
+                "VRMC_vrm_animation": [
+                    "specVersion": "1.0",
+                    "humanoid": ["humanBones": ["hips": ["node": 0]]],
+                ],
+            ],
+            "nodes": [["translation": [0, 1, 0]]],
+            "scenes": [["nodes": [0]]],
+            "scene": 0,
+        ]
+    }
+
+    static func makeMotionDocument() -> (document: [String: Any], binary: Data) {
+        (minimalMotionDocument(), motionBinary())
+    }
+
+    static func makeMotion(
+        document: [String: Any] = minimalMotionDocument(),
+        binary: Data = motionBinary()
+    ) throws -> Data {
+        try make(document: document, binary: binary)
+    }
+
+    static func motionBinary(
+        times: [Float] = [0, 1],
+        outputs: [Float] = [0, 0, 0, 0, 0.1, 0]
+    ) -> Data {
+        var data = Data()
+        for value in times + outputs {
+            var value = value.bitPattern.littleEndian
+            Swift.withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
+        }
+        return data
+    }
+
     static func budget(
         capturedBytes: UInt64 = AssetBudget.alpha.capturedBytes,
         jsonBytes: UInt64 = AssetBudget.alpha.jsonBytes,

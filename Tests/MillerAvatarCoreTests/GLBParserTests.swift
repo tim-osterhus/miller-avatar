@@ -57,6 +57,14 @@ import Testing
         #expect(throws: GLBParserError.self) { try GLBParser.parse(bytes) }
     }
 
+    @Test func rejectsInvalidUTF8InJSON() throws {
+        let invalidUTF8 = Data([0x7B, 0x22, 0x78, 0x22, 0x3A, 0xC3, 0x28, 0x7D])
+        let bytes = try SyntheticGLBFactory.make(json: invalidUTF8, binary: nil)
+        #expect(throws: GLBParserError.self) {
+            try GLBParser.parse(bytes)
+        }
+    }
+
     @Test func wiresFramingAndJSONComplexityBudgets() throws {
         let bytes = try SyntheticGLBFactory.make()
         let parsed = try GLBParser.parse(bytes)
@@ -99,6 +107,46 @@ import Testing
             try GLBParser.parse(
                 nested,
                 budget: SyntheticGLBFactory.budget(jsonNesting: 1)
+            )
+        }
+    }
+
+    @Test func acceptsIndependentParserCeilings() throws {
+        let bytes = try SyntheticGLBFactory.make(
+            json: Data("{\"value\":null}".utf8),
+            binary: nil
+        )
+        let parsed = try GLBParser.parse(
+            bytes,
+            limits: GLBParsingLimits(
+                capturedBytes: UInt64(bytes.count),
+                jsonBytes: UInt64(bytes.count),
+                jsonValues: 2,
+                jsonNesting: 2
+            )
+        )
+        #expect(parsed.hasBinaryChunk == false)
+
+        #expect(throws: GLBParserError.self) {
+            try GLBParser.parse(
+                bytes,
+                limits: GLBParsingLimits(
+                    capturedBytes: UInt64(bytes.count),
+                    jsonBytes: UInt64(parsed.json.count),
+                    jsonValues: 1,
+                    jsonNesting: 2
+                )
+            )
+        }
+        #expect(throws: GLBParserError.self) {
+            try GLBParser.parse(
+                bytes,
+                limits: GLBParsingLimits(
+                    capturedBytes: UInt64(bytes.count),
+                    jsonBytes: UInt64(parsed.json.count),
+                    jsonValues: 2,
+                    jsonNesting: 1
+                )
             )
         }
     }
