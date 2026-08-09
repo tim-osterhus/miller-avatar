@@ -1,12 +1,18 @@
 import {
   avatarMotionRoles,
   bridgeContract,
+  type AvatarMotionRole,
   type DisposalReason,
   type LoadProfilePayload,
   type PresentationCommand,
   type PresentationCommandEnvelope,
   type PresentationObservation,
 } from "./contract.js";
+import {
+  MotionLoadError,
+  type ConvertedMotion,
+  type UniqueMotionInput,
+} from "./motion-loader.js";
 import { reduceLifecycle, type RendererState } from "./lifecycle.js";
 import {
   initialPresentationState,
@@ -35,9 +41,14 @@ export interface LoadedAvatar {
   };
 }
 
+export type MotionRegistry = ReadonlyMap<AvatarMotionRole, ConvertedMotion>;
+
 export interface RendererBackend {
   configure(reducedMotion: boolean): void;
-  loadAsset(url: string, signal: AbortSignal): Promise<LoadedAvatar>;
+  loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar>;
+  loadMotion(input: UniqueMotionInput, signal: AbortSignal): Promise<ConvertedMotion>;
+  replaceMotions(registry: MotionRegistry): void;
+  discardMotion?(motion: ConvertedMotion): void;
   renderOnce(): FirstFrameEvidence;
   renderFrame(): void;
   update(deltaSeconds: number): void;
@@ -60,6 +71,9 @@ export interface LoadTimeoutScheduler {
 export interface WebRendererCoreOptions {
   loadTimeoutMilliseconds?: number;
   loadTimeoutScheduler?: LoadTimeoutScheduler;
+  motionTimeoutMilliseconds?: number;
+  profileMotionTimeoutMilliseconds?: number;
+  motionTimeoutScheduler?: LoadTimeoutScheduler;
 }
 
 export interface RendererCounters {
@@ -77,6 +91,7 @@ export class WebRendererCore {
   private lastTimestamp: number | null = null;
   private counters: RendererCounters = { frames: 0, updates: 0, renders: 0 };
   private activeLoad: AbortController | null = null;
+  private activeMotionLoad: AbortController | null = null;
   private backendReleased = false;
   private awaitingReconciliation = false;
   private activeProfile: LoadProfilePayload | null = null;
@@ -84,6 +99,11 @@ export class WebRendererCore {
   private latestPhaseCommandSequence: number | null = null;
   private readonly loadTimeoutMilliseconds: number;
   private readonly loadTimeoutScheduler: LoadTimeoutScheduler;
+  private readonly motionTimeoutMilliseconds: number;
+  private readonly profileMotionTimeoutMilliseconds: number;
+  private readonly motionTimeoutScheduler: LoadTimeoutScheduler;
+  private avatarGeneration = 0;
+  private readonly discardedMotions = new WeakSet<ConvertedMotion>();
 
   constructor(
     private readonly sessionID: string,
@@ -98,6 +118,15 @@ export class WebRendererCore {
       throw new RangeError("load timeout must be a positive safe integer");
     }
     this.loadTimeoutScheduler = options.loadTimeoutScheduler ?? browserLoadTimeoutScheduler;
+    this.motionTimeoutMilliseconds = options.motionTimeoutMilliseconds ?? 10_000;
+    this.profileMotionTimeoutMilliseconds = options.profileMotionTimeoutMilliseconds ?? 60_000;
+    if (!Number.isSafeInteger(this.motionTimeoutMilliseconds) || this.motionTimeoutMilliseconds <= 0) {
+      throw new RangeError("motion timeout must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(this.profileMotionTimeoutMilliseconds) || this.profileMotionTimeoutMilliseconds <= 0) {
+      throw new RangeError("profile motion timeout must be a positive safe integer");
+    }
+    this.motionTimeoutScheduler = options.motionTimeoutScheduler ?? browserLoadTimeoutScheduler;
   }
 
   start(): void {
@@ -179,6 +208,8 @@ export class WebRendererCore {
 
   private async load(profile: LoadProfilePayload, sequence: number): Promise<void> {
     this.state = reduceLifecycle(this.state, { type: "load_started" }).state;
+    this.abortActiveMotionLoad();
+    const generation = ++this.avatarGeneration;
     this.activeProfile = profile;
     this.activeProfileLoadSequence = sequence;
     const controller = new AbortController();
@@ -194,7 +225,7 @@ export class WebRendererCore {
         }, this.loadTimeoutMilliseconds);
       });
       const loaded = await Promise.race([
-        this.backend.loadAsset(
+        this.backend.loadModel(
           `miller-avatar-local://app/session/${this.sessionID}/${profile.model_token}.vrm`,
           controller.signal,
         ),
@@ -221,6 +252,7 @@ export class WebRendererCore {
         },
       });
       this.emitInitialMotionStatuses(profile, sequence);
+      this.startMotionLoading(profile, sequence, generation);
       if (!this.presentation.reducedMotion) this.schedule();
     } catch {
       if (this.state === "loading") {
@@ -278,6 +310,233 @@ export class WebRendererCore {
     }
   }
 
+  private startMotionLoading(
+    profile: LoadProfilePayload,
+    sequence: number,
+    generation: number,
+  ): void {
+    const controller = new AbortController();
+    this.activeMotionLoad = controller;
+    void this.loadMotions(profile, sequence, generation, controller)
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.activeMotionLoad === controller) this.activeMotionLoad = null;
+      });
+  }
+
+  private async loadMotions(
+    profile: LoadProfilePayload,
+    sequence: number,
+    generation: number,
+    controller: AbortController,
+  ): Promise<void> {
+    const groups = new Map<string, AvatarMotionRole[]>();
+    for (const role of avatarMotionRoles) {
+      const binding = profile.motion_bindings[role];
+      if (binding.status !== "ready" || binding.token === null) continue;
+      const roles = groups.get(binding.token) ?? [];
+      roles.push(role);
+      groups.set(binding.token, roles);
+    }
+    const profileTimedOut = { value: false };
+    const profileTimeoutHandle = this.motionTimeoutScheduler.request(() => {
+      profileTimedOut.value = true;
+      controller.abort();
+    }, this.profileMotionTimeoutMilliseconds);
+    const inputFor = (motionToken: string): UniqueMotionInput => ({
+      sessionID: this.sessionID,
+      generationID: String(generation),
+      profileRevision: profile.profile_revision,
+      motionToken,
+      url: `miller-avatar-local://app/session/${this.sessionID}/${motionToken}.vrma`,
+      isCurrent: () => this.isCurrentMotion(profile, sequence, generation, motionToken),
+    });
+    try {
+      const outcomes = await Promise.all([...groups.entries()].map(async ([motionToken]) => (
+        this.loadOneMotion(inputFor(motionToken), controller.signal, profileTimedOut)
+      )));
+      if (!this.isCurrentProfile(profile, sequence, generation)) {
+        for (const outcome of outcomes) this.discardMotion(outcome.motion);
+        return;
+      }
+      const outcomeByToken = new Map(outcomes.map((outcome) => [outcome.motionToken, outcome]));
+      const registry = new Map<AvatarMotionRole, ConvertedMotion>();
+      for (const role of avatarMotionRoles) {
+        const binding = profile.motion_bindings[role];
+        if (binding.status !== "ready" || binding.token === null) continue;
+        const outcome = outcomeByToken.get(binding.token);
+        if (!outcome || outcome.status === "cancelled") return;
+        if (outcome.status === "ready" && outcome.motion !== undefined) {
+          registry.set(role, outcome.motion);
+          this.observe(sequence, {
+            type: "motion_status",
+            payload: {
+              profile_revision: profile.profile_revision,
+              model_token: profile.model_token,
+              motion_token: binding.token,
+              role,
+              status: "ready",
+              motion_code: null,
+            },
+          });
+        } else {
+          this.observe(sequence, {
+            type: "motion_status",
+            payload: {
+              profile_revision: profile.profile_revision,
+              model_token: profile.model_token,
+              motion_token: binding.token,
+              role,
+              status: outcome.status,
+              motion_code: outcome.code,
+            },
+          });
+        }
+      }
+      if (!this.isCurrentProfile(profile, sequence, generation)) {
+        this.discardRegistry(registry);
+        return;
+      }
+      this.backend.replaceMotions(registry);
+    } finally {
+      this.motionTimeoutScheduler.cancel(profileTimeoutHandle);
+    }
+  }
+
+  private async loadOneMotion(
+    input: UniqueMotionInput,
+    profileSignal: AbortSignal,
+    profileTimedOut: { value: boolean },
+  ): Promise<MotionOutcome> {
+    if (profileSignal.aborted || !input.isCurrent?.()) {
+      return { motionToken: input.motionToken, status: "cancelled", code: null };
+    }
+    const controller = new AbortController();
+    let rejectProfile: (reason?: unknown) => void = () => {};
+    const profileAbort = new Promise<never>((_resolve, reject) => {
+      rejectProfile = reject;
+    });
+    const abortProfile = () => {
+      controller.abort();
+      rejectProfile(
+        profileTimedOut.value
+          ? new MotionLoadError("motion_load_timeout", "profile motion load timed out")
+          : new MotionLoadError("cancelled", "profile motion load cancelled"),
+      );
+    };
+    profileSignal.addEventListener("abort", abortProfile, { once: true });
+    let timeoutHandle: number | null = null;
+    let timedOut = false;
+    try {
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timeoutHandle = this.motionTimeoutScheduler.request(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new MotionLoadError("motion_load_timeout", "motion load timed out"));
+        }, this.motionTimeoutMilliseconds);
+      });
+      try {
+        const backendMotion = this.backend.loadMotion(input, controller.signal);
+        void backendMotion.then(
+          (motion) => {
+            if (timedOut || profileSignal.aborted || !input.isCurrent?.()) this.discardMotion(motion);
+          },
+          () => {
+            // The raced load path classifies the rejection below.
+          },
+        );
+        const motion = await Promise.race([
+          backendMotion,
+          timeout,
+          profileAbort,
+        ]);
+        if (profileSignal.aborted || !input.isCurrent?.()) {
+          this.discardMotion(motion);
+          return {
+            motionToken: input.motionToken,
+            status: profileTimedOut.value ? "timed_out" : "cancelled",
+            code: profileTimedOut.value ? "motion_load_timeout" : null,
+          };
+        }
+        if (motion.motionToken !== input.motionToken) {
+          this.discardMotion(motion);
+          return {
+            motionToken: input.motionToken,
+            status: "load_failed",
+            code: "motion_load_failed",
+          };
+        }
+        return { motionToken: input.motionToken, status: "ready", code: null, motion };
+      } catch (error) {
+        if (!input.isCurrent?.()) return { motionToken: input.motionToken, status: "cancelled", code: null };
+        if (profileTimedOut.value || timedOut) {
+          return {
+            motionToken: input.motionToken,
+            status: "timed_out",
+            code: "motion_load_timeout",
+          };
+        }
+        if (profileSignal.aborted) {
+          return { motionToken: input.motionToken, status: "cancelled", code: null };
+        }
+        const code = error instanceof MotionLoadError ? error.code : "motion_load_failed";
+        if (code === "cancelled") return { motionToken: input.motionToken, status: "cancelled", code: null };
+        if (code === "motion_load_timeout") {
+          return {
+            motionToken: input.motionToken,
+            status: "timed_out",
+            code,
+          };
+        }
+        return {
+          motionToken: input.motionToken,
+          status: "load_failed",
+          code: "motion_load_failed",
+        };
+      }
+    } finally {
+      profileSignal.removeEventListener("abort", abortProfile);
+      if (timeoutHandle !== null) this.motionTimeoutScheduler.cancel(timeoutHandle);
+    }
+  }
+
+  private isCurrentProfile(
+    profile: LoadProfilePayload,
+    sequence: number,
+    generation: number,
+  ): boolean {
+    return (this.state === "live" || this.state === "suspended")
+      && !this.backendReleased
+      && this.activeProfile === profile
+      && this.activeProfileLoadSequence === sequence
+      && this.avatarGeneration === generation;
+  }
+
+  private isCurrentMotion(
+    profile: LoadProfilePayload,
+    sequence: number,
+    generation: number,
+    _motionToken: string,
+  ): boolean {
+    return this.isCurrentProfile(profile, sequence, generation);
+  }
+
+  private discardMotion(motion: ConvertedMotion | undefined): void {
+    if (!motion) return;
+    if (this.discardedMotions.has(motion)) return;
+    this.discardedMotions.add(motion);
+    try {
+      this.backend.discardMotion?.(motion);
+    } catch {
+      // Detached motion output is already outside the active registry.
+    }
+  }
+
+  private discardRegistry(registry: MotionRegistry): void {
+    const motions = new Set(registry.values());
+    for (const motion of motions) this.discardMotion(motion);
+  }
+
   private applyPresentation(command: PresentationCommand, sequence: number): void {
     if (command.type === "project_phase") this.latestPhaseCommandSequence = sequence;
     const beforeReducedMotion = this.presentation.reducedMotion;
@@ -331,7 +590,9 @@ export class WebRendererCore {
     this.state = transition.state;
     this.cancelFrame();
     this.abortActiveLoad();
+    this.abortActiveMotionLoad();
     this.terminatePresentation();
+    this.avatarGeneration += 1;
     this.activeProfile = null;
     this.activeProfileLoadSequence = null;
     this.releaseBackend();
@@ -347,7 +608,9 @@ export class WebRendererCore {
     if (["disposing", "disposed", "failed"].includes(this.state)) return;
     this.cancelFrame();
     this.abortActiveLoad();
+    this.abortActiveMotionLoad();
     this.terminatePresentation();
+    this.avatarGeneration += 1;
     this.activeProfile = null;
     this.activeProfileLoadSequence = null;
     this.state = reduceLifecycle(this.state, { type: "fail", code }).state;
@@ -401,6 +664,11 @@ export class WebRendererCore {
 
   private abortActiveLoad(): void {
     this.activeLoad?.abort();
+  }
+
+  private abortActiveMotionLoad(): void {
+    this.activeMotionLoad?.abort();
+    this.activeMotionLoad = null;
   }
 
   private terminatePresentation(): void {
@@ -470,6 +738,13 @@ export class WebRendererCore {
 }
 
 class LoadTimeoutError extends Error {}
+
+type MotionOutcome = {
+  motionToken: string;
+  status: "ready" | "load_failed" | "timed_out" | "cancelled";
+  code: "motion_load_failed" | "motion_load_timeout" | null;
+  motion?: ConvertedMotion;
+};
 
 const browserLoadTimeoutScheduler: LoadTimeoutScheduler = {
   request(callback, delayMilliseconds) {

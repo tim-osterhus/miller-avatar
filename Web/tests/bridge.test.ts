@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as THREE from "three";
 import {
   WebRendererCore,
   type FrameScheduler,
@@ -236,6 +237,167 @@ test("profile load reports only nonterminal missing and rejected bindings", asyn
   assert.equal(messages.some((message) => message.type === "failed"), false);
 });
 
+test("model-first profile loading returns before asynchronous motion replacement and deduplicates tokens", async () => {
+  const backend = new AsyncMotionBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, {
+    idle: { status: "ready", token: motion },
+    speaking: { status: "ready", token: motion },
+    listening: { status: "missing", token: null },
+  }));
+
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(backend.motionLoads, 1);
+  assert.deepEqual(messages.slice(-3).map((entry) => entry.type), ["motion_status", "motion_status", "motion_status"]);
+  assert.equal(messages.some((entry) => entry.type === "failed"), false);
+
+  backend.resolveMotion();
+  await backend.motionSettled;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const statuses = messages.filter((entry) => entry.type === "motion_status");
+  assert.equal(statuses.length, 6);
+  assert.equal(statuses.filter((entry) => (entry.payload as { status: string }).status === "ready").length, 2);
+  assert.equal(backend.replacedMotions, 1);
+});
+
+test("profile motion deadline is nonterminal and classifies every pending role as timed out", async () => {
+  const backend = new PendingMotionBackend();
+  const scheduler = new FakeScheduler();
+  const timeout = new FakeLoadTimeoutScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)), {
+    motionTimeoutMilliseconds: 100,
+    profileMotionTimeoutMilliseconds: 60,
+    motionTimeoutScheduler: timeout,
+  });
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, {
+    idle: { status: "ready", token: motion },
+    speaking: { status: "ready", token: motion },
+  }));
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(timeout.pending, 2);
+
+  timeout.run();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const statuses = messages.filter((entry) => entry.type === "motion_status");
+  const timedOut = statuses.filter((entry) => (entry.payload as { status: string }).status === "timed_out");
+  assert.equal(timedOut.length, 2);
+  for (const entry of timedOut) {
+    assert.deepEqual(entry.payload, {
+      profile_revision: 1,
+      model_token: model,
+      motion_token: motion,
+      role: (entry.payload as { role: string }).role,
+      status: "timed_out",
+      motion_code: "motion_load_timeout",
+    });
+  }
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(messages.some((entry) => entry.type === "failed"), false);
+});
+
+test("disposing a profile cancels motion work without status and disposes a late result", async () => {
+  const backend = new LateMotionBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
+  const beforeDispose = messages.length;
+  await core.accept(command(3, "dispose", { reason: "operator" }));
+  backend.resolveMotion();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(messages.slice(beforeDispose).map((entry) => entry.type), ["disposed"]);
+  assert.equal(backend.discarded, 1);
+  assert.equal(core.snapshot().state, "disposed");
+});
+
+test("suspended profile motion completion commits without advancing clocks", async () => {
+  const backend = new AsyncMotionBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
+  await core.accept(command(3, "set_visibility", { visibility: "hidden" }));
+  const suspendedCounters = core.snapshot().counters;
+
+  backend.resolveMotion();
+  await backend.motionSettled;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(core.snapshot().state, "suspended");
+  assert.deepEqual(core.snapshot().counters, suspendedCounters);
+  assert.equal(backend.replacedMotions, 1);
+  assert.equal(backend.discarded, 0);
+  assert.equal(messages.filter((entry) => (
+    entry.type === "motion_status"
+    && (entry.payload as { status: string }).status === "ready"
+  )).length, 1);
+  assert.equal(messages.some((entry) => entry.type === "failed"), false);
+});
+
+test("late motion success after per-motion timeout is discarded exactly once", async () => {
+  const backend = new LateMotionBackend();
+  const scheduler = new FakeScheduler();
+  const timeout = new FakeLoadTimeoutScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)), {
+    motionTimeoutMilliseconds: 25,
+    profileMotionTimeoutMilliseconds: 100,
+    motionTimeoutScheduler: timeout,
+  });
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
+  assert.equal(timeout.pending, 2);
+
+  timeout.runLatest();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(messages.filter((entry) => (
+    entry.type === "motion_status"
+    && (entry.payload as { status: string }).status === "timed_out"
+  )).length, 1);
+
+  backend.resolveMotion();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(backend.discarded, 1);
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(messages.some((entry) => entry.type === "failed"), false);
+});
+
+test("stale motion output racing renderer disposal is discarded exactly once", async () => {
+  const backend = new StaleMotionBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+  backend.core = core;
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(backend.discarded, 1);
+  assert.equal(core.snapshot().state, "disposed");
+  assert.equal(messages.filter((entry) => entry.type === "motion_status").length, 5);
+});
+
 class FakeScheduler implements FrameScheduler {
   private next = 1;
   private callbacks = new Map<number, (timestamp: number) => void>();
@@ -260,10 +422,14 @@ class FakeBackend implements RendererBackend {
   firstFrameProofs = 0;
   frameRenders = 0;
   configure(): void {}
-  async loadAsset(url: string, _signal: AbortSignal) {
+  async loadModel(url: string, _signal: AbortSignal) {
     this.loadedURL = url;
     return { capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 2 } };
   }
+  async loadMotion(input: { motionToken: string }): Promise<{ motionToken: string; clip: THREE.AnimationClip }> {
+    return { motionToken: input.motionToken, clip: new THREE.AnimationClip("motion", 1, []) };
+  }
+  replaceMotions(): void {}
   renderOnce() {
     this.firstFrameProofs += 1;
     return { viewport_width: 800, viewport_height: 600, visible_meshes: 1, decoded_textures: 2, material_bindings: 2, alpha_probe_pixels: 5 };
@@ -279,7 +445,7 @@ class FakeBackend implements RendererBackend {
 class PendingBackend extends FakeBackend {
   aborted = false;
 
-  override loadAsset(url: string, signal: AbortSignal): Promise<Awaited<ReturnType<FakeBackend["loadAsset"]>>> {
+  override loadModel(url: string, signal: AbortSignal): Promise<Awaited<ReturnType<FakeBackend["loadModel"]>>> {
     this.loadedURL = url;
     return new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => {
@@ -287,6 +453,75 @@ class PendingBackend extends FakeBackend {
         reject(new DOMException("aborted", "AbortError"));
       }, { once: true });
     });
+  }
+}
+
+class AsyncMotionBackend extends FakeBackend {
+  motionLoads = 0;
+  replacedMotions = 0;
+  discarded = 0;
+  private resolveCurrent: (() => void) | null = null;
+  motionSettled: Promise<void> = Promise.resolve();
+
+  override loadMotion(input: { motionToken: string }): Promise<{ motionToken: string; clip: THREE.AnimationClip }> {
+    this.motionLoads += 1;
+    this.motionSettled = new Promise<void>((resolve) => {
+      this.resolveCurrent = resolve;
+    });
+    return this.motionSettled.then(() => ({ motionToken: input.motionToken, clip: new THREE.AnimationClip("motion", 1, []) }));
+  }
+
+  override replaceMotions(): void {
+    this.replacedMotions += 1;
+  }
+
+  override discardMotion(): void {
+    this.discarded += 1;
+  }
+
+  resolveMotion(): void {
+    this.resolveCurrent?.();
+    this.resolveCurrent = null;
+  }
+}
+
+class PendingMotionBackend extends FakeBackend {
+  override loadMotion(_input: { motionToken: string }, _signal: AbortSignal): Promise<{ motionToken: string; clip: THREE.AnimationClip }> {
+    return new Promise(() => {});
+  }
+}
+
+class LateMotionBackend extends FakeBackend {
+  discarded = 0;
+  private resolveCurrent: (() => void) | null = null;
+
+  override loadMotion(input: { motionToken: string }): Promise<{ motionToken: string; clip: THREE.AnimationClip }> {
+    return new Promise((resolve) => {
+      this.resolveCurrent = () => resolve({ motionToken: input.motionToken, clip: new THREE.AnimationClip("late", 1, []) });
+    });
+  }
+
+  override discardMotion(): void {
+    this.discarded += 1;
+  }
+
+  resolveMotion(): void {
+    this.resolveCurrent?.();
+    this.resolveCurrent = null;
+  }
+}
+
+class StaleMotionBackend extends FakeBackend {
+  core: WebRendererCore | null = null;
+  discarded = 0;
+
+  override loadMotion(input: { motionToken: string }): Promise<{ motionToken: string; clip: THREE.AnimationClip }> {
+    queueMicrotask(() => this.core?.contextLost());
+    return Promise.resolve({ motionToken: input.motionToken, clip: new THREE.AnimationClip("stale", 1, []) });
+  }
+
+  override discardMotion(): void {
+    this.discarded += 1;
   }
 }
 
@@ -302,6 +537,13 @@ class FakeLoadTimeoutScheduler implements LoadTimeoutScheduler {
   cancel(handle: number): void { this.callbacks.delete(handle); }
   run(): void {
     const entry = this.callbacks.entries().next().value as [number, () => void] | undefined;
+    if (!entry) return;
+    this.callbacks.delete(entry[0]);
+    entry[1]();
+  }
+  runLatest(): void {
+    const entries = [...this.callbacks.entries()];
+    const entry = entries.at(-1);
     if (!entry) return;
     this.callbacks.delete(entry[0]);
     entry[1]();

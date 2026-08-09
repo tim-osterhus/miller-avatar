@@ -5,7 +5,13 @@ import {
   VRMLoaderPlugin,
   type VRM,
 } from "@pixiv/three-vrm";
-import type { LoadedAvatar, RendererBackend } from "./bridge.js";
+import {
+  loadMotion,
+  requireSessionMotionURL,
+  type ConvertedMotion,
+  type UniqueMotionInput,
+} from "./motion-loader.js";
+import type { LoadedAvatar, MotionRegistry, RendererBackend } from "./bridge.js";
 import { fitCamera, type Bounds3 } from "./camera.js";
 import type { PresentationPhase } from "./contract.js";
 import type { PresentationEffect } from "./presentation.js";
@@ -45,6 +51,8 @@ export function requireVRM1<T>(
 export function requireSessionAssetURL(url: string): void {
   if (!localAssetURL.test(url)) throw new Error("renderer rejected non-session asset URL");
 }
+
+export { requireSessionMotionURL } from "./motion-loader.js";
 
 export function countAlphaPixels(pixels: Uint8Array): number {
   if (pixels.length % 4 !== 0) throw new RangeError("alpha probe requires RGBA pixels");
@@ -107,6 +115,8 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private readonly camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
   private readonly clock = new THREE.Clock(false);
   private avatar: VRM | undefined;
+  private mixer: THREE.AnimationMixer | undefined;
+  private motionRegistry: MotionRegistry = new Map();
   private evidence: AvatarEvidence | undefined;
   private reducedMotion = false;
   private viewport = { width: 0, height: 0 };
@@ -139,13 +149,14 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     if (reducedMotion) this.clock.stop();
   }
 
-  async loadAsset(url: string, signal: AbortSignal): Promise<LoadedAvatar> {
+  async loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar> {
     requireSessionAssetURL(url);
     const { avatar, specVersion } = await loadVRM(url, signal);
     try {
       requireVRM1(avatar, specVersion);
       this.removeAvatar();
       this.avatar = avatar;
+      this.mixer = new THREE.AnimationMixer(avatar.scene);
       this.scene.add(avatar.scene);
       if (avatar.lookAt) avatar.lookAt.target = this.camera;
       this.evidence = collectAvatarEvidence(avatar.scene);
@@ -163,6 +174,23 @@ export class ThreeVRMRendererBackend implements RendererBackend {
       disposeAvatarResources(avatar.scene);
       throw error;
     }
+  }
+
+  async loadMotion(input: UniqueMotionInput, signal: AbortSignal): Promise<ConvertedMotion> {
+    requireSessionMotionURL(input.url);
+    if (!this.avatar) throw new Error("renderer has no admitted avatar");
+    return loadMotion(input, this.avatar, signal);
+  }
+
+  replaceMotions(registry: MotionRegistry): void {
+    if (!this.avatar || !this.mixer) throw new Error("renderer has no admitted avatar");
+    this.clearMotionRegistry();
+    this.motionRegistry = new Map(registry);
+  }
+
+  discardMotion(_motion: ConvertedMotion): void {
+    // AnimationClip values do not own GPU resources. The loader owns the
+    // detached parse result and has already released any injected resources.
   }
 
   renderOnce() {
@@ -188,7 +216,9 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   update(deltaSeconds: number): void {
-    if (!this.reducedMotion) this.avatar?.update(deltaSeconds);
+    if (this.reducedMotion) return;
+    this.mixer?.update(deltaSeconds);
+    this.avatar?.update(deltaSeconds);
   }
 
   apply(effect: PresentationEffect): void {
@@ -306,11 +336,24 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   private removeAvatar(): void {
+    this.clearMotionRegistry();
     if (!this.avatar) return;
     this.scene.remove(this.avatar.scene);
     disposeAvatarResources(this.avatar.scene);
+    this.mixer = undefined;
     this.avatar = undefined;
     this.evidence = undefined;
+  }
+
+  private clearMotionRegistry(): void {
+    if (this.mixer && this.avatar) {
+      this.mixer.stopAllAction();
+      for (const motion of new Set(this.motionRegistry.values())) {
+        this.mixer.uncacheClip(motion.clip);
+      }
+      this.mixer.uncacheRoot(this.avatar.scene);
+    }
+    this.motionRegistry = new Map();
   }
 }
 

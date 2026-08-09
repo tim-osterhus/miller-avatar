@@ -8,6 +8,7 @@ import {
   phasePresentationFor,
   requireVRM1,
   requireSessionAssetURL,
+  requireSessionMotionURL,
 } from "../src/renderer.js";
 
 test("VRM admission accepts only version 1 metadata", () => {
@@ -24,6 +25,16 @@ test("asset loading accepts only a session-bound custom-scheme URL", () => {
   assert.throws(() => requireSessionAssetURL("https://example.com/avatar.vrm"), /session/);
   assert.throws(() => requireSessionAssetURL(
     "miller-avatar-local://app/session/11111111-1111-4111-8111-111111111111/avatar.vrm",
+  ), /session/);
+});
+
+test("motion loading accepts only a session-bound VRMA URL", () => {
+  assert.doesNotThrow(() => requireSessionMotionURL(
+    "miller-avatar-local://app/session/11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333.vrma",
+  ));
+  assert.throws(() => requireSessionMotionURL("https://example.com/motion.vrma"), /session/);
+  assert.throws(() => requireSessionMotionURL(
+    "miller-avatar-local://app/session/11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333.vrm",
   ), /session/);
 });
 
