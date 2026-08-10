@@ -121,8 +121,8 @@ compares the embedded files with the reviewed repository sources.
 - The npm artifact and integrity are recorded under
   `node_modules/@pixiv/three-vrm-animation` in `Web/package-lock.json`.
 - License and copyright: MIT; Copyright © 2019-2026 pixiv Inc.
-- Inclusion: VRMA 1.0 parsing and target-specific conversion of humanoid
-  skeletal tracks through `VRMAnimationLoaderPlugin` and
+- Inclusion: VRMA 1.0 parsing and target-specific conversion of humanoid skeletal tracks
+  through `VRMAnimationLoaderPlugin` and
   `createVRMAnimationClip`. The package does not supply motion bytes.
 - The emitted module is the only direct animation package input named by the
   normalized web metafile. Its embedded core code remains covered by the
