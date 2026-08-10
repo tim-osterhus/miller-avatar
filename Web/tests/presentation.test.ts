@@ -204,6 +204,22 @@ test("presentation reducer rejects unsafe projection sequences", () => {
   assert.deepEqual(result.effects, []);
 });
 
+test("succeeded accepts a generation and clears the old playback lease", () => {
+  const result = reducePresentation(initialPresentationState(), {
+    type: "project_phase",
+    payload: {
+      projection_sequence: 1,
+      generation_id: generation,
+      phase: "succeeded" as never,
+      playback_id: null,
+    },
+  });
+
+  assert.equal(result.state.phase, "succeeded");
+  assert.equal(result.state.playbackID, null);
+  assert.deepEqual(result.effects.map((effect) => effect.type), ["clear_mouth", "apply_projection"]);
+});
+
 test("reconciliation cannot lower the retained projection sequence", () => {
   const state = reducePresentation(initialPresentationState(), speaking(7, playbackP)).state;
   const result = reducePresentation(state, {

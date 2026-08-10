@@ -104,6 +104,9 @@ public final class AvatarSurfaceController {
     private var timerWasInvalidated = false
     private var nextProfileLoadID: UInt64 = 0
     private var activeProfileLoad: PendingProfileLoad?
+    private var nextProfilePersistenceID: UInt64 = 0
+    private var acceptedProfilePersistence: AcceptedProfilePersistence?
+    private var motionPersistenceTask: Task<Void, Never>?
 
     public convenience init() {
         self.init(
@@ -130,6 +133,14 @@ public final class AvatarSurfaceController {
         host.onObservation = { [weak self] observation in
             self?.observe(observation)
             self?.onObservation?(observation)
+        }
+        host.onMotionSuccess = { [weak self] motionID in
+            self?.enqueueMotionPersistence(.success(motionID: motionID))
+        }
+        host.onMotionFailure = { [weak self] motionID, code in
+            self?.enqueueMotionPersistence(
+                .failure(motionID: motionID, code: code)
+            )
         }
         driver.onWebViewChange = { [weak self] webView in
             self?.install(webView)
@@ -212,13 +223,26 @@ public final class AvatarSurfaceController {
         else {
             return .superseded
         }
+        clearAcceptedProfilePersistence()
+        nextProfilePersistenceID &+= 1
+        acceptedProfilePersistence = AcceptedProfilePersistence(
+            id: nextProfilePersistenceID,
+            sessionID: request.sessionID,
+            profileID: profileID,
+            store: store,
+            owner: MotionPersistenceOwner()
+        )
         return .accepted
     }
 
     @discardableResult
     package func load(_ profile: LoadedAvatarProfile) -> AssetLoadDisposition {
         guard !isDisposed else { return .notReady }
-        return host.load(profile)
+        let disposition = host.load(profile)
+        if disposition == .accepted {
+            clearAcceptedProfilePersistence()
+        }
+        return disposition
     }
 
     @discardableResult
@@ -264,6 +288,7 @@ public final class AvatarSurfaceController {
     public func dispose(reason: DisposalReason = .operator) {
         guard !isDisposed else { return }
         invalidateActiveProfileLoad()
+        clearAcceptedProfilePersistence()
         isDisposed = true
         invalidateTimer()
         driver.onWebViewChange = nil
@@ -275,6 +300,7 @@ public final class AvatarSurfaceController {
         guard !isDisposed else { return }
         if rendererView !== webView {
             invalidateActiveProfileLoad()
+            clearAcceptedProfilePersistence()
         }
         detachRenderer()
 
@@ -305,6 +331,19 @@ public final class AvatarSurfaceController {
     private var installingProfile = false
 
     private func observe(_ snapshot: HostSnapshot) {
+        if let acceptedProfilePersistence,
+           acceptedProfilePersistence.sessionID != snapshot.sessionID
+        {
+            clearAcceptedProfilePersistence()
+        } else {
+            switch snapshot.lifecycle {
+            case .failed, .disposing, .absent:
+                clearAcceptedProfilePersistence()
+            case .startingRenderer, .rendererReady, .loadingAsset, .live, .liveSuspended:
+                break
+            }
+        }
+
         guard let activeProfileLoad else { return }
         guard snapshot.sessionID == activeProfileLoad.sessionID else {
             invalidateActiveProfileLoad()
@@ -334,6 +373,51 @@ public final class AvatarSurfaceController {
     private func invalidateActiveProfileLoad() {
         activeProfileLoad?.lease.invalidate()
         activeProfileLoad = nil
+    }
+
+    private func clearAcceptedProfilePersistence() {
+        acceptedProfilePersistence?.owner.invalidate()
+        nextProfilePersistenceID &+= 1
+        acceptedProfilePersistence = nil
+        motionPersistenceTask?.cancel()
+        motionPersistenceTask = nil
+    }
+
+    private func enqueueMotionPersistence(_ event: MotionPersistenceEvent) {
+        guard !isDisposed,
+              let target = acceptedProfilePersistence
+        else { return }
+
+        let previous = motionPersistenceTask
+        motionPersistenceTask = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self,
+                  !Task.isCancelled,
+                  !self.isDisposed,
+                  self.acceptedProfilePersistence?.id == target.id,
+                  self.host.snapshot.sessionID == target.sessionID
+            else { return }
+
+            do {
+                switch event {
+                case .success(let motionID):
+                    try await target.store.recordMotionRendererSuccess(
+                        profileID: target.profileID,
+                        motionID: motionID,
+                        owner: target.owner
+                    )
+                case .failure(let motionID, let code):
+                    try await target.store.recordMotionRendererFailure(
+                        profileID: target.profileID,
+                        motionID: motionID,
+                        code: code,
+                        owner: target.owner
+                    )
+                }
+            } catch {
+                // Host accounting is nonterminal; persistence errors do not alter it.
+            }
+        }
     }
 
     private func isCurrentProfileLoad(_ request: PendingProfileLoad) -> Bool {
@@ -386,5 +470,18 @@ public final class AvatarSurfaceController {
             self.sessionID = sessionID
             self.lease = lease
         }
+    }
+
+    private struct AcceptedProfilePersistence {
+        let id: UInt64
+        let sessionID: UUID
+        let profileID: UUID
+        let store: AvatarProfileStore
+        let owner: MotionPersistenceOwner
+    }
+
+    private enum MotionPersistenceEvent: Sendable {
+        case success(motionID: UUID)
+        case failure(motionID: UUID, code: MotionFailureCode)
     }
 }

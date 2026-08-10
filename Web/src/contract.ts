@@ -46,6 +46,7 @@ export const presentationPhases = [
   "thinking",
   "responding",
   "speaking",
+  "succeeded",
   "stopped",
   "failed",
 ] as const;

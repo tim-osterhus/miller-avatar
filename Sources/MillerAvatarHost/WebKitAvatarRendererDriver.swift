@@ -145,6 +145,8 @@ package final class WebKitAvatarRendererDriver:
     private var navigationPolicyRetention: NavigationPolicyRetention?
     private var observationHandler: RendererObservationHandler?
     private var webView: WKWebView?
+    private var activeProfilePayload: LoadProfilePayload?
+    private var unavailableMotionTokens: Set<UUID> = []
 
     package init() {
         resourceProvider = .module
@@ -246,6 +248,8 @@ package final class WebKitAvatarRendererDriver:
             fail(.schemeRejected)
             return false
         }
+        activeProfilePayload = profile.loadPayload
+        unavailableMotionTokens = []
         return true
     }
 
@@ -324,8 +328,16 @@ package final class WebKitAvatarRendererDriver:
                 fail(.webglUnavailable, for: originatingIdentity)
             }
         case .profileModelLoaded(let payload):
+            guard matchesProfileIdentity(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken
+            ) else { return }
             forward(.profileModelLoaded(payload), sessionID: activeLease.id)
         case .firstFrame(let payload):
+            guard matchesProfileIdentity(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken
+            ) else { return }
             forward(
                 .firstFrame(
                     profileRevision: payload.profileRevision,
@@ -335,8 +347,20 @@ package final class WebKitAvatarRendererDriver:
                 sessionID: activeLease.id
             )
         case .motionStatus(let payload):
+            guard matchesMotionIdentity(payload) else { return }
+            if let token = payload.motionToken {
+                switch payload.status {
+                case .loadFailed, .timedOut, .runtimeFailed:
+                    unavailableMotionTokens.insert(token)
+                case .ready:
+                    unavailableMotionTokens.remove(token)
+                case .missing, .rejected:
+                    break
+                }
+            }
             forward(.motionStatus(payload), sessionID: activeLease.id)
         case .motionActive(let payload):
+            guard matchesMotionIdentity(payload) else { return }
             forward(.motionActive(payload), sessionID: activeLease.id)
         case .suspended(let payload):
             forward(
@@ -410,5 +434,63 @@ package final class WebKitAvatarRendererDriver:
         navigationPolicyRetention = nil
         lease = nil
         receive = nil
+        activeProfilePayload = nil
+        unavailableMotionTokens.removeAll()
+    }
+
+    private func matchesProfileIdentity(
+        profileRevision: UInt64,
+        modelToken: UUID
+    ) -> Bool {
+        guard let profile = activeProfilePayload else { return false }
+        return profile.profileRevision == profileRevision
+            && profile.modelToken == modelToken
+    }
+
+    private func matchesMotionIdentity(_ payload: MotionStatusPayload) -> Bool {
+        guard matchesProfileIdentity(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken
+        ),
+        let profile = activeProfilePayload,
+        let binding = profile.motionBindings[payload.role]
+        else { return false }
+        switch binding.status {
+        case .ready:
+            guard let token = binding.token else { return false }
+            return payload.motionToken == token
+                && (payload.status == .ready
+                    || payload.status == .loadFailed
+                    || payload.status == .timedOut
+                    || payload.status == .runtimeFailed)
+        case .missing:
+            return payload.motionToken == nil && payload.status == .missing
+        case .rejected:
+            return payload.motionToken == nil && payload.status == .rejected
+        }
+    }
+
+    private func matchesMotionIdentity(_ payload: MotionActivePayload) -> Bool {
+        guard matchesProfileIdentity(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken
+        ) else { return false }
+        switch payload.mode {
+        case .rest:
+            return payload.motionToken == nil && payload.role == nil
+        case .loop, .oneShot:
+            guard let role = payload.role,
+                  let token = payload.motionToken,
+                  let profile = activeProfilePayload,
+                  let binding = profile.motionBindings[role]
+            else { return false }
+            let validRole = payload.mode == .loop
+                ? role.isSteady
+                : role == .success || role == .failure
+            return validRole
+                && binding.status == .ready
+                && binding.token == token
+                && !unavailableMotionTokens.contains(token)
+        }
     }
 }

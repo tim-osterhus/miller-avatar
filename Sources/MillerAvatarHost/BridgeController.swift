@@ -249,7 +249,7 @@ package final class BridgeController {
         switch phase {
         case .speaking:
             generationID != nil && playbackID != nil
-        case .thinking, .responding, .stopped, .failed:
+        case .thinking, .responding, .succeeded, .stopped, .failed:
             generationID != nil && playbackID == nil
         case .idle, .listening, .transcribing:
             generationID == nil && playbackID == nil

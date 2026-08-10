@@ -163,6 +163,7 @@ public enum PresentationPhase: String, CaseIterable, Codable, Equatable, Sendabl
     case thinking
     case responding
     case speaking
+    case succeeded
     case stopped
     case failed
 }
@@ -682,7 +683,8 @@ public final class PresentationObservationDecoder {
             try requireIdentity(
                 profileRevision: payload.profileRevision,
                 modelToken: payload.modelToken,
-                causedBySequence: causedBySequence
+                causedBySequence: causedBySequence,
+                requiresProfileLoadCause: payload.status != .runtimeFailed
             )
             try requireMotionIdentity(
                 role: payload.role,
@@ -950,7 +952,7 @@ private extension PresentationCommand {
         switch phase {
         case .speaking:
             generationID != nil && playbackID != nil
-        case .thinking, .responding, .stopped, .failed:
+        case .thinking, .responding, .succeeded, .stopped, .failed:
             generationID != nil && playbackID == nil
         case .idle, .listening, .transcribing:
             generationID == nil && playbackID == nil

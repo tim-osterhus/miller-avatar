@@ -12,6 +12,13 @@ import {
   type UniqueMotionInput,
 } from "./motion-loader.js";
 import type { LoadedAvatar, MotionRegistry, RendererBackend } from "./bridge.js";
+import {
+  MotionController,
+  type MotionActiveEvent,
+  type MotionFault,
+  type MotionMixerLike,
+  type MotionRuntimeIdentity,
+} from "./motion-controller.js";
 import { fitCamera, type Bounds3 } from "./camera.js";
 import type { PresentationPhase } from "./contract.js";
 import type { PresentationEffect } from "./presentation.js";
@@ -116,9 +123,17 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private readonly clock = new THREE.Clock(false);
   private avatar: VRM | undefined;
   private mixer: THREE.AnimationMixer | undefined;
+  private motionController: MotionController | undefined;
+  private motionIdentity: MotionRuntimeIdentity | undefined;
   private motionRegistry: MotionRegistry = new Map();
   private evidence: AvatarEvidence | undefined;
   private reducedMotion = false;
+  private suspended = false;
+  private phase: PresentationPhase = "idle";
+  private mouthScalar = 0;
+  private projectionSequence = 0;
+  private motionFaultHandler: ((fault: MotionFault) => void) | undefined;
+  private motionActiveHandler: ((event: MotionActiveEvent) => void) | undefined;
   private viewport = { width: 0, height: 0 };
 
   constructor(private readonly root: HTMLElement) {
@@ -146,7 +161,13 @@ export class ThreeVRMRendererBackend implements RendererBackend {
 
   configure(reducedMotion: boolean): void {
     this.reducedMotion = reducedMotion;
-    if (reducedMotion) this.clock.stop();
+    this.motionController?.setReducedMotion(reducedMotion);
+    if (reducedMotion || this.suspended) this.clock.stop();
+    else this.clock.start();
+    if (reducedMotion) {
+      this.applyPhase(this.phase);
+      this.setMouth(0);
+    }
   }
 
   async loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar> {
@@ -157,6 +178,19 @@ export class ThreeVRMRendererBackend implements RendererBackend {
       this.removeAvatar();
       this.avatar = avatar;
       this.mixer = new THREE.AnimationMixer(avatar.scene);
+      this.motionController = new MotionController({
+        mixer: this.mixer as unknown as MotionMixerLike,
+        root: avatar.scene,
+        resetNormalizedPose: () => {
+          const humanoid = avatar.humanoid as typeof avatar.humanoid & {
+            resetNormalizedPose?: () => void;
+          };
+          humanoid.resetNormalizedPose?.();
+        },
+        initialReducedMotion: this.reducedMotion,
+        onFault: (fault) => this.motionFaultHandler?.(fault),
+        onActive: (event) => this.motionActiveHandler?.(event),
+      });
       this.scene.add(avatar.scene);
       if (avatar.lookAt) avatar.lookAt.target = this.camera;
       this.evidence = collectAvatarEvidence(avatar.scene);
@@ -171,6 +205,15 @@ export class ThreeVRMRendererBackend implements RendererBackend {
         },
       };
     } catch (error) {
+      this.motionController?.dispose();
+      this.motionController = undefined;
+      this.motionIdentity = undefined;
+      this.mixer = undefined;
+      this.scene.remove(avatar.scene);
+      if (this.avatar === avatar) {
+        this.avatar = undefined;
+        this.evidence = undefined;
+      }
       disposeAvatarResources(avatar.scene);
       throw error;
     }
@@ -182,10 +225,28 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     return loadMotion(input, this.avatar, signal);
   }
 
-  replaceMotions(registry: MotionRegistry): void {
-    if (!this.avatar || !this.mixer) throw new Error("renderer has no admitted avatar");
-    this.clearMotionRegistry();
+  replaceMotions(registry: MotionRegistry, identity?: MotionRuntimeIdentity): void {
+    if (!this.avatar || !this.mixer || !this.motionController || !identity) {
+      throw new Error("renderer has no admitted avatar");
+    }
+    this.motionIdentity = identity;
     this.motionRegistry = new Map(registry);
+    this.motionController.replaceRegistry({ ...identity, motions: registry });
+  }
+
+  setSuspended(suspended: boolean): void {
+    this.suspended = suspended;
+    this.motionController?.setSuspended(suspended);
+    if (suspended || this.reducedMotion) this.clock.stop();
+    else this.clock.start();
+  }
+
+  setMotionFaultHandler(handler: (fault: MotionFault) => void): void {
+    this.motionFaultHandler = handler;
+  }
+
+  setMotionActiveHandler(handler: (event: MotionActiveEvent) => void): void {
+    this.motionActiveHandler = handler;
   }
 
   discardMotion(_motion: ConvertedMotion): void {
@@ -194,6 +255,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   renderOnce() {
+    this.applyFramePresentation(0);
     const { width, height } = this.renderFrame();
     if (!this.avatar || !this.evidence) throw new Error("renderer has no admitted avatar");
     const alphaProbePixels = this.probeAlpha();
@@ -216,39 +278,60 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   update(deltaSeconds: number): void {
-    if (this.reducedMotion) return;
-    this.mixer?.update(deltaSeconds);
-    this.avatar?.update(deltaSeconds);
+    if (this.suspended) return;
+    this.motionController?.update(deltaSeconds);
+    this.applyPhase(this.phase);
+    this.setMouth(this.reducedMotion ? 0 : this.mouthScalar);
+    this.maintainLookAtTarget();
+    if (!this.reducedMotion) this.avatar?.update(deltaSeconds);
   }
 
-  apply(effect: PresentationEffect): void {
+  apply(effect: PresentationEffect, causedBySequence?: number): void {
     switch (effect.type) {
       case "apply_mouth":
-        this.setMouth(effect.command.payload.scalar);
+        this.mouthScalar = effect.command.payload.scalar;
         return;
       case "clear_mouth":
-        this.setMouth(0);
+        this.mouthScalar = 0;
         return;
       case "apply_projection":
-        this.applyPhase(effect.command.payload.phase);
+        this.phase = effect.command.payload.phase;
+        this.projectionSequence = effect.command.payload.projection_sequence;
+        this.projectMotion(effect.command.payload, causedBySequence ?? null);
         return;
       case "set_reduced_motion":
         this.configure(effect.enabled);
         return;
       case "reset":
-        this.applyPhase("idle");
-        this.setMouth(0);
+        this.phase = "idle";
+        this.mouthScalar = 0;
+        this.projectionSequence = Math.min(Number.MAX_SAFE_INTEGER, this.projectionSequence + 1);
+        this.projectMotion({
+          projection_sequence: this.projectionSequence,
+          generation_id: null,
+          phase: "idle",
+          playback_id: null,
+        }, causedBySequence ?? null);
         return;
       case "reconcile":
         this.configure(effect.reducedMotion);
-        this.applyPhase(effect.phase);
-        this.setMouth(effect.mouthScalar);
+        this.phase = effect.phase;
+        this.mouthScalar = effect.mouthScalar;
+        if (effect.lastProjectionSequence !== null) {
+          this.projectionSequence = effect.lastProjectionSequence;
+          this.projectMotion({
+            projection_sequence: effect.lastProjectionSequence,
+            generation_id: effect.generationID,
+            phase: effect.phase,
+            playback_id: effect.playbackID,
+          }, causedBySequence ?? null, true);
+        }
         return;
     }
   }
 
   startClock(): void {
-    if (!this.reducedMotion) this.clock.start();
+    if (!this.reducedMotion && !this.suspended) this.clock.start();
   }
 
   stopClock(): void {
@@ -336,24 +419,51 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   private removeAvatar(): void {
-    this.clearMotionRegistry();
-    if (!this.avatar) return;
-    this.scene.remove(this.avatar.scene);
-    disposeAvatarResources(this.avatar.scene);
+    this.motionController?.dispose();
+    this.motionController = undefined;
+    this.motionIdentity = undefined;
+    this.motionRegistry = new Map();
+    const avatar = this.avatar;
+    if (avatar) {
+      this.scene.remove(avatar.scene);
+      disposeAvatarResources(avatar.scene);
+    }
     this.mixer = undefined;
     this.avatar = undefined;
     this.evidence = undefined;
   }
 
-  private clearMotionRegistry(): void {
-    if (this.mixer && this.avatar) {
-      this.mixer.stopAllAction();
-      for (const motion of new Set(this.motionRegistry.values())) {
-        this.mixer.uncacheClip(motion.clip);
-      }
-      this.mixer.uncacheRoot(this.avatar.scene);
-    }
-    this.motionRegistry = new Map();
+  private applyFramePresentation(_deltaSeconds: number): void {
+    this.applyPhase(this.phase);
+    this.setMouth(this.reducedMotion ? 0 : this.mouthScalar);
+    this.maintainLookAtTarget();
+  }
+
+  private maintainLookAtTarget(): void {
+    if (this.avatar?.lookAt) this.avatar.lookAt.target = this.camera;
+  }
+
+  private projectMotion(
+    projection: {
+      projection_sequence: number;
+      generation_id: string | null;
+      phase: PresentationPhase;
+      playback_id: string | null;
+    },
+    causedBySequence: number | null,
+    isReconciliation = false,
+  ): void {
+    const identity = this.motionIdentity;
+    if (!identity) return;
+    this.motionController?.project({
+      ...identity,
+      projectionSequence: projection.projection_sequence,
+      phase: projection.phase,
+      generationID: projection.generation_id,
+      playbackID: projection.playback_id,
+      isReconciliation,
+      causedBySequence,
+    });
   }
 }
 

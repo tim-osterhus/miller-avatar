@@ -84,6 +84,30 @@ import MillerAvatarCore
         #expect(payload["reduced_motion"] as? Bool == true)
     }
 
+    @Test func serializesSucceededWithGenerationAndWithoutPlaybackID() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let sessionID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let generationID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let bridge = BridgeController(sessionID: sessionID, caller: caller)
+
+        try await bridge.send(.projectPhase(
+            sequence: 1,
+            generationID: generationID,
+            phase: .succeeded,
+            playbackID: nil
+        ))
+
+        let call = try #require(caller.calls.last)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(call.commandJSON.utf8))
+                as? [String: Any]
+        )
+        let payload = try #require(object["payload"] as? [String: Any])
+        #expect(payload["generation_id"] as? String == generationID.uuidString.lowercased())
+        #expect(payload["phase"] as? String == "succeeded")
+        #expect(payload["playback_id"] as? NSNull != nil)
+    }
+
     @Test
     func reservesEachSequenceAndPreparesExpectationBeforeDispatch() async throws {
         let caller = RecordingJavaScriptCaller()

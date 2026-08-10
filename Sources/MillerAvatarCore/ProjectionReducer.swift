@@ -118,6 +118,7 @@ public enum ProjectionReducer {
         let replacesLease = projection.generationID != state.generationID
             || projection.playbackID != state.playbackID
             || projection.phase == .stopped
+            || projection.phase == .succeeded
             || projection.phase == .failed
 
         next.lastProjectionSequence = projection.projectionSequence
@@ -239,7 +240,7 @@ public enum ProjectionReducer {
         return switch projection.phase {
         case .speaking:
             projection.generationID != nil && projection.playbackID != nil
-        case .thinking, .responding, .stopped, .failed:
+        case .thinking, .responding, .succeeded, .stopped, .failed:
             projection.generationID != nil && projection.playbackID == nil
         case .idle, .listening, .transcribing:
             projection.generationID == nil && projection.playbackID == nil

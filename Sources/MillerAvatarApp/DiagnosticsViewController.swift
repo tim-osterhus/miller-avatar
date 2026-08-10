@@ -36,7 +36,7 @@ private struct SyntheticProjectionState {
         case .speaking:
             generationID = UUID()
             playbackID = UUID()
-        case .thinking, .responding, .stopped, .failed:
+        case .thinking, .responding, .succeeded, .stopped, .failed:
             generationID = UUID()
         }
 

@@ -13,6 +13,11 @@ import {
   type ConvertedMotion,
   type UniqueMotionInput,
 } from "./motion-loader.js";
+import type {
+  MotionActiveEvent,
+  MotionFault,
+  MotionRuntimeIdentity,
+} from "./motion-controller.js";
 import { reduceLifecycle, type RendererState } from "./lifecycle.js";
 import {
   initialPresentationState,
@@ -47,12 +52,15 @@ export interface RendererBackend {
   configure(reducedMotion: boolean): void;
   loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar>;
   loadMotion(input: UniqueMotionInput, signal: AbortSignal): Promise<ConvertedMotion>;
-  replaceMotions(registry: MotionRegistry): void;
+  replaceMotions(registry: MotionRegistry, identity?: MotionRuntimeIdentity): void;
   discardMotion?(motion: ConvertedMotion): void;
   renderOnce(): FirstFrameEvidence;
   renderFrame(): void;
   update(deltaSeconds: number): void;
-  apply(effect: PresentationEffect): void;
+  apply(effect: PresentationEffect, causedBySequence?: number): void;
+  setSuspended?(suspended: boolean): void;
+  setMotionFaultHandler?(handler: (fault: MotionFault) => void): void;
+  setMotionActiveHandler?(handler: (event: MotionActiveEvent) => void): void;
   startClock(): void;
   stopClock(): void;
   dispose(): void;
@@ -104,6 +112,7 @@ export class WebRendererCore {
   private readonly motionTimeoutScheduler: LoadTimeoutScheduler;
   private avatarGeneration = 0;
   private readonly discardedMotions = new WeakSet<ConvertedMotion>();
+  private readonly failedMotionTokens = new Set<string>();
 
   constructor(
     private readonly sessionID: string,
@@ -127,6 +136,8 @@ export class WebRendererCore {
       throw new RangeError("profile motion timeout must be a positive safe integer");
     }
     this.motionTimeoutScheduler = options.motionTimeoutScheduler ?? browserLoadTimeoutScheduler;
+    this.backend.setMotionFaultHandler?.((fault) => this.handleMotionFault(fault));
+    this.backend.setMotionActiveHandler?.((event) => this.handleMotionActive(event));
   }
 
   start(): void {
@@ -210,6 +221,7 @@ export class WebRendererCore {
     this.state = reduceLifecycle(this.state, { type: "load_started" }).state;
     this.abortActiveMotionLoad();
     const generation = ++this.avatarGeneration;
+    this.failedMotionTokens.clear();
     this.activeProfile = profile;
     this.activeProfileLoadSequence = sequence;
     const controller = new AbortController();
@@ -270,6 +282,7 @@ export class WebRendererCore {
       if (this.state === "live") {
         this.cancelFrame();
         this.backend.stopClock();
+        this.backend.setSuspended?.(true);
         this.state = reduceLifecycle(this.state, { type: "suspend" }).state;
       }
       if (this.state === "suspended") this.applyPresentationInput({ type: "suspend", visibility });
@@ -279,8 +292,9 @@ export class WebRendererCore {
       });
       return;
     }
-    this.backend.startClock();
     this.applyPresentationInput({ type: "resume" });
+    this.backend.setSuspended?.(false);
+    this.backend.startClock();
     this.awaitingReconciliation = true;
     this.state = reduceLifecycle(this.state, { type: "resume" }).state;
     if (!this.advanceCounters(1, this.presentation.reducedMotion ? 0 : 1, 1, "resume", sequence)) return;
@@ -397,7 +411,27 @@ export class WebRendererCore {
         this.discardRegistry(registry);
         return;
       }
-      this.backend.replaceMotions(registry);
+      this.backend.replaceMotions(registry, {
+        sessionID: this.sessionID,
+        profileRevision: profile.profile_revision,
+        modelToken: profile.model_token,
+        generation,
+      });
+      const projectionSequence = this.presentation.lastProjectionSequence;
+      if (projectionSequence !== undefined) {
+        this.backend.apply({
+          type: "apply_projection",
+          command: {
+            type: "project_phase",
+            payload: {
+              projection_sequence: projectionSequence,
+              generation_id: this.presentation.generationID,
+              phase: this.presentation.phase,
+              playback_id: this.presentation.playbackID,
+            },
+          },
+        }, this.latestPhaseCommandSequence ?? undefined);
+      }
     } finally {
       this.motionTimeoutScheduler.cancel(profileTimeoutHandle);
     }
@@ -542,10 +576,18 @@ export class WebRendererCore {
     const beforeReducedMotion = this.presentation.reducedMotion;
     const result = reducePresentation(this.presentation, command);
     this.presentation = result.state;
-    for (const effect of result.effects) this.backend.apply(effect);
+    for (const effect of result.effects) {
+      this.backend.apply(effect, effect.type === "reset" ? undefined : sequence);
+    }
     if (this.state === "live" && beforeReducedMotion !== this.presentation.reducedMotion) {
-      if (this.presentation.reducedMotion) this.cancelFrame();
-      else this.schedule();
+      if (this.presentation.reducedMotion) {
+        this.cancelFrame();
+        if (!this.advanceCounters(1, 1, 1, "render", sequence)) return;
+        this.backend.update(0);
+        this.backend.renderFrame();
+      } else {
+        this.schedule();
+      }
     }
   }
 
@@ -634,7 +676,11 @@ export class WebRendererCore {
       const profile = this.activeProfile;
       if (
         profile === null
-        || causedBySequence !== this.activeProfileLoadSequence
+        || (observation.type !== "motion_status"
+          && causedBySequence !== this.activeProfileLoadSequence)
+        || (observation.type === "motion_status"
+          && observation.payload.status !== "runtime_failed"
+          && causedBySequence !== this.activeProfileLoadSequence)
         || observation.payload.profile_revision !== profile.profile_revision
         || observation.payload.model_token !== profile.model_token
       ) {
@@ -660,6 +706,57 @@ export class WebRendererCore {
       type: observation.type,
       payload: observation.payload,
     }));
+  }
+
+  private handleMotionActive(event: MotionActiveEvent): void {
+    if (
+      this.activeProfile === null
+      || this.backendReleased
+      || this.activeProfile.profile_revision !== event.profileRevision
+      || this.activeProfile.model_token !== event.modelToken
+      || this.avatarGeneration !== event.generation
+      || (event.motionToken !== null && this.failedMotionTokens.has(event.motionToken))
+    ) return;
+    if (event.causedBySequence === null) return;
+    const causedBySequence = event.causedBySequence;
+    this.observe(causedBySequence, {
+      type: "motion_active",
+      payload: {
+        profile_revision: event.profileRevision,
+        model_token: event.modelToken,
+        motion_token: event.motionToken,
+        role: event.role,
+        mode: event.mode,
+      },
+    });
+  }
+
+  private handleMotionFault(fault: MotionFault): void {
+    const profile = this.activeProfile;
+    if (
+      profile === null
+      || this.backendReleased
+      || profile.profile_revision !== fault.profileRevision
+      || profile.model_token !== fault.modelToken
+      || this.avatarGeneration !== fault.generation
+    ) return;
+    const causedBySequence = fault.causedBySequence ?? this.activeProfileLoadSequence;
+    this.failedMotionTokens.add(fault.motionToken);
+    for (const role of avatarMotionRoles) {
+      const binding = profile.motion_bindings[role];
+      if (binding.status !== "ready" || binding.token !== fault.motionToken) continue;
+      this.observe(causedBySequence, {
+        type: "motion_status",
+        payload: {
+          profile_revision: fault.profileRevision,
+          model_token: fault.modelToken,
+          motion_token: fault.motionToken,
+          role,
+          status: "runtime_failed",
+          motion_code: "motion_runtime_failed",
+        },
+      });
+    }
   }
 
   private abortActiveLoad(): void {

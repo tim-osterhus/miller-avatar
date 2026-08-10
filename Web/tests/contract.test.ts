@@ -49,6 +49,7 @@ assert.deepEqual(validNames, [
   "command-dispose.json",
   "command-load-profile.json",
   "command-project-phase.json",
+  "command-project-succeeded.json",
   "command-reset.json",
   "command-set-mouth.json",
   "command-set-policy.json",
@@ -80,7 +81,7 @@ for (const phase of presentationPhases) {
   if (phase === "speaking") {
     generation_id = generationID;
     playback_id = playbackID;
-  } else if (["thinking", "responding", "stopped", "failed"].includes(phase)) {
+  } else if (["thinking", "responding", "succeeded", "stopped", "failed"].includes(phase)) {
     generation_id = generationID;
   }
   assert.doesNotThrow(() =>
@@ -92,6 +93,27 @@ for (const phase of presentationPhases) {
     }))),
   );
 }
+
+assert.doesNotThrow(() => commandDecoder().decode(JSON.stringify(commandAt(1, "project_phase", {
+  projection_sequence: 1,
+  generation_id: generationID,
+  phase: "succeeded",
+  playback_id: null,
+}))));
+
+assert.throws(() => commandDecoder().decode(JSON.stringify(commandAt(1, "project_phase", {
+  projection_sequence: 1,
+  generation_id: null,
+  phase: "succeeded",
+  playback_id: null,
+}))), /invalid_value/);
+
+assert.throws(() => commandDecoder().decode(JSON.stringify(commandAt(1, "project_phase", {
+  projection_sequence: 1,
+  generation_id: generationID,
+  phase: "succeeded",
+  playback_id: playbackID,
+}))), /invalid_value/);
 
 for (const visibility of presentationVisibilities) {
   assert.doesNotThrow(() =>
@@ -379,6 +401,48 @@ function testMotionStatusAndActiveMatrices(): void {
       mode: active.mode,
     }))));
   }
+
+  const expectedProfile = loadProfilePayload({
+    idle: { status: "ready", token: motionToken },
+  }) as unknown as LoadProfilePayload;
+  const runtimeFailure = new PresentationObservationDecoder(
+    sessionID,
+    expectedProfile,
+    4,
+  );
+  runtimeFailure.setExpectedPhaseCauseSequence(9);
+  runtimeFailure.decode(JSON.stringify(observationAt(1, 4, "profile_model_loaded", {
+    profile_revision: 1,
+    model_token: modelToken,
+    capabilities: capabilities(),
+  })));
+  assert.doesNotThrow(() => runtimeFailure.decode(JSON.stringify(observationAt(2, 9, "motion_status", {
+    profile_revision: 1,
+    model_token: modelToken,
+    motion_token: motionToken,
+    role: "idle",
+    status: "runtime_failed",
+    motion_code: "motion_runtime_failed",
+  }))));
+
+  const profileFailure = new PresentationObservationDecoder(
+    sessionID,
+    expectedProfile,
+    4,
+  );
+  profileFailure.decode(JSON.stringify(observationAt(1, 4, "profile_model_loaded", {
+    profile_revision: 1,
+    model_token: modelToken,
+    capabilities: capabilities(),
+  })));
+  assert.throws(() => profileFailure.decode(JSON.stringify(observationAt(2, 9, "motion_status", {
+    profile_revision: 1,
+    model_token: modelToken,
+    motion_token: motionToken,
+    role: "idle",
+    status: "load_failed",
+    motion_code: "motion_load_failed",
+  }))), /invalid_sequence/);
 }
 
 function testStructuralBoundaries(): void {

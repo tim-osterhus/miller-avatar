@@ -205,6 +205,27 @@ package struct ProfileStoreFileOperations: Sendable {
     )
 }
 
+package final class MotionPersistenceOwner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+
+    package func invalidate() {
+        lock.lock()
+        active = false
+        lock.unlock()
+    }
+
+    @discardableResult
+    package func performIfCurrent<Value>(
+        _ operation: () throws -> Value
+    ) rethrows -> Value? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active, !Task.isCancelled else { return nil }
+        return try operation()
+    }
+}
+
 public actor AvatarProfileStore {
     package static let fileName = "profiles-v2.json"
     package static let legacyFileName = "profiles-v1.json"
@@ -501,9 +522,14 @@ public actor AvatarProfileStore {
         try commit(profiles)
     }
 
+    package func recordMotionRendererSuccess(profileID: UUID, motionID: UUID) throws {
+        try recordMotionRendererSuccess(profileID: profileID, motionID: motionID, owner: nil)
+    }
+
     package func recordMotionRendererSuccess(
         profileID: UUID,
-        motionID: UUID
+        motionID: UUID,
+        owner: MotionPersistenceOwner?
     ) throws {
         var profiles = try readProfiles()
         guard let profileIndex = profiles.firstIndex(where: { $0.id == profileID }) else {
@@ -525,24 +551,23 @@ public actor AvatarProfileStore {
             profiles[profileIndex],
             motionLibrary: library
         )
-        try commit(profiles)
+        try commit(profiles, owner: owner)
     }
 
-    package func recordMotionRendererFailure(
-        profileID: UUID,
-        motionID: UUID
-    ) throws {
+    package func recordMotionRendererFailure(profileID: UUID, motionID: UUID) throws {
         try recordMotionRendererFailure(
             profileID: profileID,
             motionID: motionID,
-            code: .motionRuntimeFailed
+            code: .motionRuntimeFailed,
+            owner: nil
         )
     }
 
     package func recordMotionRendererFailure(
         profileID: UUID,
         motionID: UUID,
-        code: MotionFailureCode
+        code: MotionFailureCode,
+        owner: MotionPersistenceOwner?
     ) throws {
         guard code != .cancelled else { throw AvatarProfileStoreError.cancelled }
         var profiles = try readProfiles()
@@ -569,7 +594,7 @@ public actor AvatarProfileStore {
             profiles[profileIndex],
             motionLibrary: library
         )
-        try commit(profiles)
+        try commit(profiles, owner: owner)
     }
 
     package func materializeForRendering(
@@ -1284,6 +1309,23 @@ public actor AvatarProfileStore {
         } catch {
             if !renamed { try? fileOperations.unlink(temporary) }
             throw AvatarProfileStoreError.persistenceFailed
+        }
+    }
+
+    private func commit(
+        _ profiles: [StoredAvatarProfile],
+        owner: MotionPersistenceOwner?
+    ) throws {
+        guard let owner else {
+            try commit(profiles)
+            return
+        }
+        let committed = try owner.performIfCurrent({
+            try commit(profiles)
+            return true
+        })
+        guard committed == true else {
+            throw CancellationError()
         }
     }
 

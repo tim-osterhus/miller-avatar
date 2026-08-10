@@ -238,6 +238,287 @@ import Testing
     }
 
     @Test
+    func motionSuccessResetsOnlyTheAcceptedProfilesMotionFailureCount() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = makeMotionProfileStore(root: root)
+        let profile = try await fixture.store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let motion = try await fixture.store.importMotion(
+            profileID: profile.id,
+            at: root.appendingPathComponent("motion.vrma"),
+            displayName: "Idle"
+        )
+        try await fixture.store.bindMotion(
+            profileID: profile.id,
+            role: .idle,
+            motionID: motion.id
+        )
+
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        let loaded = try await loadMotionProfile(
+            surface: surface,
+            driver: driver,
+            store: fixture.store,
+            profileID: profile.id
+        )
+        let failed = MotionStatusPayload(
+            profileRevision: loaded.loadPayload.profileRevision,
+            modelToken: loaded.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )
+        driver.emitObservation(.motionStatus(failed), for: try #require(driver.sessionID))
+        let recordedFailure = try await waitForMotion(
+            store: fixture.store,
+            profileID: profile.id,
+            motionID: motion.id,
+            failures: 1
+        )
+        #expect(recordedFailure.lastFailure == .motionRuntimeFailed)
+
+        driver.emitObservation(.motionStatus(.init(
+            profileRevision: loaded.loadPayload.profileRevision,
+            modelToken: loaded.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .ready,
+            motionCode: nil
+        )), for: try #require(driver.sessionID))
+        let reset = try await waitForMotion(
+            store: fixture.store,
+            profileID: profile.id,
+            motionID: motion.id,
+            failures: 0
+        )
+        #expect(reset.lastFailure == nil)
+        surface.dispose()
+    }
+
+    @Test
+    func multiplyBoundMotionFailurePersistsOnceAndKeepsModelLive() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = makeMotionProfileStore(root: root)
+        let profile = try await fixture.store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let motion = try await fixture.store.importMotion(
+            profileID: profile.id,
+            at: root.appendingPathComponent("motion.vrma"),
+            displayName: "Shared"
+        )
+        for role in [AvatarMotionRole.idle, .thinking] {
+            try await fixture.store.bindMotion(
+                profileID: profile.id,
+                role: role,
+                motionID: motion.id
+            )
+        }
+
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        var observedMotionStatuses = 0
+        surface.onObservation = { observation in
+            if case .motionStatus = observation {
+                observedMotionStatuses += 1
+            }
+        }
+        let loaded = try await loadMotionProfile(
+            surface: surface,
+            driver: driver,
+            store: fixture.store,
+            profileID: profile.id
+        )
+        let sessionID = try #require(driver.sessionID)
+        for role in [AvatarMotionRole.idle, .thinking] {
+            driver.emitObservation(.motionStatus(.init(
+                profileRevision: loaded.loadPayload.profileRevision,
+                modelToken: loaded.model.token,
+                motionToken: fixture.motionToken,
+                role: role,
+                status: .runtimeFailed,
+                motionCode: .motionRuntimeFailed
+            )), for: sessionID)
+        }
+
+        let recorded = try await waitForMotion(
+            store: fixture.store,
+            profileID: profile.id,
+            motionID: motion.id,
+            failures: 1
+        )
+        #expect(recorded.lastFailure == .motionRuntimeFailed)
+        #expect(observedMotionStatuses == 2)
+        #expect(!surface.snapshot.fallbackVisible)
+        surface.dispose()
+    }
+
+    @Test
+    func staleReplacedSurfaceCallbacksDoNotMutateTheReplacementAndDisposeIsSafe() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = makeMotionProfileStore(root: root)
+        let profileA = try await fixture.store.importModel(
+            at: root.appendingPathComponent("model-a.vrm"),
+            displayName: "A"
+        )
+        let motionA = try await fixture.store.importMotion(
+            profileID: profileA.id,
+            at: root.appendingPathComponent("motion-a.vrma"),
+            displayName: "A motion"
+        )
+        try await fixture.store.bindMotion(
+            profileID: profileA.id,
+            role: .idle,
+            motionID: motionA.id
+        )
+        let profileB = try await fixture.store.importModel(
+            at: root.appendingPathComponent("model-b.vrm"),
+            displayName: "B"
+        )
+        let motionB = try await fixture.store.importMotion(
+            profileID: profileB.id,
+            at: root.appendingPathComponent("motion-b.vrma"),
+            displayName: "B motion"
+        )
+        try await fixture.store.bindMotion(
+            profileID: profileB.id,
+            role: .idle,
+            motionID: motionB.id
+        )
+
+        let driverA = RecordingSurfaceDriver()
+        let surfaceA = AvatarSurfaceController(
+            driver: driverA,
+            timer: RecordingSurfaceTimer()
+        )
+        let loadedA = try await loadMotionProfile(
+            surface: surfaceA,
+            driver: driverA,
+            store: fixture.store,
+            profileID: profileA.id
+        )
+        let sessionA = try #require(driverA.sessionID)
+        let failureA = MotionStatusPayload(
+            profileRevision: loadedA.loadPayload.profileRevision,
+            modelToken: loadedA.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )
+        driverA.emitObservation(.motionStatus(failureA), for: sessionA)
+        _ = try await waitForMotion(
+            store: fixture.store,
+            profileID: profileA.id,
+            motionID: motionA.id,
+            failures: 1
+        )
+        surfaceA.dispose()
+
+        let driverB = RecordingSurfaceDriver()
+        let surfaceB = AvatarSurfaceController(
+            driver: driverB,
+            timer: RecordingSurfaceTimer()
+        )
+        let loadedB = try await loadMotionProfile(
+            surface: surfaceB,
+            driver: driverB,
+            store: fixture.store,
+            profileID: profileB.id
+        )
+        let sessionB = try #require(driverB.sessionID)
+        driverB.emitObservation(.motionStatus(.init(
+            profileRevision: loadedB.loadPayload.profileRevision,
+            modelToken: loadedB.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )), for: sessionB)
+        _ = try await waitForMotion(
+            store: fixture.store,
+            profileID: profileB.id,
+            motionID: motionB.id,
+            failures: 1
+        )
+
+        driverA.emitObservation(.motionStatus(failureA), for: sessionA)
+        surfaceA.dispose()
+        let finalA = try await fixture.store.profile(id: profileA.id)
+        let finalB = try await fixture.store.profile(id: profileB.id)
+        #expect(finalA.motions.first(where: { $0.id == motionA.id })?.consecutiveLoadFailures == 1)
+        #expect(finalB.motions.first(where: { $0.id == motionB.id })?.consecutiveLoadFailures == 1)
+        surfaceB.dispose()
+    }
+
+    @Test
+    func rendererReplacementCannotCommitQueuedMotionPersistence() async throws {
+        let fixture = try await prepareQueuedMotionSurface()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let sessionID = try #require(fixture.driver.sessionID)
+        fixture.gate.blockNextRead()
+        fixture.driver.emitObservation(.motionStatus(.init(
+            profileRevision: fixture.loaded.loadPayload.profileRevision,
+            modelToken: fixture.loaded.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )), for: sessionID)
+        try await waitUntil { fixture.gate.didEnter }
+
+        fixture.driver.emitView(WKWebView())
+        fixture.gate.release()
+        try await waitUntil { fixture.gate.didFinish }
+        try await Task.sleep(nanoseconds: 5_000_000)
+
+        let profile = try await fixture.store.profile(id: fixture.profileID)
+        #expect(profile.motions.first(where: { $0.id == fixture.motionID })?.consecutiveLoadFailures == 0)
+        fixture.surface.dispose()
+    }
+
+    @Test
+    func disposalCannotCommitQueuedMotionPersistence() async throws {
+        let fixture = try await prepareQueuedMotionSurface()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let sessionID = try #require(fixture.driver.sessionID)
+        fixture.gate.blockNextRead()
+        fixture.driver.emitObservation(.motionStatus(.init(
+            profileRevision: fixture.loaded.loadPayload.profileRevision,
+            modelToken: fixture.loaded.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )), for: sessionID)
+        try await waitUntil { fixture.gate.didEnter }
+
+        fixture.surface.dispose()
+        fixture.gate.release()
+        try await waitUntil { fixture.gate.didFinish }
+        try await Task.sleep(nanoseconds: 5_000_000)
+
+        let profile = try await fixture.store.profile(id: fixture.profileID)
+        #expect(profile.motions.first(where: { $0.id == fixture.motionID })?.consecutiveLoadFailures == 0)
+    }
+
+    @Test
     func profileLoadDisposalAtThePostAwaitSeamCannotInstallOrSend() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -528,6 +809,94 @@ private final class SurfaceCaptureGate: @unchecked Sendable {
     }
 }
 
+private final class MotionPersistenceReadGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var blocksNextRead = false
+    private var enteredRead = false
+    private var releasedRead = false
+    private var finishedRead = false
+
+    var didEnter: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return enteredRead
+    }
+
+    var didFinish: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finishedRead
+    }
+
+    func blockNextRead() {
+        lock.lock()
+        blocksNextRead = true
+        enteredRead = false
+        releasedRead = false
+        finishedRead = false
+        lock.unlock()
+    }
+
+    func blockIfNeeded() {
+        lock.lock()
+        let shouldBlock = blocksNextRead
+        if shouldBlock {
+            blocksNextRead = false
+            enteredRead = true
+        }
+        lock.unlock()
+
+        guard shouldBlock else { return }
+        while true {
+            lock.lock()
+            let released = releasedRead
+            lock.unlock()
+            if released { break }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        lock.lock()
+        finishedRead = true
+        lock.unlock()
+    }
+
+    func release() {
+        lock.lock()
+        releasedRead = true
+        lock.unlock()
+    }
+}
+
+private func gatedFileOperations(
+    root: URL,
+    gate: MotionPersistenceReadGate
+) -> ProfileStoreFileOperations {
+    ProfileStoreFileOperations(
+        read: { url in
+            gate.blockIfNeeded()
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return try Data(contentsOf: url)
+        },
+        write: { url, data in try data.write(to: url) },
+        fileFsync: { _ in },
+        rename: { source, destination in
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.moveItem(at: source, to: destination)
+        },
+        reopen: { url in
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return try Data(contentsOf: url)
+        },
+        directoryFsync: { _ in },
+        unlink: { url in
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    )
+}
+
 private final class SurfaceSecurityScope: SecurityScopedAccess, @unchecked Sendable {
     func startAccessing(_ url: URL) -> Bool { true }
     func stopAccessing(_ url: URL) {}
@@ -578,6 +947,178 @@ private func makeProfileStore(
         ),
         fileOperations: fileOperations
     )
+}
+
+private struct MotionProfileStoreFixture {
+    let store: AvatarProfileStore
+    let motionToken: UUID
+}
+
+private func makeMotionProfileStore(
+    root: URL,
+    fileOperations: ProfileStoreFileOperations = .production
+) -> MotionProfileStoreFixture {
+    let modelBytes = Data([1, 2, 3, 4])
+    let motionBytes = Data([5, 6, 7, 8])
+    let model = AdmittedAsset(
+        token: UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!,
+        bytes: modelBytes,
+        summary: AssetAdmissionSummary(
+            nodeCount: 1,
+            meshCount: 0,
+            materialCount: 0,
+            imageCount: 0,
+            decodedImagePixels: 0,
+            accessorReferencedBytes: 0,
+            capabilities: AssetAdmissionCapabilities(
+                lookAt: false,
+                springBone: false,
+                mtoonMaterials: 0
+            )
+        )
+    )
+    let motion = AdmittedMotion(
+        token: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+        bytes: motionBytes,
+        summary: MotionAdmissionSummary(
+            nodeCount: 1,
+            channelCount: 1,
+            keyframeScalarValues: 4,
+            durationMilliseconds: 1_000,
+            hasExpressionTracks: false,
+            hasLookAtTrack: false
+        )
+    )
+    let store = AvatarProfileStore(
+        root: root,
+        dependencies: AvatarProfileStoreDependencies(
+            admission: { _ in .admitted(model) },
+            motionAdmission: { _ in .admitted(motion) },
+            bookmarkCreator: { url in Data(url.path.utf8) },
+            bookmarkResolver: { bookmark in
+                guard let path = String(data: bookmark, encoding: .utf8) else {
+                    throw AvatarProfileStoreError.bookmarkResolutionFailed
+                }
+                return AvatarResolvedBookmark(
+                    url: URL(fileURLWithPath: path),
+                    isStale: false
+                )
+            },
+            securityScope: SurfaceSecurityScope(),
+            capture: { url, _ in
+                url.pathExtension == "vrma" ? motionBytes : modelBytes
+            }
+        ),
+        fileOperations: fileOperations
+    )
+    return MotionProfileStoreFixture(store: store, motionToken: motion.token)
+}
+
+@MainActor
+private func prepareQueuedMotionSurface() async throws -> (
+    root: URL,
+    store: AvatarProfileStore,
+    gate: MotionPersistenceReadGate,
+    surface: AvatarSurfaceController,
+    driver: RecordingSurfaceDriver,
+    loaded: LoadedAvatarProfile,
+    profileID: UUID,
+    motionID: UUID,
+    motionToken: UUID
+) {
+    let root = try temporaryDirectory()
+    let gate = MotionPersistenceReadGate()
+    let fixture = makeMotionProfileStore(
+        root: root,
+        fileOperations: gatedFileOperations(root: root, gate: gate)
+    )
+    let profile = try await fixture.store.importModel(
+        at: root.appendingPathComponent("model.vrm"),
+        displayName: "Avatar"
+    )
+    let motion = try await fixture.store.importMotion(
+        profileID: profile.id,
+        at: root.appendingPathComponent("motion.vrma"),
+        displayName: "Idle"
+    )
+    try await fixture.store.bindMotion(
+        profileID: profile.id,
+        role: .idle,
+        motionID: motion.id
+    )
+    let driver = RecordingSurfaceDriver()
+    let surface = AvatarSurfaceController(
+        driver: driver,
+        timer: RecordingSurfaceTimer()
+    )
+    let loaded = try await loadMotionProfile(
+        surface: surface,
+        driver: driver,
+        store: fixture.store,
+        profileID: profile.id
+    )
+    return (
+        root,
+        fixture.store,
+        gate,
+        surface,
+        driver,
+        loaded,
+        profile.id,
+        motion.id,
+        fixture.motionToken
+    )
+}
+
+@MainActor
+private func loadMotionProfile(
+    surface: AvatarSurfaceController,
+    driver: RecordingSurfaceDriver,
+    store: AvatarProfileStore,
+    profileID: UUID
+) async throws -> LoadedAvatarProfile {
+    surface.start()
+    let sessionID = try #require(driver.sessionID)
+    driver.emitObservation(.wrapperReady, for: sessionID)
+    driver.emitObservation(.rendererReady, for: sessionID)
+    guard await surface.load(profileID: profileID, from: store) == .accepted else {
+        throw SurfaceTestFailure.loadRejected
+    }
+    let loaded = try #require(driver.installedProfiles.last)
+    driver.emitObservation(.profileModelLoaded(.init(
+        profileRevision: loaded.loadPayload.profileRevision,
+        modelToken: loaded.model.token,
+        capabilities: .init(
+            aa: true,
+            lookAt: false,
+            springBone: false,
+            mtoonMaterials: 0
+        )
+    )), for: sessionID)
+    driver.emitObservation(.firstFrame(
+        profileRevision: loaded.loadPayload.profileRevision,
+        modelToken: loaded.model.token,
+        counters: .zero
+    ), for: sessionID)
+    return loaded
+}
+
+private func waitForMotion(
+    store: AvatarProfileStore,
+    profileID: UUID,
+    motionID: UUID,
+    failures: Int
+) async throws -> AvatarMotionSummary {
+    for _ in 0..<2_000 {
+        let profile = try await store.profile(id: profileID)
+        if let motion = profile.motions.first(where: { $0.id == motionID }),
+           motion.consecutiveLoadFailures == failures
+        {
+            return motion
+        }
+        try await Task.sleep(nanoseconds: 1_000_000)
+    }
+    throw SurfaceTestFailure.timeout
 }
 
 private func loadProfiles(_ commands: [BridgeCommand]) -> [LoadProfilePayload] {
@@ -656,6 +1197,7 @@ private func waitUntil(
 
 private enum SurfaceTestFailure: Error {
     case timeout
+    case loadRejected
 }
 
 private final class RecordingSurfaceTimer: AvatarSurfaceTimer {

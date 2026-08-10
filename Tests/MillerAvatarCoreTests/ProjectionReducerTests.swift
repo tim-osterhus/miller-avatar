@@ -70,6 +70,38 @@ import Testing
         #expect(delayed.effects.isEmpty)
     }
 
+    @Test func succeededIsAPlaybackRevokingTerminalPhase() {
+        guard let succeeded = PresentationPhase(rawValue: "succeeded") else {
+            Issue.record("succeeded is missing from the closed presentation vocabulary")
+            return
+        }
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(cue(playback: playbackP, index: 1))).state
+
+        let result = reduce(
+            state,
+            .project(ProjectPhasePayload(
+                projectionSequence: 2,
+                generationID: generationA,
+                phase: succeeded,
+                playbackID: nil
+            ))
+        )
+
+        #expect(result.state.phase == succeeded)
+        #expect(result.state.mouthScalar == 0)
+        #expect(result.effects.contains(.clearMouth))
+        #expect(result.effects.contains(.applyProjection(.init(
+            projectionSequence: 2,
+            generationID: generationA,
+            phase: succeeded,
+            playbackID: nil
+        ))))
+    }
+
     @Test func suspensionSkipsCuesAndResumeRequiresOneReconciliation() {
         var state = reduce(
             ProjectionState(),
@@ -260,7 +292,7 @@ import Testing
         )
         #expect(root["schema"] as? String == "miller-avatar.integration-fixture/v1")
         let operations = try arrayOfObjects(root["operations"])
-        #expect(operations.count == 17)
+        #expect(operations.count == 18)
 
         var state = ProjectionState()
         for operation in operations {

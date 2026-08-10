@@ -77,6 +77,10 @@ public struct HostSnapshot: Equatable, Sendable {
 package final class HostOrchestrator {
     package var onChange: ((HostSnapshot) -> Void)?
     package var onObservation: ((HostObservation) -> Void)?
+    package var onMotionFailure: ((UUID, MotionFailureCode) -> Void)?
+    package var onMotionSuccess: ((UUID) -> Void)?
+    package private(set) var motionFailureCounts: [UUID: Int] = [:]
+    package private(set) var quarantinedMotionIDs: Set<UUID> = []
 
     package private(set) var snapshot: HostSnapshot
     private let driver: any HostRendererDriving
@@ -84,8 +88,12 @@ package final class HostOrchestrator {
     private var deadline: Deadline?
     private var activeAssetToken: UUID?
     private var activeProfilePayload: LoadProfilePayload?
+    private var activeMotionIDs: [UUID: UUID] = [:]
+    private var unavailableMotionTokens: Set<UUID> = []
     private var hasProfileModelLoaded = false
     private var motionStatuses: [AvatarMotionRole: MotionStatus] = [:]
+    private var accountedMotionFailures: Set<MotionAccountingKey> = []
+    private var accountedMotionSuccesses: Set<MotionAccountingKey> = []
     private var consecutiveFailures = 0
     private var projectionState = ProjectionState()
     private var visibilityState = VisibilityCoordinatorState(
@@ -138,13 +146,28 @@ package final class HostOrchestrator {
         let mutation = beginMutation()
         guard snapshot.lifecycle == .rendererReady else { return .notReady }
         let sessionID = snapshot.sessionID
-        guard driver.install(profile) else { return .notReady }
+        let effectiveProfile = profileWithQuarantinedMotionsRejected(profile)
+        guard driver.install(effectiveProfile) else { return .notReady }
+        for binding in effectiveProfile.motionBindings.values {
+            guard case .ready(let motionID, let motion) = binding else { continue }
+            activeMotionIDs[motion.token] = motionID
+        }
         guard isCurrentMutation(mutation),
               snapshot.lifecycle == .rendererReady,
               snapshot.sessionID == sessionID,
-              beginAssetLoad(profile.loadPayload)
-        else { return .notReady }
+              beginAssetLoad(effectiveProfile.loadPayload)
+        else {
+            activeMotionIDs = [:]
+            return .notReady
+        }
         return .accepted
+    }
+
+    package func resetMotionQuarantine(motionID: UUID) {
+        motionFailureCounts[motionID] = 0
+        quarantinedMotionIDs.remove(motionID)
+        accountedMotionFailures = accountedMotionFailures.filter { $0.motionID != motionID }
+        accountedMotionSuccesses = accountedMotionSuccesses.filter { $0.motionID != motionID }
     }
 
     @discardableResult
@@ -155,6 +178,8 @@ package final class HostOrchestrator {
         else { return .notReady }
         let sessionID = snapshot.sessionID
         testDriver.installForTesting(assetToken: assetToken, bytes: bytes)
+        activeMotionIDs = [:]
+        unavailableMotionTokens = []
         var bindings: [AvatarMotionRole: MotionBindingPayload] = [:]
         for role in AvatarMotionRole.allCases { bindings[role] = .missing }
         guard isCurrentMutation(mutation),
@@ -177,6 +202,7 @@ package final class HostOrchestrator {
         activeProfilePayload = profile
         hasProfileModelLoaded = false
         motionStatuses = [:]
+        unavailableMotionTokens = []
         guard applyLifecycle(.beginAssetLoad),
               isCurrentMutation(mutation),
               snapshot.sessionID == sessionID,
@@ -310,6 +336,8 @@ package final class HostOrchestrator {
         let sessionID = UUID()
         activeAssetToken = nil
         activeProfilePayload = nil
+        activeMotionIDs = [:]
+        unavailableMotionTokens = []
         hasProfileModelLoaded = false
         motionStatuses = [:]
         projectionState = ProjectionState(reducedMotion: snapshot.reducedMotion)
@@ -401,7 +429,18 @@ package final class HostOrchestrator {
                       || snapshot.lifecycle == .liveSuspended
             else { return }
             motionStatuses[payload.role] = payload.status
+            if let motionToken = payload.motionToken {
+                switch payload.status {
+                case .loadFailed, .timedOut, .runtimeFailed:
+                    unavailableMotionTokens.insert(motionToken)
+                case .ready:
+                    unavailableMotionTokens.remove(motionToken)
+                case .missing, .rejected:
+                    break
+                }
+            }
             update(motionStatuses: motionStatuses)
+            accountMotionStatus(payload, sessionID: sessionID)
         case .motionActive(let payload):
             guard isCurrentMotionIdentity(payload),
                   snapshot.lifecycle == .loadingAsset
@@ -469,6 +508,8 @@ package final class HostOrchestrator {
         guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
         activeAssetToken = nil
         activeProfilePayload = nil
+        activeMotionIDs = [:]
+        unavailableMotionTokens = []
         hasProfileModelLoaded = false
         motionStatuses = [:]
         update(
@@ -486,6 +527,8 @@ package final class HostOrchestrator {
         deadline = nil
         activeAssetToken = nil
         activeProfilePayload = nil
+        activeMotionIDs = [:]
+        unavailableMotionTokens = []
         hasProfileModelLoaded = false
         motionStatuses = [:]
         if snapshot.lifecycle != .disposing {
@@ -513,14 +556,22 @@ package final class HostOrchestrator {
     @discardableResult
     private func applyLifecycle(_ input: LifecycleInput) -> Bool {
         let mutation = mutationEpoch
-        let result = LifecycleReducer.reduce(state: snapshot.lifecycle, input: input)
-        update(lifecycle: result.state)
-        guard isCurrentMutation(mutation) else { return false }
-        visibilityState = VisibilityCoordinator.reduce(
+        let sessionID = snapshot.sessionID
+        let lifecycle = LifecycleReducer.reduce(state: snapshot.lifecycle, input: input).state
+        let result = VisibilityCoordinator.reduce(
             state: visibilityState,
-            input: .lifecycle(result.state)
-        ).state
-        return true
+            input: .lifecycle(lifecycle)
+        )
+        visibilityState = result.state
+        update(
+            lifecycle: result.state.lifecycle,
+            visibility: result.state.desired
+        )
+        return executeVisibilityEffects(
+            result.effects,
+            mutation: mutation,
+            sessionID: sessionID
+        )
     }
 
     private func driveVisibility(_ input: VisibilityInput) {
@@ -529,21 +580,35 @@ package final class HostOrchestrator {
         let result = VisibilityCoordinator.reduce(state: visibilityState, input: input)
         visibilityState = result.state
         update(lifecycle: result.state.lifecycle, visibility: result.state.desired)
+        _ = executeVisibilityEffects(
+            result.effects,
+            mutation: mutation,
+            sessionID: sessionID
+        )
+    }
+
+    @discardableResult
+    private func executeVisibilityEffects(
+        _ effects: [VisibilityEffect],
+        mutation: UInt64,
+        sessionID: UUID?
+    ) -> Bool {
         guard isCurrentMutation(mutation),
               snapshot.sessionID == sessionID
-        else { return }
-        for effect in result.effects {
+        else { return false }
+        for effect in effects {
             guard isCurrentMutation(mutation),
                   snapshot.sessionID == sessionID
-            else { return }
+            else { return false }
             switch effect {
             case .sendVisibility(_, let visibility):
                 driver.send(.setVisibility(presentation(visibility)))
             case .requestDisposal(_, let reason):
                 dispose(reason: reason)
-                return
+                return false
             }
         }
+        return true
     }
 
     private func execute(_ effects: [ProjectionEffect]) {
@@ -694,8 +759,55 @@ package final class HostOrchestrator {
             let validRole = payload.mode == .loop
                 ? role.isSteady
                 : (role == .success || role == .failure)
-            return validRole && binding.status == .ready && binding.token == token
+            return validRole
+                && binding.status == .ready
+                && binding.token == token
+                && !unavailableMotionTokens.contains(token)
         }
+    }
+
+    private func accountMotionStatus(
+        _ payload: MotionStatusPayload,
+        sessionID: UUID
+    ) {
+        guard let motionToken = payload.motionToken else { return }
+        let motionID = activeMotionIDs[motionToken] ?? motionToken
+        let key = MotionAccountingKey(sessionID: sessionID, motionID: motionID)
+        switch payload.status {
+        case .ready:
+            guard accountedMotionSuccesses.insert(key).inserted else { return }
+            let hadFailures = (motionFailureCounts[motionID] ?? 0) > 0
+                || quarantinedMotionIDs.contains(motionID)
+            motionFailureCounts[motionID] = 0
+            quarantinedMotionIDs.remove(motionID)
+            if hadFailures { onMotionSuccess?(motionID) }
+        case .loadFailed, .timedOut, .runtimeFailed:
+            guard accountedMotionFailures.insert(key).inserted else { return }
+            let next = min(3, (motionFailureCounts[motionID] ?? 0) + 1)
+            motionFailureCounts[motionID] = next
+            if next == 3 { quarantinedMotionIDs.insert(motionID) }
+            if let code = payload.motionCode {
+                onMotionFailure?(motionID, code)
+            }
+        case .missing, .rejected:
+            break
+        }
+    }
+
+    private func profileWithQuarantinedMotionsRejected(
+        _ profile: LoadedAvatarProfile
+    ) -> LoadedAvatarProfile {
+        let bindings = profile.motionBindings.mapValues { binding in
+            guard case .ready(let motionID, _) = binding,
+                  quarantinedMotionIDs.contains(motionID)
+            else { return binding }
+            return .rejected(motionID: motionID, reason: .quarantined)
+        }
+        return LoadedAvatarProfile(
+            profileRevision: profile.profileRevision,
+            model: profile.model,
+            motionBindings: bindings
+        )
     }
 
     private func presentation(_ visibility: EffectiveVisibility) -> PresentationVisibility {
@@ -718,6 +830,11 @@ package final class HostOrchestrator {
         enum Kind { case wrapper, renderer, load }
         let kind: Kind
         let instant: TimeInterval
+    }
+
+    private struct MotionAccountingKey: Hashable {
+        let sessionID: UUID
+        let motionID: UUID
     }
 
     private enum OptionalUpdate<Value> {

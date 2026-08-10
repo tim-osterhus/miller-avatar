@@ -281,11 +281,14 @@ export class PresentationObservationDecoder {
         );
         return;
       case "motion_status":
-        this.requireProfileLoadCause(causedBySequence);
+        if (observation.payload.status !== "runtime_failed") {
+          this.requireProfileLoadCause(causedBySequence);
+        }
         this.requireIdentity(
           observation.payload.profile_revision,
           observation.payload.model_token,
           causedBySequence,
+          false,
         );
         this.requireMotionIdentity(
           observation.payload.role,
@@ -304,6 +307,7 @@ export class PresentationObservationDecoder {
           observation.payload.profile_revision,
           observation.payload.model_token,
           causedBySequence,
+          false,
         );
         this.requireActiveMotionIdentity(observation.payload);
         return;
@@ -324,14 +328,22 @@ export class PresentationObservationDecoder {
     profileRevision: number,
     modelToken: string,
     causedBySequence: number | null,
+    requiresProfileLoadCause = true,
   ): void {
     if (
-      causedBySequence === null
+      (requiresProfileLoadCause && !this.profileLoadCauseMatches(causedBySequence))
+      || causedBySequence === null
       || this.activeProfileRevision !== profileRevision
       || this.activeModelToken !== modelToken
     ) {
       fail("stale_session");
     }
+  }
+
+  private profileLoadCauseMatches(causedBySequence: number | null): boolean {
+    return causedBySequence !== null
+      && this.activeProfileLoadSequence !== undefined
+      && causedBySequence === this.activeProfileLoadSequence;
   }
 
   private requireProfileLoadCause(causedBySequence: number | null): void {
@@ -960,7 +972,7 @@ function requirePhaseIdentities(
     if (generationID === null || playbackID === null) fail("invalid_value");
     return;
   }
-  if (["thinking", "responding", "stopped", "failed"].includes(phase)) {
+  if (["thinking", "responding", "succeeded", "stopped", "failed"].includes(phase)) {
     if (generationID === null || playbackID !== null) fail("invalid_value");
     return;
   }

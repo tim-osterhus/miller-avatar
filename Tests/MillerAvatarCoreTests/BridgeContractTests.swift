@@ -25,11 +25,12 @@ import Testing
 
     @Test func everyValidFixtureIsAccepted() throws {
         let fixtures = try fixtureURLs(in: "valid")
-        #expect(fixtures.count == 18)
+        #expect(fixtures.count == 19)
         #expect(
             Set(fixtures.map { $0.deletingPathExtension().lastPathComponent })
                 == [
                 "command-configure", "command-load-profile", "command-project-phase",
+                "command-project-succeeded",
                 "command-set-visibility", "command-set-policy", "command-set-mouth",
                 "command-reset", "command-dispose", "observation-wrapper-ready",
                 "observation-renderer-ready", "observation-profile-model-loaded",
@@ -506,6 +507,58 @@ import Testing
         #expect(decoded == payload)
     }
 
+    @Test func succeededPhaseIsAcceptedByTheSwiftCommandValidator() {
+        #expect(throws: Never.self) {
+            try commandDecoder().decode(command(
+                type: "project_phase",
+                payload: [
+                    "projection_sequence": 1,
+                    "generation_id": Self.generationID,
+                    "phase": "succeeded",
+                    "playback_id": NSNull(),
+                ]
+            ))
+        }
+    }
+
+    @Test func runtimeMotionFailureMayCarryItsActiveProjectionCause() throws {
+        let expectedProfile = LoadProfilePayload(
+            profileRevision: 1,
+            modelToken: UUID(uuidString: Self.modelToken)!,
+            motionBindings: Dictionary(uniqueKeysWithValues: AvatarMotionRole.allCases.map { role in
+                (role, role == .idle ? .ready(token: UUID(uuidString: Self.motionToken)!) : .missing)
+            })
+        )
+        let decoder = PresentationObservationDecoder(
+            sessionID: UUID(uuidString: Self.sessionID)!,
+            expectedProfile: expectedProfile,
+            expectedProfileLoadSequence: 1
+        )
+        _ = try decoder.decode(observation(
+            sequence: 1,
+            causedBySequence: 1,
+            type: "profile_model_loaded",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "capabilities": ["aa": true, "look_at": true, "spring_bone": false, "mtoon_materials": 1],
+            ]
+        ))
+        _ = try decoder.decode(observation(
+            sequence: 2,
+            causedBySequence: 9,
+            type: "motion_status",
+            payload: [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "motion_token": Self.motionToken,
+                "role": "idle",
+                "status": "runtime_failed",
+                "motion_code": "motion_runtime_failed",
+            ]
+        ))
+    }
+
     @Test func reconcilePayloadRetainsProjectionSequenceAndClearsWebLeaseHistory() throws {
         let decoder = commandDecoder()
         _ = try decoder.decode(command(
@@ -563,7 +616,7 @@ import Testing
             case .speaking:
                 generationID = Self.generationID
                 playbackID = Self.playbackID
-            case .thinking, .responding, .stopped, .failed:
+            case .thinking, .responding, .succeeded, .stopped, .failed:
                 generationID = Self.generationID
                 playbackID = NSNull()
             case .idle, .listening, .transcribing:

@@ -28,6 +28,25 @@ import MillerAvatarCore
         #expect(!host.snapshot.fallbackVisible)
     }
 
+    @Test
+    func preLiveOcclusionSendsItsFirstVisibilityCommandWhenTheModelBecomesLive() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        host.setVisibility(.occluded)
+        driver.observe(session, .rendererReady)
+        host.load(assetToken: UUID())
+        driver.observeFirstFrame(session, assetToken: try! #require(driver.installedTokens.last))
+
+        #expect(driver.commands.filter {
+            if case .setVisibility(.occluded) = $0 { return true }
+            return false
+        }.count == 1)
+    }
+
     @Test func startupAndLoadDeadlinesFailClosed() {
         let driver = RecordingHostDriver()
         var now = 0.0
@@ -236,6 +255,176 @@ import MillerAvatarCore
         #expect(driver.disposals.isEmpty)
     }
 
+    @Test
+    func motionFailureAccountingIsOncePerSessionAndMotionAndReadyResetsOnlyThatMotion() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        let motionID = UUID()
+        let modelToken = UUID()
+        let prepared = preparedProfile(
+            modelToken: modelToken,
+            motionID: motionID,
+            roles: [.idle, .thinking]
+        )
+        var failures: [(UUID, MotionFailureCode)] = []
+        var successes: [UUID] = []
+        host.onMotionFailure = { failures.append(($0, $1)) }
+        host.onMotionSuccess = { successes.append($0) }
+
+        host.startRenderer()
+        var session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        #expect(host.load(prepared) == .accepted)
+        driver.observeFirstFrame(session, assetToken: modelToken)
+        let payload = prepared.loadPayload
+        let failed = MotionStatusPayload(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )
+        driver.observe(session, .motionStatus(failed))
+        driver.observe(session, .motionStatus(failed))
+        driver.observe(session, .motionStatus(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .thinking,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )))
+
+        #expect(host.motionFailureCounts[motionID] == 1)
+        #expect(failures.map(\.0) == [motionID])
+        #expect(host.snapshot.motionStatuses[.idle] == .runtimeFailed)
+        #expect(host.snapshot.motionStatuses[.thinking] == .runtimeFailed)
+        #expect(!host.snapshot.fallbackVisible)
+
+        let beforeStale = host.snapshot
+        driver.observe(session, .motionStatus(.init(
+            profileRevision: payload.profileRevision + 1,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )))
+        driver.observe(session, .motionActive(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: UUID(),
+            motionToken: motionID,
+            role: .idle,
+            mode: .loop
+        )))
+        driver.observe(session, .motionActive(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .idle,
+            mode: .loop
+        )))
+        #expect(host.snapshot == beforeStale)
+
+        driver.observe(session, .motionStatus(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .idle,
+            status: .ready,
+            motionCode: nil
+        )))
+        driver.observe(session, .motionStatus(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .thinking,
+            status: .ready,
+            motionCode: nil
+        )))
+        #expect(host.motionFailureCounts[motionID] == 0)
+        #expect(successes == [motionID])
+
+        for _ in 0..<3 {
+            host.dispose()
+            host.startRenderer()
+            session = try! #require(host.snapshot.sessionID)
+            driver.observe(session, .wrapperReady)
+            driver.observe(session, .rendererReady)
+            #expect(host.load(prepared) == .accepted)
+            driver.observeFirstFrame(session, assetToken: modelToken)
+            driver.observe(session, .motionStatus(failed))
+        }
+
+        #expect(host.motionFailureCounts[motionID] == 3)
+        #expect(host.quarantinedMotionIDs == Set([motionID]))
+        #expect(failures.count == 4)
+        #expect(host.snapshot.lifecycle == .live)
+        #expect(!host.snapshot.fallbackVisible)
+
+        host.dispose()
+        host.startRenderer()
+        session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        #expect(host.load(prepared) == .accepted)
+        guard case .loadProfile(let quarantinedProfile) = driver.commands.last else {
+            Issue.record("expected a quarantined load profile")
+            return
+        }
+        #expect(quarantinedProfile.motionBindings[.idle]?.status == .rejected)
+        #expect(quarantinedProfile.motionBindings[.thinking]?.status == .rejected)
+
+        host.dispose()
+        host.resetMotionQuarantine(motionID: motionID)
+        host.startRenderer()
+        session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        #expect(host.load(prepared) == .accepted)
+        guard case .loadProfile(let resetProfile) = driver.commands.last else {
+            Issue.record("expected a reset load profile")
+            return
+        }
+        #expect(resetProfile.motionBindings[.idle]?.status == .ready)
+    }
+
+    @Test
+    func succeededProjectionRemainsLiveAndRevokesPlaybackIdentity() {
+        guard let succeeded = PresentationPhase(rawValue: "succeeded") else {
+            Issue.record("succeeded is missing from the closed presentation vocabulary")
+            return
+        }
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        let modelToken = UUID()
+        #expect(host.load(assetToken: modelToken) == .accepted)
+        driver.observeFirstFrame(session, assetToken: modelToken)
+        let generation = UUID()
+        host.project(ProjectPhasePayload(
+            projectionSequence: 1,
+            generationID: generation,
+            phase: succeeded,
+            playbackID: nil
+        ))
+
+        #expect(host.snapshot.lifecycle == .live)
+        #expect(host.snapshot.phase == succeeded)
+        #expect(host.snapshot.fallbackVisible == false)
+        #expect(driver.commands.contains(.projectPhase(
+            sequence: 1,
+            generationID: generation,
+            phase: succeeded,
+            playbackID: nil
+        )))
+    }
+
     @Test func reducedMotionAndVisibilityFlowThroughPureReducerCommands() {
         let driver = RecordingHostDriver()
         let host = HostOrchestrator(driver: driver)
@@ -410,6 +599,50 @@ import MillerAvatarCore
             if case .reset = $0 { return true }
             return false
         }.count == 1)
+    }
+
+    private func preparedProfile(
+        modelToken: UUID,
+        motionID: UUID,
+        roles: [AvatarMotionRole]
+    ) -> LoadedAvatarProfile {
+        let motion = AdmittedMotion(
+            token: motionID,
+            bytes: Data([1]),
+            summary: MotionAdmissionSummary(
+                nodeCount: 1,
+                channelCount: 1,
+                keyframeScalarValues: 4,
+                durationMilliseconds: 1,
+                hasExpressionTracks: false,
+                hasLookAtTrack: false
+            )
+        )
+        var bindings: [AvatarMotionRole: LoadedMotionBinding] = [:]
+        for role in roles {
+            bindings[role] = .ready(motionID: motionID, motion: motion)
+        }
+        return LoadedAvatarProfile(
+            profileRevision: 1,
+            model: AdmittedAsset(
+                token: modelToken,
+                bytes: Data(),
+                summary: AssetAdmissionSummary(
+                    nodeCount: 0,
+                    meshCount: 0,
+                    materialCount: 0,
+                    imageCount: 0,
+                    decodedImagePixels: 0,
+                    accessorReferencedBytes: 0,
+                    capabilities: AssetAdmissionCapabilities(
+                        lookAt: false,
+                        springBone: false,
+                        mtoonMaterials: 0
+                    )
+                )
+            ),
+            motionBindings: bindings
+        )
     }
 }
 

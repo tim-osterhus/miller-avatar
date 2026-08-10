@@ -8,6 +8,7 @@ import {
   type RendererBackend,
 } from "../src/bridge.js";
 import type { PresentationEffect } from "../src/presentation.js";
+import type { MotionActiveEvent, MotionFault } from "../src/motion-controller.js";
 
 const session = "11111111-1111-4111-8111-111111111111";
 const model = "22222222-2222-4222-8222-222222222222";
@@ -69,6 +70,32 @@ test("fake backend proves scheduling, suspension, exact resume deltas, and dispo
   assert.equal(backend.disposals, 1);
   assert.equal(scheduler.pending, 0);
   assert.equal(messages.at(-1)?.type, "disposed");
+});
+
+test("enabling Reduced Motion while live renders one zero-delta static frame", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2));
+  await core.accept(command(3, "project_phase", {
+    projection_sequence: 1,
+    generation_id: null,
+    phase: "listening",
+    playback_id: null,
+  }));
+  backend.events.length = 0;
+
+  await core.accept(command(4, "set_policy", { reduced_motion: true }));
+
+  assert.deepEqual(backend.events, [
+    "apply:set_reduced_motion",
+    "apply:clear_mouth",
+    "update:0",
+    "render",
+  ]);
+  assert.equal(scheduler.pending, 0);
 });
 
 test("terminal presentation phases render without re-running first-frame proof", async () => {
@@ -210,6 +237,55 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
   });
 });
 
+test("resume applies an authoritative reset reconciliation before unsuspending motion", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  const generation = "33333333-3333-4333-8333-333333333333";
+  const playback = "44444444-4444-4444-8444-444444444444";
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2));
+  await core.accept(command(3, "project_phase", {
+    projection_sequence: 1,
+    generation_id: generation,
+    phase: "speaking",
+    playback_id: playback,
+  }));
+  await core.accept(command(4, "set_visibility", { visibility: "occluded" }));
+  await core.accept(command(5, "reset", { generation_id: generation, reason: "cancelled" }));
+
+  backend.events.length = 0;
+  await core.accept(command(6, "set_visibility", { visibility: "visible" }));
+
+  assert.deepEqual(backend.events.slice(0, 2), ["apply:reconcile", "setSuspended:false"]);
+});
+
+test("reset-origin motion activity is suppressed when it has no projection cause", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2));
+  await core.accept(command(3, "project_phase", {
+    projection_sequence: 1,
+    generation_id: null,
+    phase: "idle",
+    playback_id: null,
+  }));
+  await core.accept(command(4, "reset", { generation_id: null, reason: "operator" }));
+
+  const resetApply = backend.applyCauses.find((entry) => entry.type === "reset");
+  assert.equal(resetApply?.causedBySequence, null);
+  backend.emitMotionActive(null);
+
+  assert.equal(messages.filter((message) => message.type === "motion_active").length, 0);
+});
+
 test("profile load reports only nonterminal missing and rejected bindings", async () => {
   const backend = new FakeBackend();
   const scheduler = new FakeScheduler();
@@ -300,6 +376,29 @@ test("profile motion deadline is nonterminal and classifies every pending role a
       motion_code: "motion_load_timeout",
     });
   }
+  assert.equal(core.snapshot().state, "live");
+  assert.equal(messages.some((entry) => entry.type === "failed"), false);
+});
+
+test("runtime motion faults fan out nonterminal role status without failing the renderer", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(loadProfileCommand(2, {
+    idle: { status: "ready", token: motion },
+  }));
+  backend.emitMotionFault();
+
+  const runtimeFailures = messages.filter((entry) => (
+    entry.type === "motion_status"
+    && (entry.payload as { status: string }).status === "runtime_failed"
+  ));
+  assert.equal(runtimeFailures.length, 1);
+  assert.equal((runtimeFailures[0]?.payload as { role: string }).role, "idle");
   assert.equal(core.snapshot().state, "live");
   assert.equal(messages.some((entry) => entry.type === "failed"), false);
 });
@@ -421,7 +520,11 @@ class FakeBackend implements RendererBackend {
   disposals = 0;
   firstFrameProofs = 0;
   frameRenders = 0;
-  configure(): void {}
+  readonly events: string[] = [];
+  readonly applyCauses: Array<{ type: string; causedBySequence: number | null }> = [];
+  private motionFaultHandler: ((fault: MotionFault) => void) | undefined;
+  private motionActiveHandler: ((event: MotionActiveEvent) => void) | undefined;
+  configure(reducedMotion: boolean): void { this.events.push(`configure:${reducedMotion}`); }
   async loadModel(url: string, _signal: AbortSignal) {
     this.loadedURL = url;
     return { capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 2 } };
@@ -434,9 +537,42 @@ class FakeBackend implements RendererBackend {
     this.firstFrameProofs += 1;
     return { viewport_width: 800, viewport_height: 600, visible_meshes: 1, decoded_textures: 2, material_bindings: 2, alpha_probe_pixels: 5 };
   }
-  renderFrame(): void { this.frameRenders += 1; }
-  update(): void {}
-  apply(_effect: PresentationEffect): void {}
+  renderFrame(): void { this.events.push("render"); this.frameRenders += 1; }
+  update(delta: number): void { this.events.push(`update:${delta}`); }
+  apply(effect: PresentationEffect, causedBySequence?: number): void {
+    this.events.push(`apply:${effect.type}`);
+    this.applyCauses.push({ type: effect.type, causedBySequence: causedBySequence ?? null });
+  }
+  setSuspended(suspended: boolean): void { this.events.push(`setSuspended:${suspended}`); }
+  setMotionFaultHandler(handler: (fault: MotionFault) => void): void {
+    this.motionFaultHandler = handler;
+  }
+  setMotionActiveHandler(handler: (event: MotionActiveEvent) => void): void {
+    this.motionActiveHandler = handler;
+  }
+  emitMotionFault(): void {
+    this.motionFaultHandler?.({
+      sessionID: session,
+      profileRevision: 1,
+      modelToken: model,
+      generation: 1,
+      motionToken: motion,
+      code: "motion_runtime_failed",
+      causedBySequence: null,
+    });
+  }
+  emitMotionActive(causedBySequence: number | null): void {
+    this.motionActiveHandler?.({
+      sessionID: session,
+      profileRevision: 1,
+      modelToken: model,
+      generation: 1,
+      motionToken: null,
+      role: null,
+      mode: "rest",
+      causedBySequence,
+    });
+  }
   startClock(): void {}
   stopClock(): void {}
   dispose(): void { this.disposals += 1; }

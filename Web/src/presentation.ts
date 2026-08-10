@@ -107,6 +107,7 @@ function project(
   const replacesLease = value.generation_id !== state.generationID
     || value.playback_id !== state.playbackID
     || value.phase === "stopped"
+    || value.phase === "succeeded"
     || value.phase === "failed";
   let next: PresentationState = {
     ...state,
@@ -225,7 +226,7 @@ function clearLeaseOutput(state: PresentationState): PresentationState {
 
 function validPhase(phase: PresentationPhase, generationID: string | null, playbackID: string | null): boolean {
   if (phase === "speaking") return generationID !== null && playbackID !== null;
-  if (["thinking", "responding", "stopped", "failed"].includes(phase)) {
+  if (["thinking", "responding", "succeeded", "stopped", "failed"].includes(phase)) {
     return generationID !== null && playbackID === null;
   }
   return generationID === null && playbackID === null;

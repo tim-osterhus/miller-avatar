@@ -100,7 +100,7 @@ test("synthetic phases remain visible and use only bounded standard expressions"
     expression: "sad",
     weight: 0.55,
   });
-  for (const phase of ["idle", "listening", "transcribing", "responding", "speaking", "stopped"] as const) {
+  for (const phase of ["idle", "listening", "transcribing", "responding", "speaking", "succeeded", "stopped"] as const) {
     assert.deepEqual(phasePresentationFor(phase), {
       visible: true,
       expression: null,
