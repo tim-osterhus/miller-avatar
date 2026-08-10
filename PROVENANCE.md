@@ -48,17 +48,18 @@ source. Rewritten; no research-spike source file was copied into the public repo
   system-cache cleanup. Build-root, clean-root, rollback, interruption, and
   shared-cache comparisons protect that boundary.
 
-Generated `Sources/MillerAvatarHost/Resources/Web/` files come only from `scripts/bundle-web.sh` and the
-exact locked npm graph. `Resources/build-manifest.json` comes only from
-`scripts/build.sh`. Their normalized manifests identify and hash the source
-inputs; neither generated tree contains research assets or private fixtures.
+Generated `Sources/MillerAvatarHost/Resources/Web/` files come only from
+`scripts/bundle-web.sh` and the exact locked npm graph.
+`Resources/build-manifest.json` comes only from `scripts/build.sh`. Their
+normalized manifests identify and hash the source inputs. Neither generated
+tree contains research assets or private fixtures.
 
 ## Machine-readable authority
 
 `Web/package-lock.json` is the complete npm resolution authority. It contains
-63 locked package records. Every record has an exact version, HTTPS npm registry
+65 locked package records. Every record has an exact version, HTTPS npm registry
 artifact URL, SHA-512 integrity, and SPDX license. Its SHA-256 is
-`666c5cf8e4319b680a5b9c6c3b08bae20c580888b214a8ff3df96938c243a3e8`.
+`38b7964641d9c5f7a28a7e22e6d84101c703fd084a058157025c70ace9d85fd4`.
 `scripts/verify-dependencies.sh` rejects missing or additional records, version
 ranges, changed integrity or license data, unapproved lifecycle scripts, and
 installed-tree drift.
@@ -112,6 +113,20 @@ compares the embedded files with the reviewed repository sources.
   `@pixiv/types-vrmc-springbone-1.0`,
   `@pixiv/types-vrmc-springbone-extended-collider-1.0`, and
   `@pixiv/types-vrmc-vrm-1.0`.
+
+### @pixiv/three-vrm-animation@3.5.5
+
+- Source: `https://github.com/pixiv/three-vrm`, immutable commit
+  `ff42fae4fcee1fcbca2cd262c7f5f8cbddeaf5ab`.
+- The npm artifact and integrity are recorded under
+  `node_modules/@pixiv/three-vrm-animation` in `Web/package-lock.json`.
+- License and copyright: MIT; Copyright © 2019-2026 pixiv Inc.
+- Inclusion: VRMA 1.0 parsing and target-specific conversion of humanoid
+  skeletal tracks through `VRMAnimationLoaderPlugin` and
+  `createVRMAnimationClip`. The package does not supply motion bytes.
+- The emitted module is the only direct animation package input named by the
+  normalized web metafile. Its embedded core code remains covered by the
+  pixiv MIT notice above.
 
 ### Platform dependency
 

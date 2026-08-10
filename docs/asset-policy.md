@@ -115,3 +115,32 @@ Each admitted asset includes a capability summary derived only from the
 validated envelope: whether the asset declares VRM look-at or spring-bone
 support and how many materials declare MToon. This summary contains no path,
 URL, renderer, or GPU information.
+
+## VRMA motion policy
+
+VRMA admission is separate from model admission. A model GLB remains invalid
+when its root JSON contains an `animations` member. A motion enters only through
+the bounded VRMA admission path.
+
+Each profile stores at most 32 admitted local motions. The motion budget caps
+captured bytes at 8 MiB and limits JSON, scene, accessor, channel, keyframe, and
+duration complexity. The host stores a security-scoped bookmark and digest for
+each motion. It does not store a source path or copy the source file.
+
+Only six built-in role bindings cross the bridge: `idle`, `listening`,
+`thinking`, `speaking`, `success`, and `failure`. One motion can serve multiple
+roles. The web loader accepts only the session-bound local `.vrma` URL, requires
+VRMA 1.0, rejects external URI members, and converts only humanoid skeletal
+tracks for the active VRM. Expressions, look-at tracks, and other non-skeletal
+tracks do not gain authority from VRMA.
+
+Motion load and runtime failures are motion-local. Three consecutive failures
+quarantine the motion. The model remains available, and the affected roles use
+their defined fallback. A retry or a new successful load clears that motion's
+failure count. Reduced Motion stops mixer advancement and restores the
+normalized rest pose.
+
+The user is responsible for the rights to every model and motion supplied to
+the package. Miller Avatar distributes no model, VRMA, animation pack, motion
+cache, or user-file copy. Custom triggers and user-authored motion graphs are
+deferred from v0.1.

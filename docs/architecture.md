@@ -76,23 +76,26 @@ content.
 
 Asset admission accepts bounded immutable in-memory bytes and returns an
 `AdmittedAsset` capability. File selection and security-scoped access belong to
-the host or caller. No default avatar, VRMA, animation pack, model cache, or
-user-file copy is packaged. The native fallback is a static/no-avatar state
-until an admitted user-supplied asset is loaded.
+the host or caller. No default avatar, model, VRMA, animation pack, model
+cache, or user-file copy is packaged. The native fallback is a static/no-avatar
+state until an admitted user-supplied asset is loaded.
 
 `AvatarProfileStore` is a public actor for optional local profile metadata. It
-uses a caller-provided root and the owner-only `profiles-v1.json` file. The
-envelope is schema version 1 with a `profiles` array. Each `AvatarProfile`
-record contains exactly:
+uses a caller-provided root and the owner-only `profiles-v2.json` file. It reads
+the legacy `profiles-v1.json` file only for migration. The current envelope is
+schema version 2 with a `profiles` array. Each `StoredAvatarProfile` record
+contains exactly:
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | Profile schema version, currently `1`. |
+| `schemaVersion` | Profile schema version, currently `2`. |
 | `id` / `displayName` | Stable profile identity and bounded display label. |
 | `modelBookmark` | Security-scoped bookmark data; no source path is stored. |
 | `modelSHA256` / `capturedByteCount` | Digest and captured-byte metadata for revalidation. |
 | `rightsLabel` / `performanceProfile` | Fixed metadata: `local_user_supplied` and `lightweight`. |
 | `consecutiveLoadFailures` | Persisted failure count from `0` through `3`; quarantine is derived at `3`. |
+| `profileRevision` | Monotonic revision for profile replacement and stale-load fencing. |
+| `motionLibrary` / `motionBindings` | Bounded motion references and the closed built-in role map. |
 
 Import captures the selected source inside a balanced security scope, admits
 the bytes, records the bookmark and digest, and persists metadata. Load resolves
@@ -105,6 +108,30 @@ required. Removing a profile removes only local metadata and leaves the
 original user file untouched. The store creates its root with mode `0700` and
 its profile file with mode `0600`; persistence is owner-only and path-free in
 its error surface.
+
+### Bounded VRMA motion library
+
+Profile schema v2 stores up to 32 admitted local motions and a profile revision.
+Each motion has its own bookmark, digest, byte count, display name, failure code,
+and consecutive failure count. Three consecutive load or runtime failures
+quarantine that motion. Motion quarantine does not increment the model's
+failure count and does not make a valid model unavailable.
+
+The binding map is closed to six built-in roles: `idle`, `listening`, `thinking`,
+`speaking`, `success`, and `failure`. A motion may bind to multiple roles. The
+host resolves only those bindings and sends only the resolved motion bytes to
+the local WebKit session. Empty and unbound libraries remain valid model-only
+profiles.
+
+VRMA has skeletal-only authority. Miller owns semantic phase, expression,
+mouth, and gaze state at the integration boundary. Missing, rejected,
+quarantined, timed-out, or runtime-failed motions use role or normalized-rest
+fallback. Removing a motion or profile removes local metadata and releases
+prepared bytes. It leaves the original user file untouched.
+
+Reduced Motion stops the mixer and restores the normalized rest pose. Custom
+triggers and user-authored motion graphs are deferred from v0.1. The package
+does not bundle a model, motion, animation pack, or motion cache.
 
 `Web/` contains the pinned TypeScript local-web renderer core and production
 bootstrap. It rejects

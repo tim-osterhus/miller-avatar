@@ -53,6 +53,11 @@ it. Runtime execution requires neither Node nor npm. The complete public test
 gate requires the exact Node/npm toolchain and an installed dependency tree so
 it can run web tests and verify provenance.
 
+The web bundle includes the exact runtime dependency
+`@pixiv/three-vrm-animation@3.5.5`. The bundle contains the Pixiv animation
+module and Miller's `motion-loader.ts` and `motion-controller.ts` inputs. It
+contains no motion or model asset.
+
 The assembled standalone-alpha app wires native-host bridge transport and its
 production web bootstrap into the signed bundle. `scripts/test-signed-boundary.sh`
 starts that freshly signed bundle and requires wrapper and renderer readiness;
@@ -70,12 +75,12 @@ output, installed web dependencies, and declared build staging roots. It does
 not remove committed web resources, user assets, or shared system caches.
 
 `AvatarProfileStore` is optional local persistence for profile metadata in
-`profiles-v1.json`. It stores a security-scoped bookmark and digest metadata,
-not a source path or copied model. Import and load re-capture, re-admit, and
-revalidate the digest. The owner-only root and file use modes `0700` and `0600`;
-three consecutive load or renderer failures quarantine a profile, and recovery
-requires an explicit success reset or reselection. Removing a profile preserves
-the original user file.
+`profiles-v2.json`. It reads `profiles-v1.json` only for migration. It stores a
+security-scoped bookmark and digest metadata, not a source path or copied model.
+Import and load re-capture, re-admit, and revalidate the digest. The owner-only
+root and file use modes `0700` and `0600`; three consecutive load or renderer
+failures quarantine a profile, and recovery requires an explicit success reset
+or reselection. Removing a profile preserves the original user file.
 
 ## Maintainer-only bundle regeneration
 
@@ -115,6 +120,25 @@ when an audited
 `Web/node_modules/` tree has already been restored from the same lockfile. The
 mode verifies that tree and does not install or mutate dependencies. It is not
 a clean-checkout regeneration path.
+
+For source-and-bundle closure, rebuild twice with the pinned toolchain and
+compare SHA-256 records for every file under the committed Web resource root:
+
+```bash
+qa_root=$(mktemp -d)
+trap 'rm -rf -- "$qa_root"' EXIT
+MILLER_AVATAR_WEB_SKIP_INSTALL=1 scripts/bundle-web.sh
+find Sources/MillerAvatarHost/Resources/Web -type f -print0 |
+  LC_ALL=C sort -z | xargs -0 shasum -a 256 > "$qa_root/first.sha256"
+MILLER_AVATAR_WEB_SKIP_INSTALL=1 scripts/bundle-web.sh
+find Sources/MillerAvatarHost/Resources/Web -type f -print0 |
+  LC_ALL=C sort -z | xargs -0 shasum -a 256 > "$qa_root/second.sha256"
+cmp "$qa_root/first.sha256" "$qa_root/second.sha256"
+```
+
+The bundle verifier rejects source maps, remote runtime URLs, AIRI references,
+private paths or metadata, author metadata in normalized manifests, and model
+or motion assets. The HTML CSP remains network-closed.
 
 `Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json` uses the v2
 contract. Each payload file records its MIME type, byte count, and SHA-256. Each

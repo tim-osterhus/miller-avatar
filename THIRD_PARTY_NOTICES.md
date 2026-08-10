@@ -1,7 +1,8 @@
 # Third-party notices
 
-The runtime bundle contains portions of Three.js and pixiv three-vrm. Build
-tools are listed after the runtime notices and are not distributed in the app.
+The runtime bundle contains portions of Three.js, pixiv three-vrm, and
+@pixiv/three-vrm-animation@3.5.5. Build tools are listed after the runtime
+notices and are not distributed in the app.
 
 ## Three.js 0.180.0 — MIT License
 
@@ -25,7 +26,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## pixiv three-vrm 3.5.5 package family — MIT License
+## pixiv three-vrm 3.5.5 and @pixiv/three-vrm-animation 3.5.5 package families — MIT License
 
 Copyright © 2019-2026 pixiv Inc.
 

@@ -1,5 +1,111 @@
 {
   "inputs": {
+    "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
+      "bytes": 362996,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        }
+      ],
+      "format": "esm"
+    },
     "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
       "bytes": 988239,
       "imports": [
@@ -295,12 +401,17 @@
       "format": "esm"
     },
     "src/bridge.ts": {
-      "bytes": 15255,
+      "bytes": 31754,
       "imports": [
         {
           "path": "src/contract.ts",
           "kind": "import-statement",
           "original": "./contract.js"
+        },
+        {
+          "path": "src/motion-loader.ts",
+          "kind": "import-statement",
+          "original": "./motion-loader.js"
         },
         {
           "path": "src/lifecycle.ts",
@@ -326,7 +437,7 @@
       "format": "esm"
     },
     "src/contract.ts": {
-      "bytes": 4222,
+      "bytes": 6405,
       "imports": [],
       "format": "esm"
     },
@@ -417,13 +528,50 @@
       ],
       "format": "esm"
     },
+    "src/motion-controller.ts": {
+      "bytes": 22081,
+      "imports": [
+        {
+          "path": "node_modules/three/build/three.module.js",
+          "kind": "import-statement",
+          "original": "three"
+        },
+        {
+          "path": "./contract.js",
+          "kind": "import-statement",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
+    "src/motion-loader.ts": {
+      "bytes": 13968,
+      "imports": [
+        {
+          "path": "three",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node_modules/three/examples/jsm/loaders/GLTFLoader.js",
+          "kind": "import-statement",
+          "original": "three/addons/loaders/GLTFLoader.js"
+        },
+        {
+          "path": "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js",
+          "kind": "import-statement",
+          "original": "@pixiv/three-vrm-animation"
+        }
+      ],
+      "format": "esm"
+    },
     "src/presentation.ts": {
-      "bytes": 8664,
+      "bytes": 8712,
       "imports": [],
       "format": "esm"
     },
     "src/renderer.ts": {
-      "bytes": 13821,
+      "bytes": 19427,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -441,9 +589,24 @@
           "original": "@pixiv/three-vrm"
         },
         {
+          "path": "src/motion-loader.ts",
+          "kind": "import-statement",
+          "original": "./motion-loader.js"
+        },
+        {
+          "path": "src/motion-controller.ts",
+          "kind": "import-statement",
+          "original": "./motion-controller.js"
+        },
+        {
           "path": "src/camera.ts",
           "kind": "import-statement",
           "original": "./camera.js"
+        },
+        {
+          "path": "src/motion-loader.ts",
+          "kind": "import-statement",
+          "original": "./motion-loader.js"
         }
       ],
       "format": "esm"
@@ -460,7 +623,7 @@
       "format": "esm"
     },
     "src/validation.ts": {
-      "bytes": 21051,
+      "bytes": 31925,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -473,13 +636,16 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 745837,
+      "bytes": 823398,
       "inputs": {
+        "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
+          "bytesInOutput": 31826
+        },
         "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js": {
           "bytesInOutput": 144009
         },
         "node_modules/three/build/three.core.js": {
-          "bytesInOutput": 203384
+          "bytesInOutput": 217047
         },
         "node_modules/three/build/three.module.js": {
           "bytesInOutput": 321207
@@ -491,13 +657,13 @@
           "bytesInOutput": 991
         },
         "src/bridge.ts": {
-          "bytesInOutput": 7495
+          "bytesInOutput": 15631
         },
         "src/camera.ts": {
           "bytesInOutput": 977
         },
         "src/contract.ts": {
-          "bytesInOutput": 830
+          "bytesInOutput": 1276
         },
         "src/disposal.ts": {
           "bytesInOutput": 402
@@ -511,17 +677,23 @@
         "src/main.ts": {
           "bytesInOutput": 755
         },
+        "src/motion-controller.ts": {
+          "bytesInOutput": 10063
+        },
+        "src/motion-loader.ts": {
+          "bytesInOutput": 5525
+        },
         "src/presentation.ts": {
-          "bytesInOutput": 4114
+          "bytesInOutput": 4149
         },
         "src/renderer.ts": {
-          "bytesInOutput": 6693
+          "bytesInOutput": 9389
         },
         "src/runtime.ts": {
           "bytesInOutput": 545
         },
         "src/validation.ts": {
-          "bytesInOutput": 10066
+          "bytesInOutput": 15073
         }
       }
     }

@@ -90,13 +90,45 @@ do
     fi
 done
 
-if ! "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle.out" 2>"$temporary_root/bundle.err"; then
+"$node_command" --input-type=module - "$repository_root/Web/package.json" <<'NODE'
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const packageJSON = JSON.parse(readFileSync(process.argv[2], "utf8"));
+assert.equal(packageJSON.dependencies["@pixiv/three-vrm-animation"], "3.5.5");
+NODE
+
+for provenance_entry in \
+    '@pixiv/three-vrm-animation@3.5.5' \
+    'VRMA 1.0 parsing and target-specific conversion of humanoid skeletal tracks'
+do
+    if ! grep -Fq "$provenance_entry" "$repository_root/PROVENANCE.md"; then
+        printf 'PROVENANCE.md lacks VRMA entry: %s\n' "$provenance_entry" >&2
+        exit 1
+    fi
+done
+
+if ! MILLER_AVATAR_WEB_SKIP_INSTALL=1 \
+    "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle.out" 2>"$temporary_root/bundle.err"; then
     cat "$temporary_root/bundle.out" "$temporary_root/bundle.err" >&2
     printf 'bundle-web did not select the exact release toolchain\n' >&2
     exit 1
 fi
+find "$repository_root/Sources/MillerAvatarHost/Resources/Web" -type f -print0 |
+    LC_ALL=C sort -z | xargs -0 shasum -a 256 > "$temporary_root/web-hashes-a.txt"
+if ! MILLER_AVATAR_WEB_SKIP_INSTALL=1 \
+    "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle-second.out" 2>"$temporary_root/bundle-second.err"
+then
+    cat "$temporary_root/bundle-second.out" "$temporary_root/bundle-second.err" >&2
+    printf 'second deterministic web bundle build failed\n' >&2
+    exit 1
+fi
+find "$repository_root/Sources/MillerAvatarHost/Resources/Web" -type f -print0 |
+    LC_ALL=C sort -z | xargs -0 shasum -a 256 > "$temporary_root/web-hashes-b.txt"
+cmp "$temporary_root/web-hashes-a.txt" "$temporary_root/web-hashes-b.txt"
 bundle_before=$(shasum -a 256 "$repository_root/Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json" | awk '{print $1}')
 if MILLER_AVATAR_SIMULATE_BUNDLE_FAILURE=1 \
+    MILLER_AVATAR_WEB_SKIP_INSTALL=1 \
     "$repository_root/scripts/bundle-web.sh" >"$temporary_root/bundle-failure.out" 2>"$temporary_root/bundle-failure.err"
 then
     printf 'simulated web bundle failure unexpectedly succeeded\n' >&2
@@ -123,6 +155,25 @@ rsync -a \
 if [[ -d "$repository_root/Web/node_modules" ]]; then
     rsync -a "$repository_root/Web/node_modules/" "$copy_root/Web/node_modules/"
 fi
+
+remote_url_output="$temporary_root/remote-url-verifier.out"
+original_app="$temporary_root/original-app.js"
+cp "$copy_root/Sources/MillerAvatarHost/Resources/Web/app.js" "$original_app"
+for remote_scheme in http https ws wss; do
+    cp "$original_app" "$copy_root/Sources/MillerAvatarHost/Resources/Web/app.js"
+    printf '\nconst rejectedRemoteURL = "%s://example.invalid/probe";\n' "$remote_scheme" \
+        >> "$copy_root/Sources/MillerAvatarHost/Resources/Web/app.js"
+    if "$node_command" "$copy_root/Web/scripts/verify-dependencies.mjs" --repository-root "$copy_root" >"$remote_url_output" 2>&1; then
+        printf 'dependency verifier accepted complete %s:// URL literal\n' "$remote_scheme" >&2
+        exit 1
+    fi
+    if ! grep -Fq 'complete remote URL literal' "$remote_url_output"; then
+        cat "$remote_url_output" >&2
+        printf 'dependency verifier did not reject complete %s:// URL literal explicitly\n' "$remote_scheme" >&2
+        exit 1
+    fi
+done
+cp "$original_app" "$copy_root/Sources/MillerAvatarHost/Resources/Web/app.js"
 
 "$node_command" "$copy_root/Web/scripts/verify-dependencies.mjs" --repository-root "$copy_root"
 

@@ -3,8 +3,9 @@ Copyright 2026 Tim Osterhus
 
 This product is licensed under the Apache License, Version 2.0.
 
-The distributed web renderer contains Three.js, pixiv three-vrm, and Mapbox
-Earcut code. Required copyright, MIT, and ISC notices are retained in
+The distributed web renderer contains Three.js, pixiv three-vrm,
+@pixiv/three-vrm-animation@3.5.5, and Mapbox Earcut code. Required copyright,
+MIT, and ISC notices are retained in
 THIRD_PARTY_NOTICES.md and embedded unchanged at
 Contents/Resources/Legal/THIRD_PARTY_NOTICES.md. Build-only Apache License 2.0
 and MIT dependencies are also identified there.

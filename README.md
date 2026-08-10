@@ -51,13 +51,34 @@ Maintainer-only bundle
 regeneration requires the pinned Node/npm toolchain and an audited
 pre-populated offline cache; a clean checkout alone is insufficient.
 
-The admitted asset envelope is VRM 1.0 with user-supplied models. VRMA and
-animation-pack support are not bundled or claimed; legacy VRM 0.x compatibility
-is deferred.
+The admitted model envelope is VRM 1.0 with user-supplied models. User-supplied
+VRMA support is bounded to a local motion library in each profile.
 
-The package bundles no default avatar, VRMA, animation pack, model cache, or
-user-file copy. It launches into its native static/no-avatar presentation until
-the caller supplies an admitted asset. Internal fixtures and asset-authoring
+## Bounded VRMA motion
+
+The motion library stores at most 32 admitted local motions. Six built-in roles
+can bind those motions: `idle`, `listening`, `thinking`, `speaking`, `success`,
+and `failure`. One motion can serve multiple roles. Custom triggers and
+user-authored motion graphs are deferred from v0.1.
+
+Native admission owns motion bytes, bookmarks, rights metadata, bindings, and
+the three-failure quarantine counter. The user must have the rights required
+to use each model and motion. The package does not redistribute user assets or
+copy them into the repository.
+
+VRMA has skeletal-only authority. Miller owns semantic phase, expression,
+mouth, and gaze state at the integration boundary. A missing, rejected,
+quarantined, or runtime-failed motion falls back to the current steady role,
+`idle`, or the normalized rest pose. Motion failure does not quarantine a valid
+model. Removing a motion or profile removes local metadata and leaves the
+original user file untouched.
+
+Reduced Motion stops motion advancement and restores the normalized rest pose.
+The package bundles no model, VRMA, animation pack, motion cache, or user-file
+copy. Legacy VRM 0.x compatibility remains deferred.
+
+The package launches into its native static/no-avatar presentation until the
+caller supplies an admitted asset. Internal fixtures and asset-authoring
 studies are qualification evidence only and are not release content.
 
 ## Public package boundary
@@ -79,12 +100,13 @@ contexts use `Bundle.module` as the fallback. No alternate renderer bundle or
 asset pack is selected at runtime.
 
 `AvatarProfileStore` is the optional owner-only local persistence boundary. It
-stores `profiles-v1.json` metadata and a security-scoped bookmark, not a copied
-model file or source path. Import and load re-capture, re-admit, and SHA-256
-check the source bytes. Three consecutive load or renderer failures quarantine a
-profile; recovery requires an explicit success reset or explicit reselection.
-The original user file remains untouched. See `docs/architecture.md` for the
-schema and lifecycle details.
+stores `profiles-v2.json` metadata and a security-scoped bookmark, not a copied
+model file or source path. It reads the legacy v1 file only for migration.
+Import and load re-capture, re-admit, and SHA-256 check the source bytes. Three
+consecutive load or renderer failures quarantine a profile; recovery requires
+an explicit success reset or explicit reselection. The original user file
+remains untouched. See `docs/architecture.md` for the schema and lifecycle
+details.
 
 See `docs/architecture.md` and `docs/development.md` for the implemented
 foundation.
@@ -106,6 +128,8 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 The repository contains automated contract, build, cleanup, and signed-boundary
 checks. This documentation does not claim Miller integration or manual visual,
 signing, or release qualification results before that work is completed.
+The V5.1 source and bundle record is in
+[`docs/qualification-vrma-v0.1.md`](docs/qualification-vrma-v0.1.md).
 
 ## License
 

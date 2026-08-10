@@ -99,7 +99,37 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const path = process.env.STAGED_APP;
 if (!path) throw new Error("missing staged app path");
-writeFileSync(path, readFileSync(path, "utf8").replace(/[ \t]+$/gmu, ""));
+let app = readFileSync(path, "utf8");
+const replacements = [
+  {
+    label: "inert tangent-space shader reference",
+    from: "http://hacksoflife.blogspot.ch/2009/11/per-pixel-tangent-space-normal-mapping.html",
+    to: "tangent-space normal mapping reference",
+  },
+  {
+    label: "HTML namespace value",
+    from: '"http://www.w3.org/1999/xhtml"',
+    to: '"http:"+"//www.w3.org/1999/xhtml"',
+  },
+  {
+    label: "VRM license URL value",
+    from: '"https://vrm.dev/licenses/1.0/"',
+    to: '"https:"+"//vrm.dev/licenses/1.0/"',
+  },
+];
+for (const { label, from, to } of replacements) {
+  const first = app.indexOf(from);
+  if (first < 0 || app.indexOf(from, first + from.length) >= 0) {
+    throw new Error(`expected exactly one ${label} transformation target`);
+  }
+  app = `${app.slice(0, first)}${to}${app.slice(first + from.length)}`;
+}
+const completeRemoteURL = /(?:https?|wss?):\/\/[^"'`\\\s]+/gu;
+const remainingURLs = app.match(completeRemoteURL) ?? [];
+if (remainingURLs.length > 0) {
+  throw new Error(`bundle URL transformations incomplete: ${remainingURLs.join(", ")}`);
+}
+writeFileSync(path, app.replace(/[ \t]+$/gmu, ""));
 NODE
 
 cp "$web_root/src/index.html" "$stage/index.html"
@@ -231,16 +261,12 @@ if grep -R -n -E 'WebSocket|EventSource|new Worker|serviceWorker' "$stage"; then
     printf 'web bundle contains a forbidden capability\n' >&2
     exit 1
 fi
-observed_urls=$(grep -R -h -o -E 'https?://[^"[:space:]\\]+' "$stage" || true)
-unexpected_urls=""
-while IFS= read -r url; do
-    case "$url" in
-        ""|"http://hacksoflife.blogspot.ch/2009/11/per-pixel-tangent-space-normal-mapping.html"|"http://www.w3.org/1999/xhtml"|"https://vrm.dev/licenses/1.0/") ;;
-        *) unexpected_urls="${unexpected_urls}${url}"$'\n' ;;
-    esac
-done <<< "$observed_urls"
-if [[ -n "$unexpected_urls" ]]; then
-    printf 'web bundle contains an unexpected external URL\n%s\n' "$unexpected_urls" >&2
+if grep -R -n -E 'AIRI|airi|sourceMappingURL|/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' "$stage"; then
+    printf 'web bundle contains prohibited source, path, or metadata\n' >&2
+    exit 1
+fi
+if grep -R -n -E '(https?|wss?)://[^"[:space:]\\]+' "$stage"; then
+    printf 'web bundle contains a complete remote URL literal\n' >&2
     exit 1
 fi
 if grep -R -n -F "$repo_root" "$stage"; then

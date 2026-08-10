@@ -47,6 +47,7 @@ assert.deepEqual(
 const exactDependencies = {
   dependencies: {
     "@pixiv/three-vrm": "3.5.5",
+    "@pixiv/three-vrm-animation": "3.5.5",
     three: "0.180.0",
   },
   devDependencies: {
@@ -60,7 +61,7 @@ const exactDependencies = {
 
 assert.deepEqual(manifest.engines, { node: "22.22.0", npm: "10.9.4" });
 assert.equal(manifest.packageManager, "npm@10.9.4");
-assert.equal(packageLockHash, "666c5cf8e4319b680a5b9c6c3b08bae20c580888b214a8ff3df96938c243a3e8", "package-lock.json is not the reviewed release graph");
+assert.equal(packageLockHash, "38b7964641d9c5f7a28a7e22e6d84101c703fd084a058157025c70ace9d85fd4", "package-lock.json is not the reviewed release graph");
 for (const [section, expected] of Object.entries(exactDependencies)) {
   assert.deepEqual(manifest[section], expected, `${section} must contain only exact approved versions`);
   assert.deepEqual(lock.packages[""][section], expected, `lockfile root ${section} differs from package.json`);
@@ -161,8 +162,17 @@ assert.equal(bundleManifest.toolchain.esbuild, "0.28.1");
 assert.equal(bundleManifest.toolchain.esbuild_binary, "@esbuild/darwin-arm64@0.28.1");
 assert.equal(bundleManifest.toolchain.package_lock_sha256, packageLockHash);
 
+const completeRemoteURL = /(?:https?|wss?):\/\/[^"'`\\\s]+/gu;
+for (const path of walkFiles(bundleRoot)) {
+  const bytes = readFileSync(path);
+  if (bytes.includes(0)) continue;
+  const urls = bytes.toString("utf8").match(completeRemoteURL) ?? [];
+  assert.deepEqual(urls, [], `complete remote URL literal in ${relative(repositoryRoot, path)}`);
+}
+
 const allowedBundleInputs = new Set([
   "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js",
+  "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js",
   "node_modules/three/build/three.core.js",
   "node_modules/three/build/three.module.js",
   "node_modules/three/examples/jsm/loaders/GLTFLoader.js",
@@ -174,6 +184,8 @@ const allowedBundleInputs = new Set([
   "src/index.ts",
   "src/lifecycle.ts",
   "src/main.ts",
+  "src/motion-controller.ts",
+  "src/motion-loader.ts",
   "src/presentation.ts",
   "src/renderer.ts",
   "src/runtime.ts",
@@ -282,22 +294,16 @@ for (const record of buildManifest.files) {
   }
 }
 
-const serializedMetafile = JSON.stringify(bundleMetafile);
-assert.doesNotMatch(serializedMetafile, /(?:^|["'])\/(?:Users|private\/var|home)\//u);
+const serializedBundleMetadata = JSON.stringify({ bundleManifest, bundleMetafile });
+assert.doesNotMatch(serializedBundleMetadata, /AIRI|airi|sourceMappingURL|(?:^|["'])\/(?:Users|private\/var|home)\//u);
+assert.doesNotMatch(serializedBundleMetadata, /"authors?"\s*:/u, "bundle metadata must not contain author metadata");
 const bundleJavaScript = readFileSync(resolve(bundleRoot, "app.js"), "utf8");
-assert.doesNotMatch(bundleJavaScript, /(?:sourceMappingURL|data:application\/wasm|WebSocket|EventSource|serviceWorker|new Worker)/u);
-const observedURLs = bundleJavaScript.match(/https?:\/\/[^"'`\\\s]+/gu) ?? [];
-const allowedURLs = new Set([
-  "http://hacksoflife.blogspot.ch/2009/11/per-pixel-tangent-space-normal-mapping.html",
-  "http://www.w3.org/1999/xhtml",
-  "https://vrm.dev/licenses/1.0/",
-]);
-for (const url of observedURLs) assert.ok(allowedURLs.has(url), `unexpected runtime URL: ${url}`);
+assert.doesNotMatch(bundleJavaScript, /(?:AIRI|airi|sourceMappingURL|data:application\/wasm|WebSocket|EventSource|serviceWorker|new Worker)/u);
 
 const provenance = readFileSync(resolve(repositoryRoot, "PROVENANCE.md"), "utf8");
 const notices = readFileSync(resolve(repositoryRoot, "THIRD_PARTY_NOTICES.md"), "utf8");
 const productNotice = readFileSync(resolve(repositoryRoot, "NOTICE"), "utf8");
-for (const required of ["three@0.180.0", "@pixiv/three-vrm@3.5.5", "typescript@7.0.2", "esbuild@0.28.1", "WebKit"]) {
+for (const required of ["three@0.180.0", "@pixiv/three-vrm@3.5.5", "@pixiv/three-vrm-animation@3.5.5", "typescript@7.0.2", "esbuild@0.28.1", "WebKit"]) {
   assert.ok(provenance.includes(required), `PROVENANCE.md lacks ${required}`);
 }
 for (const required of [

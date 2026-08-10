@@ -7,6 +7,27 @@ import test from "node:test";
 const bundleRoot = resolve(process.cwd(), "../Sources/MillerAvatarHost/Resources/Web");
 const repositoryRoot = resolve(process.cwd(), "..");
 const looseBundleRoot = resolve(repositoryRoot, "Resources/Web");
+const expectedMetafileInputs = [
+  "node_modules/@pixiv/three-vrm/lib/three-vrm.module.js",
+  "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js",
+  "node_modules/three/build/three.core.js",
+  "node_modules/three/build/three.module.js",
+  "node_modules/three/examples/jsm/loaders/GLTFLoader.js",
+  "node_modules/three/examples/jsm/utils/BufferGeometryUtils.js",
+  "src/bridge.ts",
+  "src/camera.ts",
+  "src/contract.ts",
+  "src/disposal.ts",
+  "src/index.ts",
+  "src/lifecycle.ts",
+  "src/main.ts",
+  "src/motion-controller.ts",
+  "src/motion-loader.ts",
+  "src/presentation.ts",
+  "src/renderer.ts",
+  "src/runtime.ts",
+  "src/validation.ts",
+].sort();
 const payloadMimes = {
   "app.js": "text/javascript; charset=utf-8",
   "bundle-metafile.json": "application/json; charset=utf-8",
@@ -70,6 +91,62 @@ test("committed web bundle has a complete non-self-referential v2 manifest", () 
 
   const { contract_sha256, ...contract } = manifest;
   assert.equal(contract_sha256, sha256(Buffer.from(canonicalJSON(contract))));
+});
+
+test("committed web bundle has the exact generated module closure", () => {
+  const metafile = JSON.parse(readFileSync(resolve(bundleRoot, "bundle-metafile.json"), "utf8")) as {
+    inputs: Record<string, unknown>;
+    outputs: Record<string, { inputs: Record<string, unknown> }>;
+  };
+  assert.deepEqual(Object.keys(metafile.inputs).sort(), expectedMetafileInputs);
+  assert.deepEqual(Object.keys(metafile.outputs), ["app.js"]);
+  assert.deepEqual(Object.keys(metafile.outputs["app.js"]!.inputs).sort(), expectedMetafileInputs);
+});
+
+test("committed web outputs contain no complete remote URL literals", () => {
+  const completeRemoteURL = /(?:https?|wss?):\/\/[^"'`\\\s]+/u;
+  const remoteURLFixtures = [
+    "http://example.invalid/http",
+    "https://example.invalid/https",
+    "ws://example.invalid/ws",
+    "wss://example.invalid/wss",
+  ];
+  for (const fixture of remoteURLFixtures) {
+    assert.match(fixture, completeRemoteURL, `remote URL fixture is incomplete: ${fixture}`);
+  }
+  for (const name of ["app.js", "bundle-manifest.json", "bundle-metafile.json", "index.html", "styles.css"]) {
+    const text = readFileSync(resolve(bundleRoot, name), "utf8");
+    assert.deepEqual(text.match(completeRemoteURL) ?? [], [], `complete remote URL literal in ${name}`);
+  }
+
+  const gateSources = [
+    readFileSync(resolve(repositoryRoot, "scripts/bundle-web.sh"), "utf8"),
+    readFileSync(resolve(repositoryRoot, "Web/scripts/verify-dependencies.mjs"), "utf8"),
+  ];
+  for (const source of gateSources) {
+    const pattern = source.match(/const completeRemoteURL = \/(.+)\/gu;/u)?.[1];
+    assert.ok(pattern, "release gate must declare its complete remote URL pattern");
+    const gate = new RegExp(pattern, "u");
+    for (const fixture of remoteURLFixtures) {
+      assert.match(fixture, gate, `release gate does not match ${fixture}`);
+    }
+  }
+});
+
+test("committed bundle reconstructs dependency URL values without contiguous literals", () => {
+  const app = readFileSync(resolve(bundleRoot, "app.js"), "utf8");
+  const reconstructedValues = [
+    { parts: ["http:", "//www.w3.org/1999/xhtml"], value: "http://www.w3.org/1999/xhtml" },
+    { parts: ["https:", "//vrm.dev/licenses/1.0/"], value: "https://vrm.dev/licenses/1.0/" },
+  ];
+  for (const { parts, value } of reconstructedValues) {
+    assert.equal(parts.join(""), value);
+    const expression = app.match(new RegExp(parts.map((part) => JSON.stringify(part)).join("\\+")))?.[0];
+    assert.equal(expression, `${JSON.stringify(parts[0])}+${JSON.stringify(parts[1])}`);
+    assert.equal(new Function(`return ${expression}`)(), value);
+  }
+  assert.doesNotMatch(app, /hacksoflife\.blogspot\.ch\/2009\/11\/per-pixel-tangent-space-normal-mapping\.html/u);
+  assert.equal((app.match(/tangent-space normal mapping reference/g) ?? []).length, 1);
 });
 
 function canonicalJSON(value: unknown): string {
