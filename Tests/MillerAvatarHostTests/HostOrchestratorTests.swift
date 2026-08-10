@@ -392,6 +392,110 @@ import MillerAvatarCore
     }
 
     @Test
+    func motionAccountingIsReleasedAtSessionTerminationWhilePersistentStateSurvives() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        let motionID = UUID()
+        let modelToken = UUID()
+        let prepared = preparedProfile(
+            modelToken: modelToken,
+            motionID: motionID,
+            roles: [.idle, .thinking]
+        )
+        let payload = prepared.loadPayload
+        var failures: [(UUID, MotionFailureCode)] = []
+        host.onMotionFailure = { failures.append(($0, $1)) }
+
+        func startAndLoad(retrying: Bool = false) -> UUID {
+            if retrying {
+                host.retry()
+            } else {
+                host.startRenderer()
+            }
+            let session = try! #require(host.snapshot.sessionID)
+            driver.observe(session, .wrapperReady)
+            driver.observe(session, .rendererReady)
+            #expect(host.load(prepared) == .accepted)
+            driver.observeFirstFrame(session, assetToken: modelToken)
+            return session
+        }
+
+        func observeFailure(in session: UUID) {
+            driver.observe(session, .motionStatus(.init(
+                profileRevision: payload.profileRevision,
+                modelToken: payload.modelToken,
+                motionToken: motionID,
+                role: .idle,
+                status: .runtimeFailed,
+                motionCode: .motionRuntimeFailed
+            )))
+        }
+
+        let first = startAndLoad()
+        driver.observe(first, .motionStatus(.init(
+            profileRevision: payload.profileRevision,
+            modelToken: payload.modelToken,
+            motionToken: motionID,
+            role: .idle,
+            status: .ready,
+            motionCode: nil
+        )))
+        observeFailure(in: first)
+        observeFailure(in: first)
+        #expect(host.motionAccountingEntryCounts.failures == 1)
+        #expect(host.motionAccountingEntryCounts.successes == 1)
+        #expect(host.motionFailureCounts[motionID] == 1)
+        #expect(host.quarantinedMotionIDs.isEmpty)
+        #expect(failures.count == 1)
+
+        host.dispose()
+        #expect(host.motionAccountingEntryCounts.failures == 0)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+        #expect(host.motionFailureCounts[motionID] == 1)
+        #expect(host.quarantinedMotionIDs.isEmpty)
+
+        let second = startAndLoad()
+        observeFailure(in: second)
+        observeFailure(in: second)
+        #expect(host.motionAccountingEntryCounts.failures == 1)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+        #expect(host.motionFailureCounts[motionID] == 2)
+        #expect(failures.count == 2)
+
+        host.dispose()
+        #expect(host.motionAccountingEntryCounts.failures == 0)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+        #expect(host.motionFailureCounts[motionID] == 2)
+        #expect(host.quarantinedMotionIDs.isEmpty)
+
+        let third = startAndLoad()
+        observeFailure(in: third)
+        #expect(host.motionAccountingEntryCounts.failures == 1)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+        #expect(host.motionFailureCounts[motionID] == 3)
+        #expect(host.quarantinedMotionIDs == Set([motionID]))
+        #expect(failures.count == 3)
+
+        host.simulateRendererFailure()
+        #expect(host.snapshot.lifecycle == .failed(.renderFailed))
+        #expect(host.motionAccountingEntryCounts.failures == 0)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+        #expect(host.motionFailureCounts[motionID] == 3)
+        #expect(host.quarantinedMotionIDs == Set([motionID]))
+
+        let replacement = startAndLoad(retrying: true)
+        #expect(replacement != third)
+        guard case .loadProfile(let quarantinedProfile) = driver.commands.last else {
+            Issue.record("expected a quarantined load profile")
+            return
+        }
+        #expect(quarantinedProfile.motionBindings[.idle]?.status == .rejected)
+        #expect(quarantinedProfile.motionBindings[.thinking]?.status == .rejected)
+        #expect(host.motionAccountingEntryCounts.failures == 0)
+        #expect(host.motionAccountingEntryCounts.successes == 0)
+    }
+
+    @Test
     func succeededProjectionRemainsLiveAndRevokesPlaybackIdentity() {
         guard let succeeded = PresentationPhase(rawValue: "succeeded") else {
             Issue.record("succeeded is missing from the closed presentation vocabulary")

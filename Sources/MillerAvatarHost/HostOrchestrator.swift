@@ -81,6 +81,9 @@ package final class HostOrchestrator {
     package var onMotionSuccess: ((UUID) -> Void)?
     package private(set) var motionFailureCounts: [UUID: Int] = [:]
     package private(set) var quarantinedMotionIDs: Set<UUID> = []
+    package var motionAccountingEntryCounts: (failures: Int, successes: Int) {
+        (accountedMotionFailures.count, accountedMotionSuccesses.count)
+    }
 
     package private(set) var snapshot: HostSnapshot
     private let driver: any HostRendererDriving
@@ -490,6 +493,8 @@ package final class HostOrchestrator {
     private func fail(_ code: FailureCode) {
         let mutation = beginMutation()
         guard snapshot.sessionID != nil else { return }
+        accountedMotionFailures = []
+        accountedMotionSuccesses = []
         let sessionID = snapshot.sessionID
         deadline = nil
         consecutiveFailures += 1
@@ -524,6 +529,8 @@ package final class HostOrchestrator {
 
     private func finishDisposal() {
         let mutation = mutationEpoch
+        accountedMotionFailures = []
+        accountedMotionSuccesses = []
         deadline = nil
         activeAssetToken = nil
         activeProfilePayload = nil
