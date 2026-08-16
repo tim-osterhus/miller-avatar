@@ -3,7 +3,8 @@
 Miller Avatar is a reusable offline Swift package plus a thin standalone
 diagnostic app, not a bundled assistant or asset pack. It requires the pinned
 Command Line Tools toolchain; full Xcode is not required. Miller source
-integration is explicitly deferred, and this tranche does not edit Miller.
+consumes the public package as an optional in-process presentation feature;
+package development and the diagnostic app remain independently testable.
 
 ```bash
 scripts/verify-toolchain.sh
@@ -40,7 +41,9 @@ The package bundles no default model, VRMA, animation pack, model cache, or
 user-file copy, and has no network runtime dependency. User-supplied assets
 remain separate from the package and are admitted from bounded in-memory bytes.
 No Miller integration or manual visual, signing, or release qualification result
-is claimed by these development instructions.
+is implied by running these package-only development commands. Miller's C7
+headless integration report and owner-visible protocol live in the Miller
+repository under `docs/qualification/`.
 
 ## Committed bundle and clean builds
 

@@ -5,8 +5,9 @@ app. It is a presentation boundary, not a bundled assistant or asset pack. The
 package targets macOS 15 with Swift 6.1. `MillerAvatarCore` owns shared
 contracts and renderer-neutral policy, `MillerAvatarHost` is the public native
 host boundary, and `MillerAvatarApp` is a thin diagnostic consumer of that
-public API. Miller source integration is explicitly deferred; this tranche does
-not edit Miller.
+public API. Miller consumes the same public host boundary as an optional,
+in-process presentation feature; the diagnostic app remains a separate thin
+consumer.
 
 ## Package boundary and identity ownership
 
@@ -178,6 +179,15 @@ package, tag, or release step.
 The standalone app is a diagnostic consumer, not an alternate host or renderer
 implementation. Its controls generate synthetic presentation payloads and use
 the public surface to exercise lifecycle, visibility, admission, and teardown.
-The repository documents automated checks and command paths; it does not claim
-Miller integration or manual visual, signing, or release qualification results
-before qualification is complete.
+Miller owns enablement, profile selection, the 200-point noninteractive overlay
+attachment, typed and Live semantic projection, and played-output mouth-cue
+generation. It does not create a sidecar or second audio path. Package failures
+remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
+approval, or tool authorities.
+
+The repositories document automated checks and command paths. The remediated
+C7 source/headless matrix passes. Its exact post-remediation package
+checkpoint and integrated candidate remain pending. The current alpha.2 tag
+does not contain the package-head renderer-persistence repair. Private-asset
+visual, physical focus, VoiceOver, real Live, signing, and final release
+qualification remain separate gates.

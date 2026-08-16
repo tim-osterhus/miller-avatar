@@ -144,3 +144,9 @@ The user is responsible for the rights to every model and motion supplied to
 the package. Miller Avatar distributes no model, VRMA, animation pack, motion
 cache, or user-file copy. Custom triggers and user-authored motion graphs are
 deferred from v0.1.
+
+Miller integration does not widen this boundary. Miller stores the package's
+owner-only bookmark and profile metadata under its Avatar application-support
+root, passes only admitted capabilities to the host surface, and packages no
+user-selected asset. A Miller typed, Live, history, capability, or tool payload
+never becomes model or motion input.

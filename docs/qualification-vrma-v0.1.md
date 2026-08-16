@@ -121,3 +121,16 @@ visual/GUI qualification remains separate and was not run.
 
 Subject to those explicit V5.2 and owner-visible gates, the source and offline
 Web bundle closure is ready for independent QA.
+
+## Later integration evidence
+
+Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
+`6b34f9ff35a94cdde9c7826bc67f2cfff02abd82`. Its remediated nonlaunching
+source matrix passed model and motion failure isolation, replacement and
+stale-callback fencing, Reduced Motion, Avatar-off fallback, typed and Live
+semantic routing, played-output mouth cues, and source-test cleanup. The exact
+post-remediation package checkpoint and integrated artifact remain pending;
+alpha.2 does not contain the package-head renderer-persistence repair.
+The owner-visible private-model, compatible-motion, physical focus, VoiceOver,
+and real Live protocol remains `HUMAN_NOT_RUN`; it is not backfilled by this
+earlier V5.1 record.

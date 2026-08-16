@@ -238,6 +238,199 @@ import Testing
     }
 
     @Test
+    func acceptedProfileRendererFailurePersistsExactlyOnceAfterTeardown() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeProfileStore(root: root)
+        let profile = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        surface.start()
+        let sessionID = try #require(driver.sessionID)
+        driver.emitObservation(.wrapperReady, for: sessionID)
+        driver.emitObservation(.rendererReady, for: sessionID)
+        #expect(await surface.load(profileID: profile.id, from: store) == .accepted)
+
+        driver.emitObservation(.failed(.renderFailed), for: sessionID)
+        surface.dispose()
+
+        _ = try await waitForProfile(
+            store: store,
+            profileID: profile.id,
+            modelFailures: 1
+        )
+        try await Task.sleep(nanoseconds: 10_000_000)
+        #expect((try await store.profile(id: profile.id)).modelConsecutiveLoadFailures == 1)
+    }
+
+    @Test
+    func acceptedProfileRendererFailuresAcrossFreshSessionsQuarantineProfile() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeProfileStore(root: root)
+        let profile = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+
+        for expectedFailures in 1...3 {
+            let driver = RecordingSurfaceDriver()
+            let surface = AvatarSurfaceController(
+                driver: driver,
+                timer: RecordingSurfaceTimer()
+            )
+            surface.start()
+            let sessionID = try #require(driver.sessionID)
+            driver.emitObservation(.wrapperReady, for: sessionID)
+            driver.emitObservation(.rendererReady, for: sessionID)
+            #expect(await surface.load(profileID: profile.id, from: store) == .accepted)
+
+            driver.emitObservation(.failed(.renderFailed), for: sessionID)
+            surface.dispose()
+            let summary = try await waitForProfile(
+                store: store,
+                profileID: profile.id,
+                modelFailures: expectedFailures
+            )
+            #expect(summary.modelStatus == (expectedFailures == 3 ? .quarantined : .available))
+        }
+
+        let retryDriver = RecordingSurfaceDriver()
+        let retrySurface = AvatarSurfaceController(
+            driver: retryDriver,
+            timer: RecordingSurfaceTimer()
+        )
+        retrySurface.start()
+        let retrySessionID = try #require(retryDriver.sessionID)
+        retryDriver.emitObservation(.wrapperReady, for: retrySessionID)
+        retryDriver.emitObservation(.rendererReady, for: retrySessionID)
+        #expect(
+            await retrySurface.load(profileID: profile.id, from: store)
+                == .rejected(.modelQuarantined)
+        )
+        retrySurface.dispose()
+    }
+
+    @Test
+    func validFirstFrameResetsPriorAcceptedProfileRendererFailureAfterTeardown() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeProfileStore(root: root)
+        let profile = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        try await store.recordRendererFailure(id: profile.id)
+
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        surface.start()
+        let sessionID = try #require(driver.sessionID)
+        driver.emitObservation(.wrapperReady, for: sessionID)
+        driver.emitObservation(.rendererReady, for: sessionID)
+        #expect(await surface.load(profileID: profile.id, from: store) == .accepted)
+        let loaded = try #require(driver.installedProfiles.last)
+
+        driver.emitObservation(.profileModelLoaded(.init(
+            profileRevision: loaded.loadPayload.profileRevision,
+            modelToken: loaded.model.token,
+            capabilities: .init(
+                aa: true,
+                lookAt: false,
+                springBone: false,
+                mtoonMaterials: 0
+            )
+        )), for: sessionID)
+        #expect(surface.snapshot.lifecycle == .loadingAsset)
+        driver.emitObservation(.firstFrame(
+            profileRevision: loaded.loadPayload.profileRevision,
+            modelToken: loaded.model.token,
+            counters: .zero
+        ), for: sessionID)
+        #expect(surface.snapshot.lifecycle == .live)
+        surface.dispose()
+
+        let summary = try await waitForProfile(
+            store: store,
+            profileID: profile.id,
+            modelFailures: 0
+        )
+        #expect(summary.modelStatus == .available)
+    }
+
+    @Test
+    func startupFailureStaleSessionAndMotionFailureDoNotPersistModelRendererFailure() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = makeMotionProfileStore(root: root)
+        let profile = try await fixture.store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let motion = try await fixture.store.importMotion(
+            profileID: profile.id,
+            at: root.appendingPathComponent("motion.vrma"),
+            displayName: "Idle"
+        )
+        try await fixture.store.bindMotion(
+            profileID: profile.id,
+            role: .idle,
+            motionID: motion.id
+        )
+
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        surface.start()
+        let staleSessionID = try #require(driver.sessionID)
+        driver.emitObservation(.failed(.renderFailed), for: staleSessionID)
+        #expect((try await fixture.store.profile(id: profile.id)).modelConsecutiveLoadFailures == 0)
+
+        surface.retry()
+        let currentSessionID = try #require(driver.sessionID)
+        driver.emitObservation(.wrapperReady, for: currentSessionID)
+        driver.emitObservation(.rendererReady, for: currentSessionID)
+        #expect(await surface.load(profileID: profile.id, from: fixture.store) == .accepted)
+        let loaded = try #require(driver.installedProfiles.last)
+        emitValidFirstFrame(
+            driver: driver,
+            sessionID: currentSessionID,
+            loaded: loaded
+        )
+
+        driver.emitObservation(.motionStatus(.init(
+            profileRevision: loaded.loadPayload.profileRevision,
+            modelToken: loaded.model.token,
+            motionToken: fixture.motionToken,
+            role: .idle,
+            status: .runtimeFailed,
+            motionCode: .motionRuntimeFailed
+        )), for: currentSessionID)
+        _ = try await waitForMotion(
+            store: fixture.store,
+            profileID: profile.id,
+            motionID: motion.id,
+            failures: 1
+        )
+
+        driver.emitObservation(.failed(.renderFailed), for: staleSessionID)
+        try await Task.sleep(nanoseconds: 10_000_000)
+        #expect((try await fixture.store.profile(id: profile.id)).modelConsecutiveLoadFailures == 0)
+        surface.dispose()
+    }
+
+    @Test
     func motionSuccessResetsOnlyTheAcceptedProfilesMotionFailureCount() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1119,6 +1312,44 @@ private func waitForMotion(
         try await Task.sleep(nanoseconds: 1_000_000)
     }
     throw SurfaceTestFailure.timeout
+}
+
+private func waitForProfile(
+    store: AvatarProfileStore,
+    profileID: UUID,
+    modelFailures: Int
+) async throws -> AvatarProfileSummary {
+    for _ in 0..<2_000 {
+        let profile = try await store.profile(id: profileID)
+        if profile.modelConsecutiveLoadFailures == modelFailures {
+            return profile
+        }
+        try await Task.sleep(nanoseconds: 1_000_000)
+    }
+    throw SurfaceTestFailure.timeout
+}
+
+@MainActor
+private func emitValidFirstFrame(
+    driver: RecordingSurfaceDriver,
+    sessionID: UUID,
+    loaded: LoadedAvatarProfile
+) {
+    driver.emitObservation(.profileModelLoaded(.init(
+        profileRevision: loaded.loadPayload.profileRevision,
+        modelToken: loaded.model.token,
+        capabilities: .init(
+            aa: true,
+            lookAt: false,
+            springBone: false,
+            mtoonMaterials: 0
+        )
+    )), for: sessionID)
+    driver.emitObservation(.firstFrame(
+        profileRevision: loaded.loadPayload.profileRevision,
+        modelToken: loaded.model.token,
+        counters: .zero
+    ), for: sessionID)
 }
 
 private func loadProfiles(_ commands: [BridgeCommand]) -> [LoadProfilePayload] {

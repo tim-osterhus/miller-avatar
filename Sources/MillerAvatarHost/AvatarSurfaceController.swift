@@ -107,6 +107,7 @@ public final class AvatarSurfaceController {
     private var nextProfilePersistenceID: UInt64 = 0
     private var acceptedProfilePersistence: AcceptedProfilePersistence?
     private var motionPersistenceTask: Task<Void, Never>?
+    private var rendererPersistenceTask: Task<Void, Never>?
 
     public convenience init() {
         self.init(
@@ -331,16 +332,31 @@ public final class AvatarSurfaceController {
     private var installingProfile = false
 
     private func observe(_ snapshot: HostSnapshot) {
-        if let acceptedProfilePersistence,
-           acceptedProfilePersistence.sessionID != snapshot.sessionID
-        {
-            clearAcceptedProfilePersistence()
-        } else {
+        if let target = acceptedProfilePersistence {
             switch snapshot.lifecycle {
-            case .failed, .disposing, .absent:
+            case .failed:
+                if snapshot.sessionID == target.sessionID || snapshot.sessionID == nil {
+                    enqueueRendererPersistenceIfNeeded(
+                        .failure,
+                        target: target
+                    )
+                }
                 clearAcceptedProfilePersistence()
-            case .startingRenderer, .rendererReady, .loadingAsset, .live, .liveSuspended:
-                break
+            case .live:
+                guard snapshot.sessionID == target.sessionID else {
+                    clearAcceptedProfilePersistence()
+                    break
+                }
+                enqueueRendererPersistenceIfNeeded(
+                    .success,
+                    target: target
+                )
+            case .disposing, .absent:
+                clearAcceptedProfilePersistence()
+            case .startingRenderer, .rendererReady, .loadingAsset, .liveSuspended:
+                if target.sessionID != snapshot.sessionID {
+                    clearAcceptedProfilePersistence()
+                }
             }
         }
 
@@ -381,6 +397,39 @@ public final class AvatarSurfaceController {
         acceptedProfilePersistence = nil
         motionPersistenceTask?.cancel()
         motionPersistenceTask = nil
+    }
+
+    private func enqueueRendererPersistenceIfNeeded(
+        _ event: RendererPersistenceEvent,
+        target: AcceptedProfilePersistence
+    ) {
+        var target = target
+        switch event {
+        case .success:
+            guard !target.rendererSuccessEnqueued else { return }
+            target.rendererSuccessEnqueued = true
+        case .failure:
+            guard !target.rendererFailureEnqueued else { return }
+            target.rendererFailureEnqueued = true
+        }
+        acceptedProfilePersistence = target
+
+        let previous = rendererPersistenceTask
+        let store = target.store
+        let profileID = target.profileID
+        rendererPersistenceTask = Task { [previous] in
+            await previous?.value
+            do {
+                switch event {
+                case .success:
+                    try await store.recordRendererSuccess(id: profileID)
+                case .failure:
+                    try await store.recordRendererFailure(id: profileID)
+                }
+            } catch {
+                // Host accounting is nonterminal; persistence errors do not alter it.
+            }
+        }
     }
 
     private func enqueueMotionPersistence(_ event: MotionPersistenceEvent) {
@@ -478,6 +527,13 @@ public final class AvatarSurfaceController {
         let profileID: UUID
         let store: AvatarProfileStore
         let owner: MotionPersistenceOwner
+        var rendererSuccessEnqueued = false
+        var rendererFailureEnqueued = false
+    }
+
+    private enum RendererPersistenceEvent: Sendable {
+        case success
+        case failure
     }
 
     private enum MotionPersistenceEvent: Sendable {

@@ -4,7 +4,14 @@ set -euo pipefail
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/miller-avatar-release-contract.XXXXXX")
-trap 'rm -rf -- "$temporary_root"' EXIT
+unrelated_generated_probe=
+cleanup() {
+    if [[ -n "$unrelated_generated_probe" ]]; then
+        rm -f -- "$unrelated_generated_probe"
+    fi
+    rm -rf -- "$temporary_root"
+}
+trap cleanup EXIT
 pinned_node=/opt/homebrew/Cellar/node@22/22.22.0/bin/node
 if [[ -x "$pinned_node" ]]; then
     node_command=$pinned_node
@@ -140,8 +147,13 @@ if find "$repository_root/.generated" -maxdepth 1 -type d -name 'web-stage.*' -p
     printf 'failed web bundle left a stage directory behind\n' >&2
     exit 1
 fi
-if grep -R -n -E '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' "$repository_root/.generated"; then
-    printf 'bundle-web retained a private path in generated output\n' >&2
+unrelated_generated_probe=$(mktemp \
+    "$repository_root/.generated/contract-unrelated-native-output.XXXXXX")
+printf '/Users/example/private-native-build-path\n' > "$unrelated_generated_probe"
+if grep -R -n -E '/Users/|/private/var/|MILLER_AVATAR_PRIVATE_FIXTURE_ROOT' \
+    "$repository_root/Sources/MillerAvatarHost/Resources/Web"
+then
+    printf 'bundle-web retained a private path in published web resources\n' >&2
     exit 1
 fi
 

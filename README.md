@@ -6,9 +6,9 @@ asset pack.
 
 The package targets macOS 15 with Swift 6.1 and exposes `MillerAvatarCore` and
 `MillerAvatarHost`; `MillerAvatarApp` is a thin diagnostic consumer of those
-public APIs. Miller source integration is explicitly deferred. This approved
-preintegration tranche does not edit Miller or claim that Miller is wired to
-the package.
+public APIs. Miller now consumes those package products as an optional,
+in-process presentation feature. The package remains independently usable and
+does not depend on Miller assistant state.
 
 The caller owns its session, request, generation, playback, projection, and cue
 identity values. It supplies the semantic payloads used for projection and
@@ -126,8 +126,12 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. This documentation does not claim Miller integration or manual visual,
-signing, or release qualification results before that work is completed.
+checks. Miller's remediated C7 source/headless matrix passes, while its exact
+post-remediation package checkpoint and integrated candidate remain pending;
+the current alpha.2 tag does not contain the package-head renderer-persistence
+repair. Owner-visible private-asset, focus, accessibility, and real Live checks
+remain explicitly not run. This documentation does not claim those human
+results, signing, notarization, or final v0.1 release qualification.
 The V5.1 source and bundle record is in
 [`docs/qualification-vrma-v0.1.md`](docs/qualification-vrma-v0.1.md).
 
