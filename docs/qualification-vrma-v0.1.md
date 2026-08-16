@@ -149,8 +149,9 @@ Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
 source matrix passed model and motion failure isolation, replacement and
 stale-callback fencing, Reduced Motion, Avatar-off fallback, typed and Live
 semantic routing, played-output mouth cues, and source-test cleanup. The exact
-post-remediation package checkpoint and integrated artifact remain pending;
-alpha.2 does not contain the package-head renderer-persistence repair.
+alpha.3 package candidate now contains the renderer-persistence repair. The
+Miller-side alpha.3 repin and integrated artifact remain pending; alpha.2 does
+not contain that repair.
 The owner-visible private-model, compatible-motion, physical focus, VoiceOver,
 and real Live protocol remains `HUMAN_NOT_RUN`; it is not backfilled by this
 earlier V5.1 record.

@@ -126,10 +126,10 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. Miller's remediated C7 source/headless matrix passes, while its exact
-post-remediation package checkpoint and integrated candidate remain pending;
-the current alpha.2 tag does not contain the package-head renderer-persistence
-repair. Owner-visible private-asset, focus, accessibility, and real Live checks
+checks. Miller's remediated C7 source/headless matrix passes, and the alpha.3
+package candidate contains the renderer-persistence repair. Miller's exact
+alpha.3 repin and integrated candidate remain pending; alpha.2 does not contain
+that repair. Owner-visible private-asset, focus, accessibility, and real Live checks
 remain explicitly not run. This documentation does not claim those human
 results, signing, notarization, or final v0.1 release qualification.
 The V5.1 source and bundle record is in

@@ -186,8 +186,8 @@ remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
 
 The repositories document automated checks and command paths. The remediated
-C7 source/headless matrix passes. Its exact post-remediation package
-checkpoint and integrated candidate remain pending. The current alpha.2 tag
-does not contain the package-head renderer-persistence repair. Private-asset
+C7 source/headless matrix passes, and the alpha.3 package candidate contains
+the renderer-persistence repair. Miller's exact alpha.3 repin and integrated
+candidate remain pending; alpha.2 does not contain the repair. Private-asset
 visual, physical focus, VoiceOver, real Live, signing, and final release
 qualification remain separate gates.
