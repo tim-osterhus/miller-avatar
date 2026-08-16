@@ -20,6 +20,7 @@ package struct AvatarProfileStoreDependencies: Sendable {
     package let bookmarkResolver: @Sendable (Data) throws -> AvatarResolvedBookmark
     package let securityScope: any SecurityScopedAccess
     package let capture: @Sendable (URL, UInt64) throws -> Data
+    package let beforeMotionMaterialization: (@Sendable () async -> Void)?
 
     package init(
         admission: @escaping @Sendable (Data) -> AssetAdmissionResult,
@@ -29,7 +30,8 @@ package struct AvatarProfileStoreDependencies: Sendable {
         bookmarkCreator: @escaping @Sendable (URL) throws -> Data,
         bookmarkResolver: @escaping @Sendable (Data) throws -> AvatarResolvedBookmark,
         securityScope: any SecurityScopedAccess,
-        capture: @escaping @Sendable (URL, UInt64) throws -> Data
+        capture: @escaping @Sendable (URL, UInt64) throws -> Data,
+        beforeMotionMaterialization: (@Sendable () async -> Void)? = nil
     ) {
         self.admission = admission
         self.motionAdmission = motionAdmission
@@ -37,6 +39,7 @@ package struct AvatarProfileStoreDependencies: Sendable {
         self.bookmarkResolver = bookmarkResolver
         self.securityScope = securityScope
         self.capture = capture
+        self.beforeMotionMaterialization = beforeMotionMaterialization
     }
 
     package init(
@@ -113,6 +116,7 @@ package struct ProfileStoreFileOperations: Sendable {
     package let reopen: @Sendable (URL) throws -> Data?
     package let directoryFsync: @Sendable (URL) throws -> Void
     package let unlink: @Sendable (URL) throws -> Void
+    package let resetMetadataFiles: @Sendable ([URL]) throws -> Bool
 
     package var fsyncFile: @Sendable (URL) throws -> Void { fileFsync }
     package var fsyncDirectory: @Sendable (URL) throws -> Void { directoryFsync }
@@ -126,6 +130,36 @@ package struct ProfileStoreFileOperations: Sendable {
         directoryFsync: @escaping @Sendable (URL) throws -> Void,
         unlink: @escaping @Sendable (URL) throws -> Void
     ) {
+        self.init(
+            read: read,
+            write: write,
+            fileFsync: fileFsync,
+            rename: rename,
+            reopen: reopen,
+            directoryFsync: directoryFsync,
+            unlink: unlink,
+            resetMetadataFiles: { urls in
+                let present = try urls.map { try read($0) != nil }
+                guard present.contains(true) else { return false }
+                for url in urls {
+                    try unlink(url)
+                }
+                try directoryFsync(urls[0].deletingLastPathComponent())
+                return true
+            }
+        )
+    }
+
+    private init(
+        read: @escaping @Sendable (URL) throws -> Data?,
+        write: @escaping @Sendable (URL, Data) throws -> Void,
+        fileFsync: @escaping @Sendable (URL) throws -> Void,
+        rename: @escaping @Sendable (URL, URL) throws -> Void,
+        reopen: @escaping @Sendable (URL) throws -> Data?,
+        directoryFsync: @escaping @Sendable (URL) throws -> Void,
+        unlink: @escaping @Sendable (URL) throws -> Void,
+        resetMetadataFiles: @escaping @Sendable ([URL]) throws -> Bool
+    ) {
         self.read = read
         self.write = write
         self.fileFsync = fileFsync
@@ -133,6 +167,7 @@ package struct ProfileStoreFileOperations: Sendable {
         self.reopen = reopen
         self.directoryFsync = directoryFsync
         self.unlink = unlink
+        self.resetMetadataFiles = resetMetadataFiles
     }
 
     package init(
@@ -201,7 +236,10 @@ package struct ProfileStoreFileOperations: Sendable {
         },
         reopen: { try POSIXProfileFileOperations.read(at: $0) },
         directoryFsync: { try POSIXProfileFileOperations.fsyncDirectory(at: $0) },
-        unlink: { try POSIXProfileFileOperations.unlinkRegular(at: $0) }
+        unlink: { try POSIXProfileFileOperations.unlinkRegular(at: $0) },
+        resetMetadataFiles: { urls in
+            try POSIXProfileFileOperations.resetRegularFiles(at: urls)
+        }
     )
 }
 
@@ -236,6 +274,7 @@ public actor AvatarProfileStore {
     private let root: URL
     private let dependencies: AvatarProfileStoreDependencies
     private let fileOperations: ProfileStoreFileOperations
+    private var activeMaterializationLeases: [ObjectIdentifier: ProfileMaterializationLease] = [:]
 
     public init(root: URL) {
         self.root = root
@@ -311,6 +350,13 @@ public actor AvatarProfileStore {
     }
 
     public func rename(id: UUID, displayName: String) throws {
+        _ = try renameCommitted(id: id, displayName: displayName)
+    }
+
+    public func renameCommitted(
+        id: UUID,
+        displayName: String
+    ) throws -> AvatarProfileCommit? {
         guard AvatarProfile.isValidDisplayName(displayName) else {
             throw AvatarProfileStoreError.invalidDisplayName
         }
@@ -319,22 +365,27 @@ public actor AvatarProfileStore {
             throw AvatarProfileStoreError.unknownProfile
         }
         guard profiles[index].displayName != displayName else {
-            return
+            return nil
         }
         profiles[index] = try replacing(
             profiles[index],
             displayName: displayName
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[index])
     }
 
     public func remove(id: UUID) throws {
+        _ = try removeCommitted(id: id)
+    }
+
+    public func removeCommitted(id: UUID) throws -> AvatarProfileCommit? {
         var profiles = try readProfiles()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw AvatarProfileStoreError.unknownProfile
         }
+        let removed = profiles[index]
         profiles.remove(at: index)
-        try commit(profiles)
+        return try commit(profiles, receiptFor: removed)
     }
 
     public func importMotion(
@@ -342,6 +393,18 @@ public actor AvatarProfileStore {
         at url: URL,
         displayName: String
     ) throws -> AvatarMotionSummary {
+        try importMotionCommitted(
+            profileID: profileID,
+            at: url,
+            displayName: displayName
+        ).summary
+    }
+
+    public func importMotionCommitted(
+        profileID: UUID,
+        at url: URL,
+        displayName: String
+    ) throws -> AvatarMotionImportResult {
         guard AvatarProfile.isValidDisplayName(displayName) else {
             throw AvatarProfileStoreError.invalidDisplayName
         }
@@ -372,8 +435,8 @@ public actor AvatarProfileStore {
             profileRevision: nextRevision(profiles[profileIndex].profileRevision),
             motionLibrary: library
         )
-        try commit(profiles)
-        return motion.summary
+        let commit = try commit(profiles, receiptFor: profiles[profileIndex])
+        return AvatarMotionImportResult(summary: motion.summary, commit: commit)
     }
 
     public func renameMotion(
@@ -381,6 +444,18 @@ public actor AvatarProfileStore {
         motionID: UUID,
         displayName: String
     ) throws {
+        _ = try renameMotionCommitted(
+            profileID: profileID,
+            motionID: motionID,
+            displayName: displayName
+        )
+    }
+
+    public func renameMotionCommitted(
+        profileID: UUID,
+        motionID: UUID,
+        displayName: String
+    ) throws -> AvatarProfileCommit? {
         guard AvatarProfile.isValidDisplayName(displayName) else {
             throw AvatarProfileStoreError.invalidDisplayName
         }
@@ -391,17 +466,24 @@ public actor AvatarProfileStore {
         guard let motion = profiles[profileIndex].motionLibrary[motionID] else {
             throw AvatarProfileStoreError.unknownMotion
         }
-        guard motion.displayName != displayName else { return }
+        guard motion.displayName != displayName else { return nil }
         var library = profiles[profileIndex].motionLibrary
         library[motionID] = replacing(motion, displayName: displayName)
         profiles[profileIndex] = try replacing(
             profiles[profileIndex],
             motionLibrary: library
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[profileIndex])
     }
 
     public func removeMotion(profileID: UUID, motionID: UUID) throws {
+        _ = try removeMotionCommitted(profileID: profileID, motionID: motionID)
+    }
+
+    public func removeMotionCommitted(
+        profileID: UUID,
+        motionID: UUID
+    ) throws -> AvatarProfileCommit? {
         var profiles = try readProfiles()
         guard let profileIndex = profiles.firstIndex(where: { $0.id == profileID }) else {
             throw AvatarProfileStoreError.unknownProfile
@@ -419,7 +501,7 @@ public actor AvatarProfileStore {
             motionLibrary: library,
             motionBindings: bindings
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[profileIndex])
     }
 
     public func bindMotion(
@@ -427,6 +509,18 @@ public actor AvatarProfileStore {
         role: AvatarMotionRole,
         motionID: UUID?
     ) throws {
+        _ = try bindMotionCommitted(
+            profileID: profileID,
+            role: role,
+            motionID: motionID
+        )
+    }
+
+    public func bindMotionCommitted(
+        profileID: UUID,
+        role: AvatarMotionRole,
+        motionID: UUID?
+    ) throws -> AvatarProfileCommit? {
         var profiles = try readProfiles()
         guard let profileIndex = profiles.firstIndex(where: { $0.id == profileID }) else {
             throw AvatarProfileStoreError.unknownProfile
@@ -440,7 +534,7 @@ public actor AvatarProfileStore {
             }
         }
         guard profiles[profileIndex].motionBindings[role] != motionID else {
-            return
+            return nil
         }
         var bindings = profiles[profileIndex].motionBindings
         if let motionID {
@@ -453,26 +547,37 @@ public actor AvatarProfileStore {
             profileRevision: nextRevision(profiles[profileIndex].profileRevision),
             motionBindings: bindings
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[profileIndex])
     }
 
     public func retry(id: UUID) throws {
+        _ = try retryCommitted(id: id)
+    }
+
+    public func retryCommitted(id: UUID) throws -> AvatarProfileCommit? {
         var profiles = try readProfiles()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw AvatarProfileStoreError.unknownProfile
         }
         let current = profiles[index]
         guard current.consecutiveLoadFailures != 0 else {
-            return
+            return nil
         }
         profiles[index] = try replacing(
             current,
             consecutiveLoadFailures: 0
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[index])
     }
 
     public func retryMotion(profileID: UUID, motionID: UUID) throws {
+        _ = try retryMotionCommitted(profileID: profileID, motionID: motionID)
+    }
+
+    public func retryMotionCommitted(
+        profileID: UUID,
+        motionID: UUID
+    ) throws -> AvatarProfileCommit? {
         var profiles = try readProfiles()
         guard let profileIndex = profiles.firstIndex(where: { $0.id == profileID }) else {
             throw AvatarProfileStoreError.unknownProfile
@@ -481,7 +586,7 @@ public actor AvatarProfileStore {
             throw AvatarProfileStoreError.unknownMotion
         }
         guard motion.consecutiveLoadFailures != 0 || motion.lastFailure != nil else {
-            return
+            return nil
         }
         var library = profiles[profileIndex].motionLibrary
         library[motionID] = replacing(
@@ -493,7 +598,19 @@ public actor AvatarProfileStore {
             profiles[profileIndex],
             motionLibrary: library
         )
-        try commit(profiles)
+        return try commit(profiles, receiptFor: profiles[profileIndex])
+    }
+
+    public func resetMetadata() throws {
+        let metadataURLs = [
+            root.appendingPathComponent(Self.fileName),
+            root.appendingPathComponent(Self.legacyFileName)
+        ]
+        for lease in activeMaterializationLeases.values {
+            lease.invalidate()
+        }
+        activeMaterializationLeases.removeAll()
+        _ = try fileOperations.resetMetadataFiles(metadataURLs)
     }
 
     public func recordRendererSuccess(id: UUID) throws {
@@ -601,6 +718,9 @@ public actor AvatarProfileStore {
         id: UUID,
         lease: ProfileMaterializationLease
     ) async throws {
+        let leaseID = ObjectIdentifier(lease)
+        activeMaterializationLeases[leaseID] = lease
+        defer { activeMaterializationLeases.removeValue(forKey: leaseID) }
         try leaseCheckpoint(lease)
         let profiles = try readProfiles()
         try leaseCheckpoint(lease)
@@ -930,6 +1050,9 @@ public actor AvatarProfileStore {
         lease: ProfileMaterializationLease
     ) async throws -> MotionMaterialization {
         try leaseCheckpoint(lease)
+        if let beforeMotionMaterialization = dependencies.beforeMotionMaterialization {
+            await beforeMotionMaterialization()
+        }
         if reference.isQuarantined {
             return MotionMaterialization(
                 reference: reference,
@@ -1314,6 +1437,17 @@ public actor AvatarProfileStore {
 
     private func commit(
         _ profiles: [StoredAvatarProfile],
+        receiptFor profile: StoredAvatarProfile
+    ) throws -> AvatarProfileCommit {
+        try commit(profiles)
+        return AvatarProfileCommit(
+            profileID: profile.id,
+            profileRevision: profile.profileRevision
+        )
+    }
+
+    private func commit(
+        _ profiles: [StoredAvatarProfile],
         owner: MotionPersistenceOwner?
     ) throws {
         guard let owner else {
@@ -1652,20 +1786,10 @@ private enum POSIXProfileFileOperations {
     static let maximumJSONBytes = AvatarProfileStore.maximumJSONBytes
 
     static func read(at url: URL) throws -> Data? {
-        var rootInfo = stat()
         let rootPath = url.deletingLastPathComponent()
-        if lstat(rootPath.path, &rootInfo) != 0 {
-            guard errno == ENOENT else { throw AvatarProfileStoreError.persistenceFailed }
+        guard let rootDescriptor = try openExistingRootDescriptor(rootPath) else {
             return nil
         }
-        guard (rootInfo.st_mode & S_IFMT) == S_IFDIR else {
-            throw AvatarProfileStoreError.persistenceFailed
-        }
-        let rootDescriptor = open(
-            rootPath.path,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-        )
-        guard rootDescriptor >= 0 else { throw AvatarProfileStoreError.persistenceFailed }
         defer { _ = close(rootDescriptor) }
 
         let descriptor = url.lastPathComponent.withCString { name in
@@ -1816,13 +1940,57 @@ private enum POSIXProfileFileOperations {
         guard result == 0 else { throw AvatarProfileStoreError.persistenceFailed }
     }
 
+    static func resetRegularFiles(at urls: [URL]) throws -> Bool {
+        guard let first = urls.first else { return false }
+        let root = first.deletingLastPathComponent()
+        let rootPath = root.standardizedFileURL.path
+        guard urls.allSatisfy({
+            $0.deletingLastPathComponent().standardizedFileURL.path == rootPath
+        }) else {
+            throw AvatarProfileStoreError.persistenceFailed
+        }
+        guard let rootDescriptor = try openExistingRootDescriptor(root) else {
+            return false
+        }
+        defer { _ = close(rootDescriptor) }
+
+        var present: [Bool] = []
+        for url in urls {
+            var info = stat()
+            let status = url.lastPathComponent.withCString { name in
+                fstatat(rootDescriptor, name, &info, AT_SYMLINK_NOFOLLOW)
+            }
+            if status != 0 {
+                guard errno == ENOENT else {
+                    throw AvatarProfileStoreError.persistenceFailed
+                }
+                present.append(false)
+                continue
+            }
+            guard (info.st_mode & S_IFMT) == S_IFREG else {
+                throw AvatarProfileStoreError.persistenceFailed
+            }
+            present.append(true)
+        }
+        guard present.contains(true) else { return false }
+
+        for (url, exists) in zip(urls, present) where exists {
+            let result = url.lastPathComponent.withCString { name in
+                unlinkat(rootDescriptor, name, 0)
+            }
+            guard result == 0 else { throw AvatarProfileStoreError.persistenceFailed }
+        }
+        guard fsync(rootDescriptor) == 0 else {
+            throw AvatarProfileStoreError.persistenceFailed
+        }
+        return true
+    }
+
     private static func openRootDescriptor(_ root: URL) throws -> Int32 {
         try ensureRootDirectory(root)
-        let descriptor = open(
-            root.path,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-        )
-        guard descriptor >= 0 else { throw AvatarProfileStoreError.persistenceFailed }
+        guard let descriptor = try openExistingRootDescriptor(root) else {
+            throw AvatarProfileStoreError.persistenceFailed
+        }
         return descriptor
     }
 
@@ -1842,6 +2010,40 @@ private enum POSIXProfileFileOperations {
         } else if (info.st_mode & S_IFMT) != S_IFDIR {
             throw AvatarProfileStoreError.persistenceFailed
         }
+    }
+
+    private static func openExistingRootDescriptor(_ root: URL) throws -> Int32? {
+        var info = stat()
+        if lstat(root.path, &info) != 0 {
+            guard errno == ENOENT else { throw AvatarProfileStoreError.persistenceFailed }
+            return nil
+        }
+        guard (info.st_mode & S_IFMT) == S_IFDIR else {
+            throw AvatarProfileStoreError.persistenceFailed
+        }
+        let descriptor = open(
+            root.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else { throw AvatarProfileStoreError.persistenceFailed }
+
+        var openedInfo = stat()
+        guard fstat(descriptor, &openedInfo) == 0,
+              (openedInfo.st_mode & S_IFMT) == S_IFDIR,
+              fchmod(descriptor, mode_t(0o700)) == 0
+        else {
+            _ = close(descriptor)
+            throw AvatarProfileStoreError.persistenceFailed
+        }
+
+        var enforcedInfo = stat()
+        guard fstat(descriptor, &enforcedInfo) == 0,
+              (enforcedInfo.st_mode & mode_t(0o777)) == mode_t(0o700)
+        else {
+            _ = close(descriptor)
+            throw AvatarProfileStoreError.persistenceFailed
+        }
+        return descriptor
     }
 
     private static func validateDestination(

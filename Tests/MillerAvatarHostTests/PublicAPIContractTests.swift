@@ -115,6 +115,42 @@ import MillerAvatarHost
     }
 
     @Test
+    func profileStoreExposesBoundedCommitReceiptsAndReset() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/MillerAvatarHost/AvatarProfile.swift")
+        let profileSource = try String(contentsOf: sourceURL, encoding: .utf8)
+        let storeSourceURL = sourceURL.deletingLastPathComponent()
+            .appendingPathComponent("AvatarProfileStore.swift")
+        let storeSource = try String(contentsOf: storeSourceURL, encoding: .utf8)
+        let compactStoreSource = storeSource.filter { !$0.isWhitespace }
+
+        #expect(profileSource.contains(
+            "public struct AvatarProfileCommit: Equatable, Sendable"
+        ))
+        #expect(profileSource.contains(
+            "public struct AvatarMotionImportResult: Equatable, Sendable"
+        ))
+        #expect(compactStoreSource.contains(
+            "publicfuncrenameCommitted(id:UUID,displayName:String)throws->AvatarProfileCommit?"
+        ))
+        #expect(compactStoreSource.contains(
+            "publicfuncremoveCommitted(id:UUID)throws->AvatarProfileCommit?"
+        ))
+        #expect(compactStoreSource.contains("publicfuncimportMotionCommitted("))
+        #expect(compactStoreSource.contains("publicfuncrenameMotionCommitted("))
+        #expect(compactStoreSource.contains("publicfuncremoveMotionCommitted("))
+        #expect(compactStoreSource.contains("publicfuncbindMotionCommitted("))
+        #expect(compactStoreSource.contains(
+            "publicfuncretryCommitted(id:UUID)throws->AvatarProfileCommit?"
+        ))
+        #expect(compactStoreSource.contains("publicfuncretryMotionCommitted("))
+        #expect(compactStoreSource.contains("publicfuncresetMetadata()throws"))
+    }
+
+    @Test
     func rawAssetSelectionSurfaceIsPackageOnly() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

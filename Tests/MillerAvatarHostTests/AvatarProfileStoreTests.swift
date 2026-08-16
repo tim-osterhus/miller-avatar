@@ -118,6 +118,327 @@ struct AvatarProfileStoreTests {
     }
 
     @Test
+    func committedVariantsReturnExactReceiptOrNilForEveryRequestedMutation() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modelBytes = try minimalGLB()
+        let model = try #require(await admittedAsset(for: modelBytes))
+        let motion = admittedMotion(bytes: Data([7, 8]))
+        let store = makeStore(
+            root: root,
+            modelBytes: modelBytes,
+            model: model,
+            motionDefault: motion
+        )
+
+        let profile = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let initialCommit = AvatarProfileCommit(
+            profileID: profile.id,
+            profileRevision: profile.profileRevision
+        )
+
+        #expect(try await store.renameCommitted(
+            id: profile.id,
+            displayName: "Renamed"
+        ) == initialCommit)
+        #expect(try await store.renameCommitted(
+            id: profile.id,
+            displayName: "Renamed"
+        ) == nil)
+
+        let importedMotion = try await store.importMotionCommitted(
+            profileID: profile.id,
+            at: root.appendingPathComponent("wave.vrma"),
+            displayName: "Wave"
+        )
+        #expect(importedMotion.summary.displayName == "Wave")
+        let motionCommit = AvatarProfileCommit(
+            profileID: profile.id,
+            profileRevision: profile.profileRevision + 1
+        )
+        #expect(importedMotion.commit == motionCommit)
+
+        #expect(try await store.renameMotionCommitted(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id,
+            displayName: "Renamed wave"
+        ) == motionCommit)
+        #expect(try await store.renameMotionCommitted(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id,
+            displayName: "Renamed wave"
+        ) == nil)
+
+        let boundCommit = try #require(try await store.bindMotionCommitted(
+            profileID: profile.id,
+            role: .idle,
+            motionID: importedMotion.summary.id
+        ))
+        #expect(boundCommit == AvatarProfileCommit(
+            profileID: profile.id,
+            profileRevision: motionCommit.profileRevision + 1
+        ))
+        #expect(try await store.bindMotionCommitted(
+            profileID: profile.id,
+            role: .idle,
+            motionID: importedMotion.summary.id
+        ) == nil)
+
+        try await store.recordRendererFailure(id: profile.id)
+        #expect(try await store.retryCommitted(id: profile.id) == boundCommit)
+        #expect(try await store.retryCommitted(id: profile.id) == nil)
+
+        try await store.recordMotionRendererFailure(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id
+        )
+        #expect(try await store.retryMotionCommitted(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id
+        ) == boundCommit)
+        #expect(try await store.retryMotionCommitted(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id
+        ) == nil)
+
+        let removedMotionCommit = try #require(try await store.removeMotionCommitted(
+            profileID: profile.id,
+            motionID: importedMotion.summary.id
+        ))
+        #expect(removedMotionCommit == AvatarProfileCommit(
+            profileID: profile.id,
+            profileRevision: boundCommit.profileRevision + 1
+        ))
+
+        #expect(try await store.removeCommitted(id: profile.id) == removedMotionCommit)
+    }
+
+    @Test
+    func resetMetadataRemovesOnlyKnownFilesAndIsIdempotent() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modelBytes = try minimalGLB()
+        let model = try #require(await admittedAsset(for: modelBytes))
+        let store = makeStore(root: root, modelBytes: modelBytes, model: model)
+        _ = try await store.importModel(
+            at: root.appendingPathComponent("original.vrm"),
+            displayName: "Avatar"
+        )
+
+        let originalModel = Data([1, 2, 3])
+        let originalMotion = Data([4, 5, 6])
+        let unrelated = Data([7, 8, 9])
+        try originalModel.write(to: root.appendingPathComponent("original.vrm"))
+        try originalMotion.write(to: root.appendingPathComponent("original.vrma"))
+        try unrelated.write(to: root.appendingPathComponent("keep.bin"))
+        try Data("legacy".utf8).write(
+            to: root.appendingPathComponent(AvatarProfileStore.legacyFileName)
+        )
+
+        try await store.resetMetadata()
+        try await store.resetMetadata()
+
+        #expect(!FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(AvatarProfileStore.fileName).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(AvatarProfileStore.legacyFileName).path
+        ))
+        #expect(try Data(contentsOf: root.appendingPathComponent("original.vrm")) == originalModel)
+        #expect(try Data(contentsOf: root.appendingPathComponent("original.vrma")) == originalMotion)
+        #expect(try Data(contentsOf: root.appendingPathComponent("keep.bin")) == unrelated)
+        #expect(try await store.list().isEmpty)
+    }
+
+    @Test
+    func resetMetadataSerializesWithImportWithoutCorruptingEitherOutcome() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modelBytes = try minimalGLB()
+        let model = try #require(await admittedAsset(for: modelBytes))
+        let store = makeStore(root: root, modelBytes: modelBytes, model: model)
+
+        async let reset: Void = store.resetMetadata()
+        async let imported = store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        _ = try await reset
+        _ = try await imported
+
+        let profiles = try await store.list()
+        #expect(profiles.count == 0 || profiles.count == 1)
+        if profiles.isEmpty {
+            #expect(!FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(AvatarProfileStore.fileName).path
+            ))
+        } else {
+            #expect(profiles[0].profileRevision == 1)
+        }
+    }
+
+    @Test
+    func resetMetadataRefusesSymlinkAndNonRegularKnownFiles() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let store = AvatarProfileStore(root: root)
+
+        for fileName in [AvatarProfileStore.fileName, AvatarProfileStore.legacyFileName] {
+            let target = root.appendingPathComponent(fileName)
+            let external = outside.appendingPathComponent(fileName)
+            try Data([1, 2, 3]).write(to: external)
+            try FileManager.default.createSymbolicLink(
+                at: target,
+                withDestinationURL: external
+            )
+            await expectError(.persistenceFailed) {
+                try await store.resetMetadata()
+            }
+            #expect(try Data(contentsOf: external) == Data([1, 2, 3]))
+            try FileManager.default.removeItem(at: target)
+
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            await expectError(.persistenceFailed) {
+                try await store.resetMetadata()
+            }
+            try FileManager.default.removeItem(at: target)
+        }
+    }
+
+    @Test
+    func resetMetadataPreflightsBothKnownFilesBeforeRemovingEither() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let v2 = root.appendingPathComponent(AvatarProfileStore.fileName)
+        let v1 = root.appendingPathComponent(AvatarProfileStore.legacyFileName)
+        let external = outside.appendingPathComponent("legacy.json")
+        let originalV2 = Data("v2-metadata".utf8)
+        let originalExternal = Data("outside".utf8)
+        try originalV2.write(to: v2)
+        try originalExternal.write(to: external)
+        try FileManager.default.createSymbolicLink(at: v1, withDestinationURL: external)
+
+        await expectError(.persistenceFailed) {
+            try await AvatarProfileStore(root: root).resetMetadata()
+        }
+
+        #expect(try Data(contentsOf: v2) == originalV2)
+        #expect(try Data(contentsOf: external) == originalExternal)
+        #expect(FileManager.default.fileExists(atPath: v1.path))
+    }
+
+    @Test
+    func resetMetadataOnAbsentRootIsAnIdempotentNoOpWithoutCreatingRoot() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("miller-avatar-absent-reset-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AvatarProfileStore(root: root)
+
+        try await store.resetMetadata()
+        try await store.resetMetadata()
+
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+    }
+
+    @Test
+    func resetInvalidatesSuspendedMaterializationBeforeItCanCommit() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originalModelBytes = try minimalGLB()
+        let changedModelBytes = try minimalGLB(binaryByteCount: 8)
+        let originalModel = try #require(await admittedAsset(for: originalModelBytes))
+        let changedModel = try #require(await admittedAsset(for: changedModelBytes))
+        let motion = admittedMotion(bytes: Data([3, 4]))
+        let model = LockedBox<AdmittedAsset?>(originalModel)
+        let capturedModel = LockedBox(originalModelBytes)
+        let gateEntered = LockedBox(false)
+        let gateOpen = LockedBox(false)
+        let store = makeStore(
+            root: root,
+            modelBytes: originalModelBytes,
+            model: originalModel,
+            modelBox: model,
+            motionDefault: motion,
+            capture: { url, _ in
+                url.pathExtension == "vrm" ? capturedModel.current : Data([3, 4])
+            },
+            beforeMotionMaterialization: {
+                gateEntered.set(true)
+                while !gateOpen.current { await Task.yield() }
+            }
+        )
+        let profile = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar"
+        )
+        let importedMotion = try await store.importMotion(
+            profileID: profile.id,
+            at: root.appendingPathComponent("motion.vrma"),
+            displayName: "Motion"
+        )
+        try await store.bindMotion(
+            profileID: profile.id,
+            role: .idle,
+            motionID: importedMotion.id
+        )
+        capturedModel.set(changedModelBytes)
+        model.set(changedModel)
+        let lease = ProfileMaterializationLease()
+        let materialization = Task {
+            try await store.materializeForRendering(id: profile.id, lease: lease)
+        }
+        try await waitUntil { gateEntered.current }
+        let reset = Task { try await store.resetMetadata() }
+        try await reset.value
+        gateOpen.set(true)
+
+        do {
+            try await materialization.value
+            Issue.record("expected suspended materialization to be invalidated")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+        #expect(lease.preparedProfile == nil)
+        #expect(!FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(AvatarProfileStore.fileName).path
+        ))
+    }
+
+    @Test
+    func productionOpeningExistingRootEnforcesOwnerOnlyModeAndRejectsSymlinkRoot() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o755)],
+            ofItemAtPath: root.path
+        )
+
+        #expect(try await AvatarProfileStore(root: root).list().isEmpty)
+        let attributes = try FileManager.default.attributesOfItem(atPath: root.path)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber).intValue
+        #expect(permissions & 0o777 == 0o700)
+
+        let actual = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: actual) }
+        let alias = root.deletingLastPathComponent()
+            .appendingPathComponent("symlink-root-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: alias) }
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual)
+        await expectError(.persistenceFailed) {
+            _ = try await AvatarProfileStore(root: alias).list()
+        }
+    }
+
+    @Test
     func unchangedMaterializationAndBookmarkOnlyRefreshDoNotChangeRevision() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1388,6 +1709,7 @@ struct AvatarProfileStoreTests {
         capture: (@Sendable (URL, UInt64) throws -> Data)? = nil,
         bookmarkResolver: (@Sendable (Data) throws -> AvatarResolvedBookmark)? = nil,
         bookmarkCreator: (@Sendable (URL) throws -> Data)? = nil,
+        beforeMotionMaterialization: (@Sendable () async -> Void)? = nil,
         fileOperations: ProfileStoreFileOperations = .production
     ) -> AvatarProfileStore {
         let selectedModel = modelBox ?? LockedBox(model)
@@ -1422,7 +1744,8 @@ struct AvatarProfileStoreTests {
                 if let capture { return try capture(url, maximumBytes) }
                 if let bytes = motionBytes[url.lastPathComponent] { return bytes }
                 return url.pathExtension == "vrma" ? Data([7]) : modelBytes
-            }
+            },
+            beforeMotionMaterialization: beforeMotionMaterialization
         )
         return AvatarProfileStore(
             root: root,

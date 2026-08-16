@@ -197,6 +197,26 @@ public struct AvatarMotionSummary: Equatable, Sendable {
     }
 }
 
+public struct AvatarProfileCommit: Equatable, Sendable {
+    public let profileID: UUID
+    public let profileRevision: UInt64
+
+    public init(profileID: UUID, profileRevision: UInt64) {
+        self.profileID = profileID
+        self.profileRevision = profileRevision
+    }
+}
+
+public struct AvatarMotionImportResult: Equatable, Sendable {
+    public let summary: AvatarMotionSummary
+    public let commit: AvatarProfileCommit
+
+    public init(summary: AvatarMotionSummary, commit: AvatarProfileCommit) {
+        self.summary = summary
+        self.commit = commit
+    }
+}
+
 public enum AvatarModelStatus: String, Equatable, Sendable {
     case available
     case quarantined
