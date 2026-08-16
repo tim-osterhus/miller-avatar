@@ -1,12 +1,13 @@
 # VRMA v0.1 qualification record
 
-Status: `V5.1_SOURCE_BUNDLE_CLOSED_HEADLESS_READY_FOR_INDEPENDENT_QA`
+Status: `HISTORICAL_V5.1_RECORD_WITH_ALPHA3_CHECKPOINT_UPDATE`
 
-This record closes the public source, dependency, legal, and offline Web
-bundle work for V5.1. It does not claim private-model visual qualification,
-Miller integration, signing qualification, or an owner-visible GUI gate. The
-native `Resources/build-manifest.json` is intentionally unchanged. V5.2 must
-regenerate it from the parent’s committed V5.1 source head.
+The first part of this record preserves the public source, dependency, legal,
+and offline Web-bundle evidence captured at V5.1. At that historical stage,
+the native `Resources/build-manifest.json` was intentionally unchanged and
+V5.2 still had to regenerate it. Those statements and the original test counts
+below describe that earlier checkpoint. They are not the current alpha.3
+release state. **Alpha.3 checkpoint update** describes the current checkpoint.
 
 ## Closed scope
 
@@ -39,7 +40,7 @@ bundle. It reported both the stale pre-VRMA package-lock hash and the missing
 `@pixiv/three-vrm-animation`/motion source inputs. After the verifier and
 bundle closure changes, the focused suite ran GREEN with 3 tests passing.
 
-The full pinned headless evidence is:
+The historical V5.1 pinned headless evidence was:
 
 - `npm run dependencies:check -- --skip-bundle`: PASS. It verified 65 locked
   package records.
@@ -101,26 +102,45 @@ HTML keeps the existing network-closed CSP. `NOTICE`,
 `THIRD_PARTY_NOTICES.md`, and `PROVENANCE.md` identify the exact animation
 package, license family, source commit, lockfile record, and inclusion boundary.
 
-The release-discipline contract now asserts the exact animation dependency and
-provenance entry. It rebuilds the Web outputs twice in skip-install mode and
+At V5.1, the release-discipline contract asserted the exact animation
+dependency and provenance entry. It rebuilds the Web outputs twice in skip-install mode and
 compares all output hashes. It also preserves the prior committed bundle after
-a simulated bundle failure. Its full release run remains a V5.2 check because
-the current build manifest is intentionally stale until the parent commits this
-source closure. The current contract stop is the expected source revision
-assertion: the manifest records `a7b4749c78fad6b756afac55e9a481d38d8d784f`,
-while the current source set resolves to `ca340c21ad0a15293b893b77992565eb707ebb52`.
+a simulated bundle failure. The remaining V5.2 check at that time was the
+expected source-revision assertion: the manifest recorded
+`a7b4749c78fad6b756afac55e9a481d38d8d784f`, while that historical source set
+resolved to `ca340c21ad0a15293b893b77992565eb707ebb52`. That stale-manifest condition
+was subsequently closed and is no longer a current release gate.
 
 ## Residual gates
 
-After the parent commits the V5.1 source/bundle closure, V5.2 must use external
-Swift scratch and cache roots. It must regenerate
-`Resources/build-manifest.json` with the committed source revision. It must
-then run the full `scripts/test.sh`, dependency, release-discipline, build,
-cleanup, prohibited-asset, and `git diff --check` matrix. V5.3 private
-visual/GUI qualification remains separate and was not run.
+The historical V5.1 residual gates required external Swift scratch and cache
+roots plus a regenerated `Resources/build-manifest.json`. V5.2 also had to run
+the full test, dependency, release-discipline, build, cleanup,
+prohibited-asset, and diff-check matrix. Those source/headless gates are now closed. Private
+visual/GUI qualification remains separate and is not claimed by this record.
 
-Subject to those explicit V5.2 and owner-visible gates, the source and offline
-Web bundle closure is ready for independent QA.
+## Alpha.3 checkpoint update
+
+The C7 renderer-persistence repair was committed as
+`c411e0d73850b47debca80f71f2353b0c84c21cd`. The native package manifest was
+then regenerated and committed in `930f4fbf176960ee6752f5cbcf45cd376578da36`.
+Because release-document clarification is not a manifest input, the manifest
+correctly records the committed source revision `c411e0d73850b47debca80f71f2353b0c84c21cd`.
+
+Fresh alpha.3-candidate headless evidence passed:
+
+- Dependency verification: PASS, with 65 locked packages and 19 emitted inputs.
+- Web tests: PASS, with 74 tests and 0 failures.
+- Web TypeScript check: PASS.
+- Swift package tests: PASS, with 310 tests and 0 failures.
+- release-discipline, deterministic-build, rollback, cleanup, and prohibited-
+  asset contracts: PASS.
+- `git diff --check`: PASS.
+
+No model, VRMA clip, animation pack, motion cache, or user-file copy is bundled.
+The immutable `v0.1.0-alpha.3` tag is the intended package checkpoint for
+Miller C7 integration. Owner-visible private-model and compatible-motion
+qualification remains a separate integrated-candidate gate.
 
 ## Later integration evidence
 
