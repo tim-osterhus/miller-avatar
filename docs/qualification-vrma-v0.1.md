@@ -127,7 +127,7 @@ then regenerated and committed in `930f4fbf176960ee6752f5cbcf45cd376578da36`.
 Because release-document clarification is not a manifest input, the manifest
 correctly records the committed source revision `c411e0d73850b47debca80f71f2353b0c84c21cd`.
 
-Fresh alpha.3-candidate headless evidence passed:
+Fresh alpha.3 checkpoint headless evidence passed:
 
 - Dependency verification: PASS, with 65 locked packages and 19 emitted inputs.
 - Web tests: PASS, with 74 tests and 0 failures.
@@ -138,8 +138,9 @@ Fresh alpha.3-candidate headless evidence passed:
 - `git diff --check`: PASS.
 
 No model, VRMA clip, animation pack, motion cache, or user-file copy is bundled.
-The immutable `v0.1.0-alpha.3` tag is the intended package checkpoint for
-Miller C7 integration. Owner-visible private-model and compatible-motion
+The immutable `v0.1.0-alpha.3` tag is published at
+`dac4d0ab432a9c158dca40985b28335bdfc70e2b` as the package checkpoint for Miller
+C7 integration. Owner-visible private-model and compatible-motion
 qualification remains a separate integrated-candidate gate.
 
 ## Later integration evidence
@@ -148,10 +149,11 @@ Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
 `6b34f9ff35a94cdde9c7826bc67f2cfff02abd82`. Its remediated nonlaunching
 source matrix passed model and motion failure isolation, replacement and
 stale-callback fencing, Reduced Motion, Avatar-off fallback, typed and Live
-semantic routing, played-output mouth cues, and source-test cleanup. The exact
-alpha.3 package candidate now contains the renderer-persistence repair. The
-Miller-side alpha.3 repin and integrated artifact remain pending; alpha.2 does
-not contain that repair.
+semantic routing, played-output mouth cues, and source-test cleanup. The
+published alpha.3 checkpoint contains the renderer-persistence repair. Miller
+public main now pins it at source checkpoint
+`5a8f7e761304e2daeb7bed8ca71163ab1ff15787`; the integrated artifact remains
+pending. Alpha.2 does not contain that repair.
 The owner-visible private-model, compatible-motion, physical focus, VoiceOver,
 and real Live protocol remains `HUMAN_NOT_RUN`; it is not backfilled by this
 earlier V5.1 record.
