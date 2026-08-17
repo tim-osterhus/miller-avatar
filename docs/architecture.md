@@ -186,10 +186,13 @@ remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
 
 The repositories document automated checks and command paths. The remediated
-C7 source/headless matrix passes. The published alpha.4 package checkpoint
-contains the renderer-persistence repair and accepts bounded reachable
-auxiliary rotation tracks for deterministic renderer filtering. Alpha.2 does
-not contain the persistence repair, and alpha.3 retains the over-strict
-auxiliary-track admission rule. Private-asset visual, physical focus,
+C7 source/headless matrix passes. The published alpha.5 package checkpoint
+preserves Pixiv's target-relative VRMA root motion, validates converted samples,
+and computes one fixed camera envelope over configured linear and cubic hips
+motion. Reduced Motion uses the tighter rest-pose bounds. Alpha.5 also contains
+the renderer-persistence and bounded reachable auxiliary-track repairs.
+Alpha.2 does not contain the persistence repair, alpha.3 retains the
+over-strict auxiliary-track rule, and alpha.4 retains incorrect first-frame
+hips reanchoring. Private-asset visual, physical focus,
 VoiceOver, real Live, signing, and final release qualification remain separate
 gates.

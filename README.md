@@ -126,11 +126,13 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. The published alpha.4 package checkpoint contains the
-renderer-persistence repair and admits bounded auxiliary rotation tracks that
-the renderer filters during VRMA retargeting. Alpha.2 does not contain the
-renderer-persistence repair, and alpha.3 retains the over-strict
-auxiliary-track admission rule. Owner-visible private-asset, focus,
+checks. The published alpha.5 package checkpoint preserves Pixiv's converted
+VRMA root motion and frames one fixed target-relative motion envelope instead
+of treating the first animation frame as neutral. It includes alpha.4's
+renderer-persistence and bounded auxiliary-track compatibility repairs.
+Alpha.2 does not contain the persistence repair, alpha.3 retains the
+over-strict auxiliary-track admission rule, and alpha.4 retains the incorrect
+first-frame hips reanchoring. Owner-visible private-asset, focus,
 accessibility, and real Live checks remain explicitly separate. This
 documentation does not claim signing, notarization, or final v0.1 release
 qualification.

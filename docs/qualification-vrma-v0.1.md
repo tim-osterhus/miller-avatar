@@ -174,6 +174,38 @@ No qualification clip, model, animation pack, motion cache, or user-file copy
 is bundled. The immutable package checkpoint is `v0.1.0-alpha.4`. Visual motion
 quality and Miller semantic routing remain integrated-candidate gates.
 
+## Alpha.5 root-motion and framing correction
+
+Private integrated qualification exposed two distinct behaviors. One test
+motion deliberately rotates its hips approximately 180 degrees, and another
+begins crouched before rising; those poses are authored content. Separately,
+the renderer applied an extra first-frame hips reanchor after Pixiv conversion
+and fitted the camera only to the model's rest bounds. That combination shifted
+later motion upward and cropped the avatar.
+
+The correction was committed as
+`01e87b910338849eeb8e9a54cf6d6ee7bf90546a`; its regenerated native package
+manifest was committed as
+`ae0f3355847eaa1aec55ccea26a9476c1e5dd120`. The renderer now preserves
+Pixiv's target-relative skeletal conversion, rejects non-finite samples, and
+fits one stable camera envelope over the configured motions' hips translation.
+The envelope includes interior extrema for cubic-spline tracks and does not
+move per frame. Reduced Motion returns to rest-pose framing.
+
+Fresh alpha.5 checkpoint evidence passed:
+
+- Web tests and TypeScript checking: PASS, with 78 tests and 0 failures;
+- Swift package tests: PASS, with 311 tests and 0 failures;
+- deterministic dual-build, rollback, cache, cleanup, and prohibited-asset
+  contracts: PASS;
+- `git diff --check`: PASS.
+
+No private model, motion, source path, animation pack, or generated motion
+cache entered the repository or package. The immutable package checkpoint is
+`v0.1.0-alpha.5`. Owner-visible exact-model framing and semantic-motion quality
+remain integrated-candidate gates; the package does not relabel unsuitable
+authored clips as renderer failures.
+
 ## Later integration evidence
 
 Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
