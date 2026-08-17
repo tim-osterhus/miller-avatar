@@ -432,7 +432,7 @@
       "format": "esm"
     },
     "src/camera.ts": {
-      "bytes": 2794,
+      "bytes": 3719,
       "imports": [],
       "format": "esm"
     },
@@ -545,7 +545,7 @@
       "format": "esm"
     },
     "src/motion-loader.ts": {
-      "bytes": 13968,
+      "bytes": 11663,
       "imports": [
         {
           "path": "three",
@@ -571,7 +571,7 @@
       "format": "esm"
     },
     "src/renderer.ts": {
-      "bytes": 19427,
+      "bytes": 24560,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -636,7 +636,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 823398,
+      "bytes": 824874,
       "inputs": {
         "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
           "bytesInOutput": 31826
@@ -660,7 +660,7 @@
           "bytesInOutput": 15631
         },
         "src/camera.ts": {
-          "bytesInOutput": 977
+          "bytesInOutput": 1371
         },
         "src/contract.ts": {
           "bytesInOutput": 1276
@@ -681,13 +681,13 @@
           "bytesInOutput": 10063
         },
         "src/motion-loader.ts": {
-          "bytesInOutput": 5525
+          "bytesInOutput": 4633
         },
         "src/presentation.ts": {
           "bytesInOutput": 4149
         },
         "src/renderer.ts": {
-          "bytesInOutput": 9389
+          "bytesInOutput": 11303
         },
         "src/runtime.ts": {
           "bytesInOutput": 545

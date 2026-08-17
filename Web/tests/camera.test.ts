@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fitCamera } from "../src/camera.js";
+import { expandBoundsForOffsets, fitCamera } from "../src/camera.js";
 
 const bounds = {
   min: { x: -1, y: 0, z: -0.25 },
@@ -40,3 +40,36 @@ test("camera recalculates aspect and rejects invalid or degenerate bounds", () =
   assert.ok(depthDominated.position.z - depthDominated.target.z > 5.5);
   assert.ok(Math.abs(depthDominated.near - 0.01) < Number.EPSILON);
 });
+
+test("camera framing can include a fixed root-motion envelope without per-frame refits", () => {
+  const expanded = expandBoundsForOffsets(bounds, [
+    { x: 0, y: -0.46, z: 0.05 },
+    { x: 0.07, y: -0.05, z: 0.34 },
+  ]);
+  assert.deepEqual(expanded.min, { x: -1, y: -0.46, z: -0.25 });
+  assert.equal(expanded.max.x, 1.07);
+  assert.equal(expanded.max.y, 2);
+  assert.ok(Math.abs(expanded.max.z - 0.59) < 1e-12);
+  assert.equal(expanded.visibleMeshes, 1);
+
+  const fit = fitCamera(expanded, 400, 800);
+  const distance = fit.position.z - fit.target.z;
+  assert.ok(fit.near <= distance - (expanded.max.z - expanded.min.z) * 1.1 / 2);
+  assert.ok(fit.far >= distance + (expanded.max.z - expanded.min.z) * 1.1 / 2);
+  assertPaddedCornersInside(fit, expanded);
+});
+
+function assertPaddedCornersInside(
+  fit: ReturnType<typeof fitCamera>,
+  fittedBounds: typeof bounds,
+): void {
+  const tangent = Math.tan((fit.fovDegrees * Math.PI / 180) / 2);
+  const halfWidth = (fittedBounds.max.x - fittedBounds.min.x) * 1.1 / 2;
+  const halfHeight = (fittedBounds.max.y - fittedBounds.min.y) * 1.1 / 2;
+  const halfDepth = (fittedBounds.max.z - fittedBounds.min.z) * 1.1 / 2;
+  for (const z of [fit.target.z - halfDepth, fit.target.z + halfDepth]) {
+    const depth = fit.position.z - z;
+    assert.ok(halfWidth <= depth * tangent * fit.aspect + 1e-12);
+    assert.ok(halfHeight <= depth * tangent + 1e-12);
+  }
+}

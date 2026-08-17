@@ -19,7 +19,7 @@ import {
   type MotionMixerLike,
   type MotionRuntimeIdentity,
 } from "./motion-controller.js";
-import { fitCamera, type Bounds3 } from "./camera.js";
+import { expandBoundsForOffsets, fitCamera, type Bounds3 } from "./camera.js";
 import type { PresentationPhase } from "./contract.js";
 import type { PresentationEffect } from "./presentation.js";
 
@@ -115,6 +115,132 @@ export function collectAvatarEvidence(root: THREE.Object3D): AvatarEvidence {
   };
 }
 
+export function collectRootMotionOffsets(
+  avatar: VRM,
+  registry: MotionRegistry,
+): Array<{ x: number; y: number; z: number }> {
+  const humanoid = avatar.humanoid as typeof avatar.humanoid & {
+    normalizedHumanBones?: { hips?: { node?: { name?: string } } };
+    normalizedRestPose?: { hips?: { position?: readonly number[] | { x?: number; y?: number; z?: number } } };
+  };
+  const hipsName = humanoid?.normalizedHumanBones?.hips?.node?.name;
+  const rawRest = humanoid?.normalizedRestPose?.hips?.position;
+  const rest = Array.isArray(rawRest)
+    ? rawRest
+    : rawRest
+      ? [rawRest.x, rawRest.y, rawRest.z]
+      : [];
+  if (typeof hipsName !== "string"
+    || rest.length !== 3
+    || !rest.every((value) => typeof value === "number" && Number.isFinite(value))) return [];
+
+  const offsets: Array<{ x: number; y: number; z: number }> = [];
+  const visited = new Set<THREE.AnimationClip>();
+  for (const motion of registry.values()) {
+    if (visited.has(motion.clip)) continue;
+    visited.add(motion.clip);
+    const track = motion.clip.tracks.find((candidate) => candidate.name === `${hipsName}.position`);
+    if (!track || track.times.length === 0) continue;
+    const stride = track.values.length / track.times.length;
+    const cubic = track.createInterpolant?.isInterpolantFactoryMethodGLTFCubicSpline === true;
+    if ((!cubic && stride !== 3) || (cubic && stride !== 9)) continue;
+    if (!cubic) {
+      for (let index = 0; index < track.values.length; index += stride) {
+        pushRootOffset(offsets, track.values, index, rest);
+      }
+      continue;
+    }
+    collectCubicRootOffsets(track, rest, offsets);
+  }
+  return offsets;
+}
+
+function collectCubicRootOffsets(
+  track: THREE.KeyframeTrack,
+  rest: readonly unknown[],
+  offsets: Array<{ x: number; y: number; z: number }>,
+): void {
+  for (let index = 3; index < track.values.length; index += 9) {
+    pushRootOffset(offsets, track.values, index, rest);
+  }
+  for (let key = 0; key + 1 < track.times.length; key += 1) {
+    const duration = track.times[key + 1] - track.times[key];
+    if (!Number.isFinite(duration) || duration <= 0) continue;
+    const left = key * 9;
+    const right = (key + 1) * 9;
+    const parameters = new Set<number>();
+    for (let axis = 0; axis < 3; axis += 1) {
+      for (const value of hermiteExtremaParameters(
+        track.values[left + 3 + axis],
+        track.values[right + 3 + axis],
+        duration * track.values[left + 6 + axis],
+        duration * track.values[right + axis],
+      )) parameters.add(value);
+    }
+    for (const parameter of parameters) {
+      const values = [0, 1, 2].map((axis) => cubicHermiteValue(
+        track.values[left + 3 + axis],
+        track.values[right + 3 + axis],
+        duration * track.values[left + 6 + axis],
+        duration * track.values[right + axis],
+        parameter,
+      ));
+      pushRootOffset(offsets, values, 0, rest);
+    }
+  }
+}
+
+function hermiteExtremaParameters(
+  start: number,
+  end: number,
+  startTangent: number,
+  endTangent: number,
+): number[] {
+  const quadratic = 3 * (2 * start - 2 * end + startTangent + endTangent);
+  const linear = 2 * (-3 * start + 3 * end - 2 * startTangent - endTangent);
+  const constant = startTangent;
+  if (![quadratic, linear, constant].every(Number.isFinite)) return [];
+  if (Math.abs(quadratic) < 1e-12) {
+    if (Math.abs(linear) < 1e-12) return [];
+    const root = -constant / linear;
+    return root > 0 && root < 1 ? [root] : [];
+  }
+  const discriminant = linear * linear - 4 * quadratic * constant;
+  if (discriminant < 0) return [];
+  const squareRoot = Math.sqrt(discriminant);
+  return [
+    (-linear - squareRoot) / (2 * quadratic),
+    (-linear + squareRoot) / (2 * quadratic),
+  ].filter((root) => root > 0 && root < 1 && Number.isFinite(root));
+}
+
+function cubicHermiteValue(
+  start: number,
+  end: number,
+  startTangent: number,
+  endTangent: number,
+  parameter: number,
+): number {
+  const squared = parameter * parameter;
+  const cubed = squared * parameter;
+  return (2 * cubed - 3 * squared + 1) * start
+    + (cubed - 2 * squared + parameter) * startTangent
+    + (-2 * cubed + 3 * squared) * end
+    + (cubed - squared) * endTangent;
+}
+
+function pushRootOffset(
+  offsets: Array<{ x: number; y: number; z: number }>,
+  values: ArrayLike<number>,
+  index: number,
+  rest: readonly unknown[],
+): void {
+  const x = values[index] - (rest[0] as number);
+  const y = values[index + 1] - (rest[1] as number);
+  const z = values[index + 2] - (rest[2] as number);
+  if ([x, y, z].every(Number.isFinite)) offsets.push({ x, y, z });
+}
+
 export class ThreeVRMRendererBackend implements RendererBackend {
   private readonly canvas = globalThis.document.createElement("canvas");
   private readonly renderer: THREE.WebGLRenderer;
@@ -127,6 +253,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private motionIdentity: MotionRuntimeIdentity | undefined;
   private motionRegistry: MotionRegistry = new Map();
   private evidence: AvatarEvidence | undefined;
+  private cameraBounds: Bounds3 | undefined;
   private reducedMotion = false;
   private suspended = false;
   private phase: PresentationPhase = "idle";
@@ -160,6 +287,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   configure(reducedMotion: boolean): void {
+    const changed = this.reducedMotion !== reducedMotion;
     this.reducedMotion = reducedMotion;
     this.motionController?.setReducedMotion(reducedMotion);
     if (reducedMotion || this.suspended) this.clock.stop();
@@ -168,6 +296,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
       this.applyPhase(this.phase);
       this.setMouth(0);
     }
+    if (changed) this.fitToAvatar();
   }
 
   async loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar> {
@@ -194,6 +323,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
       this.scene.add(avatar.scene);
       if (avatar.lookAt) avatar.lookAt.target = this.camera;
       this.evidence = collectAvatarEvidence(avatar.scene);
+      this.cameraBounds = this.evidence.bounds;
       this.fitToAvatar();
       return {
         capabilities: {
@@ -232,6 +362,13 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.motionIdentity = identity;
     this.motionRegistry = new Map(registry);
     this.motionController.replaceRegistry({ ...identity, motions: registry });
+    if (this.evidence) {
+      this.cameraBounds = expandBoundsForOffsets(
+        this.evidence.bounds,
+        collectRootMotionOffsets(this.avatar, registry),
+      );
+      this.fitToAvatar();
+    }
   }
 
   setSuspended(suspended: boolean): void {
@@ -357,8 +494,11 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   private fitToAvatar(): void {
-    if (!this.evidence) return;
-    const fit = fitCamera(this.evidence.bounds, this.viewport.width, this.viewport.height);
+    const bounds = this.reducedMotion
+      ? this.evidence?.bounds
+      : this.cameraBounds ?? this.evidence?.bounds;
+    if (!bounds) return;
+    const fit = fitCamera(bounds, this.viewport.width, this.viewport.height);
     this.camera.aspect = fit.aspect;
     this.camera.near = fit.near;
     this.camera.far = fit.far;
@@ -431,6 +571,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.mixer = undefined;
     this.avatar = undefined;
     this.evidence = undefined;
+    this.cameraBounds = undefined;
   }
 
   private applyFramePresentation(_deltaSeconds: number): void {

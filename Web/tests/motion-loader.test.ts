@@ -112,7 +112,7 @@ test("loadMotion classifies stale identity without emitting a result", async () 
   );
 });
 
-test("loadMotion filters expression and look-at tracks and reanchors linear hips translation", async () => {
+test("loadMotion filters expression and look-at tracks without changing converted hips translation", async () => {
   const tracks = [
     track("hips.position", [2, 3, 4, 4, 5, 6]),
     track("head.quaternion", [0, 0, 0, 1]),
@@ -126,7 +126,7 @@ test("loadMotion filters expression and look-at tracks and reanchors linear hips
   const result = await loadMotion(input(), fakeAvatar(), new AbortController().signal, dependencies);
 
   assert.deepEqual(result.clip.tracks.map((entry) => entry.name), ["hips.position", "head.quaternion"]);
-  assert.deepEqual(Array.from(result.clip.tracks[0]!.values), [1, 2, 3, 3, 4, 5]);
+  assert.deepEqual(Array.from(result.clip.tracks[0]!.values), [2, 3, 4, 4, 5, 6]);
 });
 
 test("loadMotion rejects a generated clip with no skeletal tracks and validates target bone names before conversion", async () => {
@@ -148,7 +148,21 @@ test("loadMotion rejects a generated clip with no skeletal tracks and validates 
   }
 });
 
-test("loadMotion reanchors only cubic-spline hips centers and rejects missing normalized-rest hips", async () => {
+test("loadMotion rejects non-finite samples introduced during target conversion", async () => {
+  await assert.rejects(
+    loadMotion(input(), fakeAvatar(), new AbortController().signal, fakeDependencies({
+      parsedAnimations: [{}],
+      createClip() {
+        return new THREE.AnimationClip("non-finite", 1, [
+          track("hips.position", [0, 1, 2, 3, Number.POSITIVE_INFINITY, 5]),
+        ]);
+      },
+    })),
+    /finite/,
+  );
+});
+
+test("loadMotion preserves cubic-spline hips values and does not require a normalized-rest hips position", async () => {
   const tracks = [track("hips.position", [9, 8, 7, 2, 3, 4, 12, 11, 10, 5, 6, 7, 13, 14, 15, 8, 9, 10])];
   const dependencies = fakeDependencies({
     parsedAnimations: [{}],
@@ -160,12 +174,10 @@ test("loadMotion reanchors only cubic-spline hips centers and rejects missing no
       return clip;
     },
   });
-  const result = await loadMotion(input(), fakeAvatar(), new AbortController().signal, dependencies);
-  assert.deepEqual(Array.from(result.clip.tracks[0]!.values), [9, 8, 7, 1, 2, 3, 12, 11, 10, 5, 6, 7, 12, 13, 14, 8, 9, 10]);
-
-  await assert.rejects(
-    loadMotion(input(), fakeAvatar({ includeRestHips: false }), new AbortController().signal, fakeDependencies({ parsedAnimations: [{}] })),
-    /normalized rest hips/,
+  const result = await loadMotion(input(), fakeAvatar({ includeRestHips: false }), new AbortController().signal, dependencies);
+  assert.deepEqual(
+    Array.from(result.clip.tracks[0]!.values),
+    [9, 8, 7, 2, 3, 4, 12, 11, 10, 5, 6, 7, 13, 14, 15, 8, 9, 10],
   );
 });
 

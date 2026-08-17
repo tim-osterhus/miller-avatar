@@ -131,7 +131,6 @@ export async function loadMotion(
       throw new MotionLoadError("motion_load_failed", "expected exactly one VRMA animation");
     }
     const skeletalNames = normalizedHumanoidNodeNames(avatar);
-    const restHipsPosition = normalizedRestHipsPosition(avatar);
     const clip = dependencies.createClip(animations[0], avatar);
     createdClip = clip;
     const filteredTracks = clip.tracks.filter((track) => isSkeletalTrack(track, skeletalNames));
@@ -140,8 +139,8 @@ export async function loadMotion(
       createdClip = undefined;
       throw new MotionLoadError("motion_load_failed", "VRMA animation has no usable humanoid tracks");
     }
+    requireFiniteConvertedTracks(filteredTracks);
     clip.tracks = filteredTracks;
-    reanchorHipsTrack(clip, avatar, restHipsPosition);
     if (signal.aborted || !isCurrent(input)) {
       disposeDetachedClip(clip, dependencies);
       createdClip = undefined;
@@ -257,67 +256,14 @@ function isSkeletalTrack(track: THREE.KeyframeTrack, nodeNames: ReadonlySet<stri
   return nodeNames.has(nodeName) && (path === "position" || path === "quaternion");
 }
 
-function normalizedRestHipsPosition(avatar: VRM): readonly [number, number, number] {
-  const position = (avatar.humanoid?.normalizedRestPose as Record<string, unknown> | undefined)?.hips;
-  const raw = (position as { position?: unknown } | undefined)?.position;
-  const values = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === "object"
-      ? [
-        (raw as { x?: unknown }).x,
-        (raw as { y?: unknown }).y,
-        (raw as { z?: unknown }).z,
-      ]
-      : [];
-  if (values.length !== 3 || !values.every((value) => typeof value === "number" && Number.isFinite(value))) {
-    throw new MotionLoadError("motion_load_failed", "avatar has no normalized rest hips position");
-  }
-  return [values[0] as number, values[1] as number, values[2] as number];
-}
-
-function reanchorHipsTrack(
-  clip: THREE.AnimationClip,
-  avatar: VRM,
-  restHipsPosition: readonly [number, number, number],
-): void {
-  const hipsBone = (avatar.humanoid?.normalizedHumanBones as unknown as Record<string, unknown> | undefined)?.hips;
-  const hipsName = ((hipsBone as { node?: { name?: unknown } } | undefined)?.node?.name);
-  if (typeof hipsName !== "string" || hipsName.length === 0) return;
-  const track = clip.tracks.find((candidate) => candidate.name === `${hipsName}.position`);
-  if (!track) return;
-  const times = track.times;
-  const values = track.values;
-  if (times.length === 0) return;
-  const valueSize = values.length / times.length;
-  const isCubicSpline = track.createInterpolant?.isInterpolantFactoryMethodGLTFCubicSpline === true;
-  if (!isCubicSpline && valueSize === 3) {
-    offsetValues(values, 3, restHipsPosition, 0);
-    return;
-  }
-  if (isCubicSpline && valueSize === 9) {
-    offsetValues(values, 9, restHipsPosition, 3);
-    return;
-  }
-  throw new MotionLoadError("motion_load_failed", "hips position track is not VEC3");
-}
-
-function offsetValues(
-  values: ArrayLike<number> & { [index: number]: number },
-  stride: number,
-  rest: readonly [number, number, number],
-  centerOffset: number,
-): void {
-  const first = [
-    values[centerOffset] ?? Number.NaN,
-    values[centerOffset + 1] ?? Number.NaN,
-    values[centerOffset + 2] ?? Number.NaN,
-  ];
-  if (!first.every(Number.isFinite)) throw new MotionLoadError("motion_load_failed", "hips position values are not finite");
-  const delta = [first[0] - rest[0], first[1] - rest[1], first[2] - rest[2]];
-  for (let index = centerOffset; index < values.length; index += stride) {
-    values[index] -= delta[0];
-    values[index + 1] -= delta[1];
-    values[index + 2] -= delta[2];
+function requireFiniteConvertedTracks(tracks: readonly THREE.KeyframeTrack[]): void {
+  for (const track of tracks) {
+    if (![...track.times, ...track.values].every(Number.isFinite)) {
+      throw new MotionLoadError(
+        "motion_load_failed",
+        "converted humanoid track samples must be finite",
+      );
+    }
   }
 }
 

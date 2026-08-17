@@ -65,8 +65,8 @@
       "sha256": "c83443fb02f0fec5e1b75e20e5756eac54d1ea91e79a05b56fe5b5e09bc38cf8"
     },
     "Web/src/camera.ts": {
-      "bytes": 2794,
-      "sha256": "11f5da77a5c4b2fed10810be609c1543d680ca97151d5a71325bdbcaed86fa87"
+      "bytes": 3719,
+      "sha256": "a12be2f72eb9e27bf38ba76bab30107db5271b28075db4288e91c1ef016ef61f"
     },
     "Web/src/contract.ts": {
       "bytes": 6405,
@@ -97,16 +97,16 @@
       "sha256": "267136ad592a4bd207544dbcb1ee89a4ff620c9c5f590d19f9ec19b9982fcd8a"
     },
     "Web/src/motion-loader.ts": {
-      "bytes": 13968,
-      "sha256": "f59508fc5e5455503d272952cdaec3a41c16437c6dad1fed4befb504770bb188"
+      "bytes": 11663,
+      "sha256": "588b24e509fd3bf6f78b9e1abbbd4fd36dca59987515703bf238ac744333ccd8"
     },
     "Web/src/presentation.ts": {
       "bytes": 8712,
       "sha256": "06649d64b3d6fd4ec77f0d76d52d825440fe3364cc450a9d35feb51edcac9efb"
     },
     "Web/src/renderer.ts": {
-      "bytes": 19427,
-      "sha256": "78937aa924e20b071827c5b28735b6e76fe8072d6466996484d50f490967899d"
+      "bytes": 24560,
+      "sha256": "a4a7801b0817c7d58fd55bbc4966540732d949da32f8fcbdffabfbe4694367c9"
     },
     "Web/src/runtime.ts": {
       "bytes": 1466,
@@ -123,13 +123,13 @@
   },
   "files": {
     "app.js": {
-      "bytes": 823398,
-      "sha256": "2efb0201ab0877fdf4d9a7414b937de601d76f19409957c582b0e0839f6891a0",
+      "bytes": 824874,
+      "sha256": "3e70330a13e7ca0e12e3ba717cd03d43a1bf32496ac4f5cec649410a6dfc419d",
       "mime": "text/javascript; charset=utf-8"
     },
     "bundle-metafile.json": {
-      "bytes": 19513,
-      "sha256": "2f2f955c5e611edd9f52e8178519150768304396cca65fc1777fa46e646b6db6",
+      "bytes": 19515,
+      "sha256": "a99297433d84ba0663394ba17fa3331a6b3ff6e36bb7f2633d236f8023508edf",
       "mime": "application/json; charset=utf-8"
     },
     "index.html": {
@@ -143,5 +143,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "11d5364aaad27d7ca0a8e0eefd9fe5ddb347c0d9c3eab0eec783f70efb998675"
+  "contract_sha256": "a1ebf19c3da211452a15e282b6581d35bbc882841be02cb5ba591ac004648c29"
 }

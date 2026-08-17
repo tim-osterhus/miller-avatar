@@ -3,6 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 import {
   collectAvatarEvidence,
+  collectRootMotionOffsets,
   countAlphaPixels,
   disposeAvatarResources,
   phasePresentationFor,
@@ -78,6 +79,59 @@ test("avatar evidence counts one decoded source across derived texture views", (
 
 test("avatar evidence rejects a scene without visible renderable geometry", () => {
   assert.throws(() => collectAvatarEvidence(new THREE.Group()), /visible geometry/);
+});
+
+test("root-motion framing derives target-relative offsets from each unique hips track", () => {
+  const clip = new THREE.AnimationClip("motion", 1, [
+    new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
+      0.1, 0.4, -0.2,
+      0.3, 1.1, 0.5,
+    ]),
+  ]);
+  const registry = new Map([
+    ["listening", { motionToken: "one", clip }],
+    ["speaking", { motionToken: "one", clip }],
+  ]) as never;
+  const avatar = {
+    humanoid: {
+      normalizedHumanBones: { hips: { node: { name: "normalizedHips" } } },
+      normalizedRestPose: { hips: { position: [0.1, 0.9, 0] } },
+    },
+  } as never;
+
+  const offsets = collectRootMotionOffsets(avatar, registry);
+  assert.equal(offsets.length, 2);
+  for (const [actual, expected] of [
+    [offsets[0]!, { x: 0, y: -0.5, z: -0.2 }],
+    [offsets[1]!, { x: 0.2, y: 0.2, z: 0.5 }],
+  ] as const) {
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-6);
+    assert.ok(Math.abs(actual.y - expected.y) < 1e-6);
+    assert.ok(Math.abs(actual.z - expected.z) < 1e-6);
+  }
+});
+
+test("root-motion framing includes cubic-spline extrema between keys", () => {
+  const track = new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
+    0, 0, 0, 0, 0.9, 0, 0, 4, 0,
+    0, 0, 0, 0, 0.9, 0, 0, 0, 0,
+  ]);
+  const cubicInterpolant = (() => ({})) as typeof track.createInterpolant;
+  cubicInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true;
+  track.createInterpolant = cubicInterpolant;
+  const clip = new THREE.AnimationClip("cubic", 1, [track]);
+  const avatar = {
+    humanoid: {
+      normalizedHumanBones: { hips: { node: { name: "normalizedHips" } } },
+      normalizedRestPose: { hips: { position: [0, 0.9, 0] } },
+    },
+  } as never;
+  const offsets = collectRootMotionOffsets(
+    avatar,
+    new Map([["listening", { motionToken: "cubic", clip }]]) as never,
+  );
+
+  assert.ok(Math.abs(Math.max(...offsets.map((offset) => offset.y)) - 16 / 27) < 1e-6);
 });
 
 test("alpha evidence counts rendered pixels instead of the clear background", () => {
