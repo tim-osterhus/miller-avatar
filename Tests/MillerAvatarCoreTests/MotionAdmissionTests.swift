@@ -515,6 +515,54 @@ import Testing
         #expect(cubicMotion.summary.keyframeScalarValues == 20)
     }
 
+    @Test func admitsReachableAuxiliaryRotationTracksForRendererFiltering() throws {
+        var document = SyntheticGLBFactory.minimalMotionDocument()
+        document["nodes"] = [
+            ["translation": [0, 1, 0], "children": [1]],
+            [:],
+        ]
+        document["buffers"] = [["byteLength": 64]]
+        var views = document["bufferViews"] as! [[String: Any]]
+        views.append(["buffer": 0, "byteOffset": 32, "byteLength": 32])
+        document["bufferViews"] = views
+        var accessors = document["accessors"] as! [[String: Any]]
+        accessors.append([
+            "bufferView": 2,
+            "componentType": 5126,
+            "count": 2,
+            "type": "VEC4",
+        ])
+        document["accessors"] = accessors
+        var animations = document["animations"] as! [[String: Any]]
+        var animation = animations[0]
+        animation["samplers"] = [
+            ["input": 0, "output": 1],
+            ["input": 0, "output": 2],
+        ]
+        animation["channels"] = [
+            ["sampler": 0, "target": ["node": 0, "path": "translation"]],
+            ["sampler": 1, "target": ["node": 1, "path": "rotation"]],
+        ]
+        animations[0] = animation
+        document["animations"] = animations
+
+        var binary = SyntheticGLBFactory.motionBinary()
+        binary.append(SyntheticGLBFactory.motionBinary(
+            times: [],
+            outputs: [0, 0, 0, 1, 0, 0, 0, 1]
+        ))
+        let result = MotionAdmission().admitSynchronously(
+            try SyntheticGLBFactory.makeMotion(document: document, binary: binary)
+        )
+
+        guard case let .admitted(motion) = result else {
+            Issue.record("reachable auxiliary rotation track was rejected")
+            return
+        }
+        #expect(motion.summary.channelCount == 2)
+        #expect(motion.summary.keyframeScalarValues == 18)
+    }
+
     @Test(arguments: [
         "assetVersion", "missingExtension", "draftVersion", "missingScene",
         "invalidScene", "unreachableBone", "cycle", "missingHips", "zeroHips",

@@ -709,6 +709,9 @@ private struct MotionSemanticValidator {
                 guard path == "translation" else { throw MotionAdmissionError.invalid }
                 expectedComponentCount = 3
                 hasExpressionTracks = true
+            } else if reachableNodes.contains(node) {
+                guard path == "rotation" else { throw MotionAdmissionError.invalid }
+                expectedComponentCount = 4
             } else {
                 throw MotionAdmissionError.invalid
             }
