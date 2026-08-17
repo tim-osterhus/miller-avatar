@@ -126,13 +126,14 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. The published alpha.3 package checkpoint contains the
-renderer-persistence repair, and Miller public main pins that exact release.
-The integrated Miller candidate remains pending; alpha.2 does not contain that
-repair. Owner-visible private-asset, focus, accessibility, and real Live
-checks
-remain explicitly not run. This documentation does not claim those human
-results, signing, notarization, or final v0.1 release qualification.
+checks. The published alpha.4 package checkpoint contains the
+renderer-persistence repair and admits bounded auxiliary rotation tracks that
+the renderer filters during VRMA retargeting. Alpha.2 does not contain the
+renderer-persistence repair, and alpha.3 retains the over-strict
+auxiliary-track admission rule. Owner-visible private-asset, focus,
+accessibility, and real Live checks remain explicitly separate. This
+documentation does not claim signing, notarization, or final v0.1 release
+qualification.
 The V5.1 source and bundle record is in
 [`docs/qualification-vrma-v0.1.md`](docs/qualification-vrma-v0.1.md).
 

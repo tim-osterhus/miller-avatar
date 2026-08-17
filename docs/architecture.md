@@ -186,8 +186,10 @@ remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
 
 The repositories document automated checks and command paths. The remediated
-C7 source/headless matrix passes. The published alpha.3 package checkpoint
-contains the renderer-persistence repair, and Miller public main pins it. The
-integrated candidate remains pending; alpha.2 does not contain the repair.
-Private-asset visual, physical focus, VoiceOver, real Live, signing, and final
-release qualification remain separate gates.
+C7 source/headless matrix passes. The published alpha.4 package checkpoint
+contains the renderer-persistence repair and accepts bounded reachable
+auxiliary rotation tracks for deterministic renderer filtering. Alpha.2 does
+not contain the persistence repair, and alpha.3 retains the over-strict
+auxiliary-track admission rule. Private-asset visual, physical focus,
+VoiceOver, real Live, signing, and final release qualification remain separate
+gates.

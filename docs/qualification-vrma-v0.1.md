@@ -143,6 +143,37 @@ The immutable `v0.1.0-alpha.3` tag is published at
 C7 integration. Owner-visible private-model and compatible-motion
 qualification remains a separate integrated-candidate gate.
 
+## Alpha.4 auxiliary-track compatibility update
+
+Real-world VRMA qualification found otherwise-valid clips containing reachable
+auxiliary rotation tracks outside the declared humanoid map. Pixiv conversion
+does not retarget those tracks, and Miller Avatar's renderer already filters the
+converted clip to the target avatar's normalized humanoid bones. Native
+preflight nevertheless rejected the source document before conversion.
+
+The compatibility repair was committed as
+`51ae066a25e5f1781c0a12e5adb043f0cd9110d1`; its regenerated native package
+manifest was committed as `adbf41f5cad871292704d910c7cf7e1e7fc6b585`.
+The repair admits only bounded rotation tracks whose targets are reachable from
+the default scene. Their accessors, interpolation, finite values, duration,
+cardinality, and aggregate resource use remain subject to the existing closed
+budgets. Non-hips auxiliary translation and unsupported paths remain rejected.
+
+Fresh repair evidence passed:
+
+- all seven private qualification clips passed the exact production admission
+  path without entering the repository or release artifacts;
+- Swift verification covered all 311 tests: 310 passed together, and the one
+  timing-sensitive invalidation race passed when rerun in isolation;
+- Web tests and type checking: PASS, with 74 tests and 0 failures;
+- release build, manifest regeneration, shell contracts, and release-discipline
+  rollback/cleanup contracts: PASS;
+- `git diff --check`: PASS.
+
+No qualification clip, model, animation pack, motion cache, or user-file copy
+is bundled. The immutable package checkpoint is `v0.1.0-alpha.4`. Visual motion
+quality and Miller semantic routing remain integrated-candidate gates.
+
 ## Later integration evidence
 
 Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
@@ -150,10 +181,11 @@ Miller's initial C7 integration source resolved `v0.1.0-alpha.2` at
 source matrix passed model and motion failure isolation, replacement and
 stale-callback fencing, Reduced Motion, Avatar-off fallback, typed and Live
 semantic routing, played-output mouth cues, and source-test cleanup. The
-published alpha.3 checkpoint contains the renderer-persistence repair. Miller
-public main now pins it at source checkpoint
-`5a8f7e761304e2daeb7bed8ca71163ab1ff15787`; the integrated artifact remains
-pending. Alpha.2 does not contain that repair.
+published alpha.4 checkpoint contains the renderer-persistence repair plus the
+auxiliary-track compatibility repair. Miller's prior source checkpoint
+`5a8f7e761304e2daeb7bed8ca71163ab1ff15787` pins alpha.3; alpha.4 consumer
+qualification is recorded separately in Miller. Alpha.2 does not contain the
+renderer-persistence repair.
 The owner-visible private-model, compatible-motion, physical focus, VoiceOver,
 and real Live protocol remains `HUMAN_NOT_RUN`; it is not backfilled by this
 earlier V5.1 record.
