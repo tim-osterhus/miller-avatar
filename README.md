@@ -126,16 +126,18 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. The published alpha.5 package checkpoint preserves Pixiv's converted
-VRMA root motion and frames one fixed target-relative motion envelope instead
-of treating the first animation frame as neutral. It includes alpha.4's
+checks. The published alpha.6 package checkpoint preserves Pixiv's converted
+VRMA root motion, frames only the active motion's target-relative envelope, and
+excludes geometry with no renderable material from camera evidence. Reduced
+Motion fully settles the normalized humanoid, render bones, spring state, and
+scene matrices before presenting its static rest frame. It includes alpha.4's
 renderer-persistence and bounded auxiliary-track compatibility repairs.
 Alpha.2 does not contain the persistence repair, alpha.3 retains the
-over-strict auxiliary-track admission rule, and alpha.4 retains the incorrect
-first-frame hips reanchoring. Owner-visible private-asset, focus,
-accessibility, and real Live checks remain explicitly separate. This
-documentation does not claim signing, notarization, or final v0.1 release
-qualification.
+over-strict auxiliary-track admission rule, alpha.4 retains the incorrect
+first-frame hips reanchoring, and alpha.5 uses a profile-wide camera envelope.
+Owner-visible private-asset, focus, accessibility, and real Live checks remain
+explicitly separate. This documentation does not claim signing, notarization,
+or final v0.1 release qualification.
 The V5.1 source and bundle record is in
 [`docs/qualification-vrma-v0.1.md`](docs/qualification-vrma-v0.1.md).
 

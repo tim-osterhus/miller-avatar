@@ -221,3 +221,37 @@ renderer-persistence repair.
 The owner-visible private-model, compatible-motion, physical focus, VoiceOver,
 and real Live protocol remains `HUMAN_NOT_RUN`; it is not backfilled by this
 earlier V5.1 record.
+
+## Alpha.6 active framing and static-pose correction
+
+Owner-visible integrated qualification of alpha.5 found excess deadspace in
+both animated and Reduced Motion presentation, plus malformed clothing and
+secondary geometry after entering Reduced Motion. Alpha.5 framed every active
+state against the union of all configured clips. It also admitted mesh bounds
+before checking whether any bound material could render, and stopped frame
+advancement without fully settling normalized bones, render bones, spring
+state, and scene matrices.
+
+The alpha.6 correction was committed as
+`395105adf6dd9f4a1ab34e79b826194a309660a0`; its regenerated native package
+manifest was committed as
+`3f56a925f1e5119aec46941465249213362f9fa2`. The
+renderer now precomputes a bounded envelope per unique motion and selects only
+the active motion's envelope. Rest presentation uses model-only bounds, and
+non-rendering material geometry cannot enlarge those bounds. Reduced Motion
+performs an ordered zero-delta settle before the static frame.
+
+Fresh headless evidence passed:
+
+- Web tests and TypeScript checking: PASS, with 81 tests and 0 failures;
+- Swift package tests: PASS, with 311 tests and 0 failures after two unrelated
+  timing-sensitive race tests passed in isolation and the complete suite then
+  passed together;
+- dependency, deterministic bundle, native build, rollback, cache, cleanup,
+  and prohibited-asset contracts: PASS;
+- `git diff --check`: PASS.
+
+No private model, motion, source path, animation pack, or generated motion
+cache entered the repository or package. Owner-visible exact-model framing and
+Reduced Motion presentation remain a replacement-candidate gate; this record
+does not infer that visual result from headless tests.
