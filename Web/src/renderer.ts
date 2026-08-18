@@ -80,13 +80,14 @@ export function collectAvatarEvidence(root: THREE.Object3D): AvatarEvidence {
 
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh) || !effectivelyVisible(object)) return;
+    const materials = (Array.isArray(object.material) ? object.material : [object.material])
+      .filter((material) => material.visible);
+    if (materials.length === 0) return;
     const objectBounds = new THREE.Box3().setFromObject(object);
     if (objectBounds.isEmpty()) return;
     visibleMeshes += 1;
     bounds.union(objectBounds);
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) {
-      if (!material.visible) continue;
       materialBindings += 1;
       if (material instanceof MToonMaterial) mtoonMaterials.add(material);
       for (const texture of materialTextures(material)) {
@@ -119,6 +120,57 @@ export function collectRootMotionOffsets(
   avatar: VRM,
   registry: MotionRegistry,
 ): Array<{ x: number; y: number; z: number }> {
+  const target = rootMotionTarget(avatar);
+  if (!target) return [];
+  const offsets: Array<{ x: number; y: number; z: number }> = [];
+  const visited = new Set<THREE.AnimationClip>();
+  for (const motion of registry.values()) {
+    if (visited.has(motion.clip)) continue;
+    visited.add(motion.clip);
+    appendRootMotionOffsets(motion.clip, target, offsets);
+  }
+  return offsets;
+}
+
+export function collectMotionBounds(
+  avatar: VRM,
+  registry: MotionRegistry,
+  baseBounds: Bounds3,
+): ReadonlyMap<string, Bounds3> {
+  const target = rootMotionTarget(avatar);
+  const bounds = new Map<string, Bounds3>();
+  if (!target) return bounds;
+  for (const motion of registry.values()) {
+    if (bounds.has(motion.motionToken)) continue;
+    const offsets: Array<{ x: number; y: number; z: number }> = [];
+    appendRootMotionOffsets(motion.clip, target, offsets);
+    bounds.set(
+      motion.motionToken,
+      expandBoundsForOffsets(baseBounds, offsets),
+    );
+  }
+  return bounds;
+}
+
+export function settleStaticRestPose(avatar: VRM): void {
+  const humanoid = avatar.humanoid as typeof avatar.humanoid & {
+    resetNormalizedPose?: () => void;
+  };
+  const springBoneManager = avatar.springBoneManager as typeof avatar.springBoneManager & {
+    reset?: () => void;
+  };
+  humanoid.resetNormalizedPose?.();
+  avatar.update(0);
+  springBoneManager?.reset?.();
+  avatar.scene.updateMatrixWorld(true);
+}
+
+interface RootMotionTarget {
+  readonly hipsName: string;
+  readonly rest: readonly number[];
+}
+
+function rootMotionTarget(avatar: VRM): RootMotionTarget | null {
   const humanoid = avatar.humanoid as typeof avatar.humanoid & {
     normalizedHumanBones?: { hips?: { node?: { name?: string } } };
     normalizedRestPose?: { hips?: { position?: readonly number[] | { x?: number; y?: number; z?: number } } };
@@ -132,27 +184,27 @@ export function collectRootMotionOffsets(
       : [];
   if (typeof hipsName !== "string"
     || rest.length !== 3
-    || !rest.every((value) => typeof value === "number" && Number.isFinite(value))) return [];
+    || !rest.every((value) => typeof value === "number" && Number.isFinite(value))) return null;
+  return { hipsName, rest: rest as number[] };
+}
 
-  const offsets: Array<{ x: number; y: number; z: number }> = [];
-  const visited = new Set<THREE.AnimationClip>();
-  for (const motion of registry.values()) {
-    if (visited.has(motion.clip)) continue;
-    visited.add(motion.clip);
-    const track = motion.clip.tracks.find((candidate) => candidate.name === `${hipsName}.position`);
-    if (!track || track.times.length === 0) continue;
-    const stride = track.values.length / track.times.length;
-    const cubic = track.createInterpolant?.isInterpolantFactoryMethodGLTFCubicSpline === true;
-    if ((!cubic && stride !== 3) || (cubic && stride !== 9)) continue;
-    if (!cubic) {
-      for (let index = 0; index < track.values.length; index += stride) {
-        pushRootOffset(offsets, track.values, index, rest);
-      }
-      continue;
+function appendRootMotionOffsets(
+  clip: THREE.AnimationClip,
+  target: RootMotionTarget,
+  offsets: Array<{ x: number; y: number; z: number }>,
+): void {
+  const track = clip.tracks.find((candidate) => candidate.name === `${target.hipsName}.position`);
+  if (!track || track.times.length === 0) return;
+  const stride = track.values.length / track.times.length;
+  const cubic = track.createInterpolant?.isInterpolantFactoryMethodGLTFCubicSpline === true;
+  if ((!cubic && stride !== 3) || (cubic && stride !== 9)) return;
+  if (!cubic) {
+    for (let index = 0; index < track.values.length; index += stride) {
+      pushRootOffset(offsets, track.values, index, target.rest);
     }
-    collectCubicRootOffsets(track, rest, offsets);
+    return;
   }
-  return offsets;
+  collectCubicRootOffsets(track, target.rest, offsets);
 }
 
 function collectCubicRootOffsets(
@@ -254,6 +306,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private motionRegistry: MotionRegistry = new Map();
   private evidence: AvatarEvidence | undefined;
   private cameraBounds: Bounds3 | undefined;
+  private motionBounds: ReadonlyMap<string, Bounds3> = new Map();
   private reducedMotion = false;
   private suspended = false;
   private phase: PresentationPhase = "idle";
@@ -311,14 +364,14 @@ export class ThreeVRMRendererBackend implements RendererBackend {
         mixer: this.mixer as unknown as MotionMixerLike,
         root: avatar.scene,
         resetNormalizedPose: () => {
-          const humanoid = avatar.humanoid as typeof avatar.humanoid & {
-            resetNormalizedPose?: () => void;
-          };
-          humanoid.resetNormalizedPose?.();
+          settleStaticRestPose(avatar);
         },
         initialReducedMotion: this.reducedMotion,
         onFault: (fault) => this.motionFaultHandler?.(fault),
-        onActive: (event) => this.motionActiveHandler?.(event),
+        onActive: (event) => {
+          this.applyActiveMotionBounds(event);
+          this.motionActiveHandler?.(event);
+        },
       });
       this.scene.add(avatar.scene);
       if (avatar.lookAt) avatar.lookAt.target = this.camera;
@@ -361,14 +414,12 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     }
     this.motionIdentity = identity;
     this.motionRegistry = new Map(registry);
+    this.motionBounds = this.evidence
+      ? collectMotionBounds(this.avatar, registry, this.evidence.bounds)
+      : new Map();
+    this.cameraBounds = this.evidence?.bounds;
     this.motionController.replaceRegistry({ ...identity, motions: registry });
-    if (this.evidence) {
-      this.cameraBounds = expandBoundsForOffsets(
-        this.evidence.bounds,
-        collectRootMotionOffsets(this.avatar, registry),
-      );
-      this.fitToAvatar();
-    }
+    if (this.evidence) this.fitToAvatar();
   }
 
   setSuspended(suspended: boolean): void {
@@ -507,6 +558,13 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.camera.updateProjectionMatrix();
   }
 
+  private applyActiveMotionBounds(event: MotionActiveEvent): void {
+    this.cameraBounds = event.motionToken === null
+      ? this.evidence?.bounds
+      : this.motionBounds.get(event.motionToken) ?? this.evidence?.bounds;
+    if (!this.reducedMotion && this.evidence) this.fitToAvatar();
+  }
+
   private probeAlpha(): number {
     const target = new THREE.WebGLRenderTarget(probeDimension, probeDimension, {
       depthBuffer: true,
@@ -572,6 +630,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.avatar = undefined;
     this.evidence = undefined;
     this.cameraBounds = undefined;
+    this.motionBounds = new Map();
   }
 
   private applyFramePresentation(_deltaSeconds: number): void {

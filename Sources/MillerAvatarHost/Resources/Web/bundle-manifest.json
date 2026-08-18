@@ -105,8 +105,8 @@
       "sha256": "06649d64b3d6fd4ec77f0d76d52d825440fe3364cc450a9d35feb51edcac9efb"
     },
     "Web/src/renderer.ts": {
-      "bytes": 24560,
-      "sha256": "a4a7801b0817c7d58fd55bbc4966540732d949da32f8fcbdffabfbe4694367c9"
+      "bytes": 26459,
+      "sha256": "0eedb9dd711c5358b7003454385095f7fba911d2a2641ab0d6bbde9353a2fe3a"
     },
     "Web/src/runtime.ts": {
       "bytes": 1466,
@@ -123,13 +123,13 @@
   },
   "files": {
     "app.js": {
-      "bytes": 824874,
-      "sha256": "3e70330a13e7ca0e12e3ba717cd03d43a1bf32496ac4f5cec649410a6dfc419d",
+      "bytes": 825674,
+      "sha256": "02f5193c159eb8125c2fad33ecd63bc8b72112d19cdd0b4a9e530485bd0d34ba",
       "mime": "text/javascript; charset=utf-8"
     },
     "bundle-metafile.json": {
       "bytes": 19515,
-      "sha256": "a99297433d84ba0663394ba17fa3331a6b3ff6e36bb7f2633d236f8023508edf",
+      "sha256": "5c17be094ae023a9f54c4a4b0e73d88aba36571dc88fd3c5532841e2c011aab4",
       "mime": "application/json; charset=utf-8"
     },
     "index.html": {
@@ -143,5 +143,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "a1ebf19c3da211452a15e282b6581d35bbc882841be02cb5ba591ac004648c29"
+  "contract_sha256": "9a3475b623815e750855f104b3176d231d77655472f9c2fed52a1530f782252a"
 }

@@ -571,7 +571,7 @@
       "format": "esm"
     },
     "src/renderer.ts": {
-      "bytes": 24560,
+      "bytes": 26459,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -636,7 +636,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 824874,
+      "bytes": 825674,
       "inputs": {
         "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
           "bytesInOutput": 31826
@@ -687,7 +687,7 @@
           "bytesInOutput": 4149
         },
         "src/renderer.ts": {
-          "bytesInOutput": 11303
+          "bytesInOutput": 12050
         },
         "src/runtime.ts": {
           "bytesInOutput": 545

@@ -3,6 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 import {
   collectAvatarEvidence,
+  collectMotionBounds,
   collectRootMotionOffsets,
   countAlphaPixels,
   disposeAvatarResources,
@@ -10,6 +11,7 @@ import {
   requireVRM1,
   requireSessionAssetURL,
   requireSessionMotionURL,
+  settleStaticRestPose,
 } from "../src/renderer.js";
 
 test("VRM admission accepts only version 1 metadata", () => {
@@ -81,6 +83,30 @@ test("avatar evidence rejects a scene without visible renderable geometry", () =
   assert.throws(() => collectAvatarEvidence(new THREE.Group()), /visible geometry/);
 });
 
+test("avatar evidence excludes geometry whose materials cannot render", () => {
+  const root = new THREE.Group();
+  const visible = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 2, 1),
+    new THREE.MeshBasicMaterial(),
+  );
+  visible.position.y = 1;
+  root.add(visible);
+  const hiddenMaterial = new THREE.MeshBasicMaterial();
+  hiddenMaterial.visible = false;
+  const hidden = new THREE.Mesh(
+    new THREE.BoxGeometry(100, 100, 100),
+    hiddenMaterial,
+  );
+  root.add(hidden);
+
+  const evidence = collectAvatarEvidence(root);
+
+  assert.equal(evidence.visibleMeshes, 1);
+  assert.equal(evidence.materialBindings, 1);
+  assert.deepEqual(evidence.bounds.min, { x: -0.5, y: 0, z: -0.5 });
+  assert.deepEqual(evidence.bounds.max, { x: 0.5, y: 2, z: 0.5 });
+});
+
 test("root-motion framing derives target-relative offsets from each unique hips track", () => {
   const clip = new THREE.AnimationClip("motion", 1, [
     new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
@@ -132,6 +158,68 @@ test("root-motion framing includes cubic-spline extrema between keys", () => {
   );
 
   assert.ok(Math.abs(Math.max(...offsets.map((offset) => offset.y)) - 16 / 27) < 1e-6);
+});
+
+test("root-motion framing is isolated to the active motion token", () => {
+  const listening = new THREE.AnimationClip("listening", 1, [
+    new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
+      0, 0.7, 0,
+      0, 0.9, 0,
+    ]),
+  ]);
+  const speaking = new THREE.AnimationClip("speaking", 1, [
+    new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
+      0, 0.9, 0,
+      0, 3.9, 0,
+    ]),
+  ]);
+  const avatar = {
+    humanoid: {
+      normalizedHumanBones: { hips: { node: { name: "normalizedHips" } } },
+      normalizedRestPose: { hips: { position: [0, 0.9, 0] } },
+    },
+  } as never;
+  const base = {
+    min: { x: -0.5, y: 0, z: -0.25 },
+    max: { x: 0.5, y: 1.8, z: 0.25 },
+    visibleMeshes: 1,
+  };
+  const registry = new Map([
+    ["listening", { motionToken: "listen", clip: listening }],
+    ["speaking", { motionToken: "speak", clip: speaking }],
+  ]) as never;
+
+  const byToken = collectMotionBounds(avatar, registry, base);
+
+  const listeningBounds = byToken.get("listen");
+  const speakingBounds = byToken.get("speak");
+  assert.ok(listeningBounds);
+  assert.ok(speakingBounds);
+  assert.ok(Math.abs(listeningBounds.min.y + 0.2) < 1e-6);
+  assert.equal(listeningBounds.max.y, 1.8);
+  assert.equal(listeningBounds.visibleMeshes, 1);
+  assert.ok(Math.abs(speakingBounds.min.y) < 1e-6);
+  assert.ok(Math.abs(speakingBounds.max.y - 4.8) < 1e-6);
+  assert.equal(speakingBounds.visibleMeshes, 1);
+});
+
+test("Reduced Motion settles normalized and spring state before rendering", () => {
+  const calls: string[] = [];
+  const avatar = {
+    humanoid: { resetNormalizedPose: () => calls.push("reset-normalized") },
+    springBoneManager: { reset: () => calls.push("reset-springs") },
+    update: (delta: number) => calls.push(`update:${delta}`),
+    scene: { updateMatrixWorld: (force: boolean) => calls.push(`matrices:${force}`) },
+  } as never;
+
+  settleStaticRestPose(avatar);
+
+  assert.deepEqual(calls, [
+    "reset-normalized",
+    "update:0",
+    "reset-springs",
+    "matrices:true",
+  ]);
 });
 
 test("alpha evidence counts rendered pixels instead of the clear background", () => {
