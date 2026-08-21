@@ -186,16 +186,18 @@ remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
 
 The repositories document automated checks and command paths. The remediated
-C7 source/headless matrix passes. The published alpha.6 package checkpoint
-preserves Pixiv's target-relative VRMA root motion, validates converted samples,
-and selects one fixed camera envelope for the active motion's linear or cubic
-hips translation. Geometry whose materials cannot render does not contribute
-camera evidence. Reduced Motion uses rest-pose bounds and explicitly settles
-normalized bones, render bones, spring state, and scene matrices before its
-static frame. Alpha.6 also contains the renderer-persistence and bounded
-reachable auxiliary-track repairs. Alpha.2 does not contain the persistence
-repair, alpha.3 retains the over-strict auxiliary-track rule, alpha.4 retains
-incorrect first-frame hips reanchoring, and alpha.5 uses the union of every
-configured motion envelope. Private-asset visual, physical focus,
-VoiceOver, real Live, signing, and final release qualification remain separate
-gates.
+C7 source/headless matrix passes. The alpha.7 package checkpoint keeps a
+0.01-meter near plane and a minimum 100-meter far plane so skinning and spring
+bones can move toward the camera without crossing a rest-pose-tight clipping
+plane. When horizontal fit leaves spare vertical room, the target shifts within
+the proven padded bounds so the avatar sits lower in the surface. A root
+`ResizeObserver` refits the camera when its caller changes the surface size and
+re-renders the static frame under Reduced Motion. Alpha.7 retains alpha.6's
+active-motion envelope, renderable-material filtering, and settled rest pose,
+plus the renderer-persistence and bounded reachable auxiliary-track repairs.
+Alpha.2 does not contain the persistence repair, alpha.3 retains the
+over-strict auxiliary-track rule, alpha.4 retains incorrect first-frame hips
+reanchoring, alpha.5 uses the union of every configured motion envelope, and
+alpha.6 uses a rest-pose-tight camera depth range. Private-asset visual,
+physical focus, VoiceOver, real Live, signing, and final release qualification
+remain separate gates.

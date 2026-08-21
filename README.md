@@ -126,15 +126,16 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. The published alpha.6 package checkpoint preserves Pixiv's converted
-VRMA root motion, frames only the active motion's target-relative envelope, and
-excludes geometry with no renderable material from camera evidence. Reduced
-Motion fully settles the normalized humanoid, render bones, spring state, and
-scene matrices before presenting its static rest frame. It includes alpha.4's
-renderer-persistence and bounded auxiliary-track compatibility repairs.
+checks. The alpha.7 package checkpoint gives animated geometry safe camera
+depth, uses spare vertical room to place the avatar lower in its surface, and
+refits after the caller changes that surface's dimensions. It retains alpha.6's
+active-motion framing, renderable-material filtering, and settled Reduced
+Motion rest frame, plus alpha.4's renderer-persistence and bounded
+auxiliary-track compatibility repairs.
 Alpha.2 does not contain the persistence repair, alpha.3 retains the
 over-strict auxiliary-track admission rule, alpha.4 retains the incorrect
-first-frame hips reanchoring, and alpha.5 uses a profile-wide camera envelope.
+first-frame hips reanchoring, alpha.5 uses a profile-wide camera envelope, and
+alpha.6 uses a rest-pose-tight camera depth range.
 Owner-visible private-asset, focus, accessibility, and real Live checks remain
 explicitly separate. This documentation does not claim signing, notarization,
 or final v0.1 release qualification.

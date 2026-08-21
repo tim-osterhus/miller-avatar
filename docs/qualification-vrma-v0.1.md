@@ -255,3 +255,35 @@ No private model, motion, source path, animation pack, or generated motion
 cache entered the repository or package. Owner-visible exact-model framing and
 Reduced Motion presentation remain a replacement-candidate gate; this record
 does not infer that visual result from headless tests.
+
+## Alpha.7 camera-depth, placement, and resize correction
+
+Owner-visible integrated qualification of alpha.6 found a plane-like clipping
+boundary in front of animated and Reduced Motion avatars, excess deadspace
+below the avatar, and no supported way for Miller to resize the avatar surface.
+The package camera used a near plane derived tightly from the static rest-pose
+depth. Animated skinning and spring geometry could therefore cross the plane
+even though the admitted model remained valid.
+
+The alpha.7 renderer correction was committed as
+`5039dfd1a9b08f0061217588ea35ba16964befc8`; its regenerated native package
+manifest was committed as
+`77fc085dcfc01a6149411451325702acdc9d2b98`. The renderer now keeps a
+0.01-meter near plane and a minimum 100-meter far plane, applies bottom-biased
+framing only within measured padded surplus, and refits when the host surface
+changes size. Reduced Motion resize events also render a fresh static frame.
+
+Fresh headless evidence passed:
+
+- Web tests and TypeScript checking: PASS, with 84 tests and 0 failures;
+- Swift package tests: PASS, with 311 tests and 0 failures. One timing-sensitive
+  navigation-policy race failed in the first complete run, passed immediately
+  in isolation, and passed in the second complete run;
+- dependency, deterministic bundle, native build, rollback, cache, cleanup,
+  and prohibited-asset contracts: PASS;
+- `git diff --check`: PASS.
+
+No private model, motion, source path, animation pack, or generated motion
+cache entered the repository or package. Exact-model clipping, placement, and
+live resize remain owner-visible replacement-candidate gates; this record does
+not infer their visual result from headless tests.
