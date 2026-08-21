@@ -70,6 +70,19 @@ export function countAlphaPixels(pixels: Uint8Array): number {
   return count;
 }
 
+export function observeRootResize(
+  root: HTMLElement,
+  onResize: () => void,
+  Observer: typeof ResizeObserver | undefined = typeof ResizeObserver === "function"
+    ? ResizeObserver
+    : undefined,
+): () => void {
+  if (!Observer) return () => {};
+  const observer = new Observer(() => onResize());
+  observer.observe(root);
+  return () => observer.disconnect();
+}
+
 export function collectAvatarEvidence(root: THREE.Object3D): AvatarEvidence {
   root.updateMatrixWorld(true);
   const bounds = new THREE.Box3();
@@ -315,6 +328,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private motionFaultHandler: ((fault: MotionFault) => void) | undefined;
   private motionActiveHandler: ((event: MotionActiveEvent) => void) | undefined;
   private viewport = { width: 0, height: 0 };
+  private readonly stopResizeObservation: () => void;
 
   constructor(private readonly root: HTMLElement) {
     const context = this.canvas.getContext("webgl2", {
@@ -336,6 +350,13 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     keyLight.position.set(1, 2, 3);
     this.scene.add(keyLight);
     root.replaceChildren(this.canvas);
+    this.stopResizeObservation = observeRootResize(root, () => {
+      this.resize();
+      if (this.reducedMotion && this.avatar && this.evidence) {
+        this.applyFramePresentation(0);
+        this.renderer.render(this.scene, this.camera);
+      }
+    });
     this.resize();
   }
 
@@ -527,6 +548,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   dispose(): void {
+    this.stopResizeObservation();
     this.removeAvatar();
     this.renderer.dispose();
     this.renderer.forceContextLoss();

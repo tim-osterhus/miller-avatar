@@ -65,8 +65,8 @@
       "sha256": "c83443fb02f0fec5e1b75e20e5756eac54d1ea91e79a05b56fe5b5e09bc38cf8"
     },
     "Web/src/camera.ts": {
-      "bytes": 3719,
-      "sha256": "a12be2f72eb9e27bf38ba76bab30107db5271b28075db4288e91c1ef016ef61f"
+      "bytes": 4619,
+      "sha256": "b13c90185cbec5bba523692dc1737f79b6ba88312d3921ce6d75bf4c97ce72ba"
     },
     "Web/src/contract.ts": {
       "bytes": 6405,
@@ -105,8 +105,8 @@
       "sha256": "06649d64b3d6fd4ec77f0d76d52d825440fe3364cc450a9d35feb51edcac9efb"
     },
     "Web/src/renderer.ts": {
-      "bytes": 26459,
-      "sha256": "0eedb9dd711c5358b7003454385095f7fba911d2a2641ab0d6bbde9353a2fe3a"
+      "bytes": 27179,
+      "sha256": "8cd79049cd6b66476a7c8858e09a3a39940425807560caae1de4df937ae04f24"
     },
     "Web/src/runtime.ts": {
       "bytes": 1466,
@@ -123,13 +123,13 @@
   },
   "files": {
     "app.js": {
-      "bytes": 825674,
-      "sha256": "02f5193c159eb8125c2fad33ecd63bc8b72112d19cdd0b4a9e530485bd0d34ba",
+      "bytes": 826145,
+      "sha256": "468b0fbd431c13783395d90c4070e3c13718a60edca991f8c0570b62a0e96201",
       "mime": "text/javascript; charset=utf-8"
     },
     "bundle-metafile.json": {
       "bytes": 19515,
-      "sha256": "5c17be094ae023a9f54c4a4b0e73d88aba36571dc88fd3c5532841e2c011aab4",
+      "sha256": "280ca33a8a0be5d2c2a27e62f92eb34527bf0faadc21ae725ea44a90f2d338bb",
       "mime": "application/json; charset=utf-8"
     },
     "index.html": {
@@ -143,5 +143,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "9a3475b623815e750855f104b3176d231d77655472f9c2fed52a1530f782252a"
+  "contract_sha256": "186cc0dec80d98ed7770b1a49dae0024bc042922bcfe99a50ef5520c822cebbf"
 }

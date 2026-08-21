@@ -12,6 +12,7 @@ import {
   requireSessionAssetURL,
   requireSessionMotionURL,
   settleStaticRestPose,
+  observeRootResize,
 } from "../src/renderer.js";
 
 test("VRM admission accepts only version 1 metadata", () => {
@@ -39,6 +40,38 @@ test("motion loading accepts only a session-bound VRMA URL", () => {
   assert.throws(() => requireSessionMotionURL(
     "miller-avatar-local://app/session/11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333.vrm",
   ), /session/);
+});
+
+test("root resize observation triggers refits and disconnects cleanly", () => {
+  let callback: (() => void) | undefined;
+  let observed: unknown;
+  let disconnected = false;
+  class FakeResizeObserver {
+    constructor(next: () => void) {
+      callback = next;
+    }
+
+    observe(target: Element): void {
+      observed = target;
+    }
+
+    disconnect(): void {
+      disconnected = true;
+    }
+  }
+  const root = {} as HTMLElement;
+  let refits = 0;
+  const stop = observeRootResize(
+    root,
+    () => { refits += 1; },
+    FakeResizeObserver as unknown as typeof ResizeObserver,
+  );
+
+  assert.equal(observed, root);
+  callback?.();
+  assert.equal(refits, 1);
+  stop();
+  assert.equal(disconnected, true);
 });
 
 test("avatar evidence measures visible geometry, material bindings, and decoded textures", () => {

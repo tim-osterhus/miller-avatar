@@ -15,6 +15,9 @@ export interface CameraFit {
 
 const minimumExtent = 0.0001;
 const paddingFactor = 1.1;
+const cameraNear = 0.01;
+const minimumCameraFar = 100;
+const bottomBiasFraction = 0.4;
 export const maximumViewportDimension = 8_192;
 export const maximumViewportPixels = maximumViewportDimension * maximumViewportDimension;
 
@@ -88,13 +91,32 @@ export function fitCamera(bounds: Bounds3, viewportWidth: number, viewportHeight
   const distance = Math.max(verticalDistance, horizontalDistance, 0.01)
     + paddedDepth / 2
     + depthMargin;
+  const centerY = bounds.min.y + height / 2;
+  const closestPaddedDistance = Math.max(
+    0.01,
+    distance - paddedDepth / 2 - depthMargin,
+  );
+  const availableHalfHeight = closestPaddedDistance * Math.tan(halfVerticalFov);
+  const paddedHalfHeight = height * paddingFactor / 2;
+  const verticalSurplus = Math.max(0, availableHalfHeight - paddedHalfHeight);
+  const verticalBias = horizontalDistance > verticalDistance
+    ? verticalSurplus * bottomBiasFraction
+    : 0;
   const target = {
     x: bounds.min.x + width / 2,
-    y: bounds.min.y + height / 2,
+    y: centerY + verticalBias,
     z: bounds.min.z + depth / 2,
   };
-  const near = Math.max(0.01, distance - paddedDepth / 2 - depthMargin);
-  const far = Math.max(near + 0.01, distance + paddedDepth / 2 + depthMargin);
+  // Keep the near plane away from the avatar's rest-pose depth. VRM skinning
+  // and spring bones can move visible geometry toward the camera after the
+  // static bounds have been measured, so a depth-tight near plane slices it.
+  // These meter-scale defaults preserve depth precision without imposing a
+  // hidden surface immediately in front of a posed avatar.
+  const near = cameraNear;
+  const far = Math.max(
+    minimumCameraFar,
+    distance + paddedDepth / 2 + depthMargin,
+  );
   const result: CameraFit = {
     fovDegrees: 30,
     aspect,

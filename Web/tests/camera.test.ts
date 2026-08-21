@@ -25,6 +25,38 @@ test("camera fits padded bounds in portrait and landscape viewports", () => {
   }
 });
 
+test("camera depth range leaves room for geometry moving toward the camera", () => {
+  const thinAvatar = {
+    min: { x: -1, y: 0, z: -0.05 },
+    max: { x: 1, y: 2, z: 0.05 },
+    visibleMeshes: 1,
+  };
+  const fit = fitCamera(thinAvatar, 400, 800);
+  const distance = fit.position.z - fit.target.z;
+  const forwardDeformedZ = fit.target.z + 1;
+
+  assert.equal(fit.near, 0.01);
+  assert.ok(distance - forwardDeformedZ > fit.near);
+  assert.ok(fit.far >= 100);
+});
+
+test("camera uses surplus vertical room to bias the avatar toward the bottom", () => {
+  const portrait = fitCamera(bounds, 400, 800);
+  const landscape = fitCamera(bounds, 1600, 900);
+  const centerY = (bounds.min.y + bounds.max.y) / 2;
+
+  assert.ok(portrait.target.y > centerY);
+  assert.equal(landscape.target.y, centerY);
+
+  const tangent = Math.tan((portrait.fovDegrees * Math.PI / 180) / 2);
+  const availableHalfHeight = (portrait.position.z - portrait.target.z) * tangent;
+  const paddedHalfHeight = (bounds.max.y - bounds.min.y) * 1.1 / 2;
+  assert.ok(
+    paddedHalfHeight + (portrait.target.y - centerY)
+      <= availableHalfHeight + Number.EPSILON,
+  );
+});
+
 test("camera recalculates aspect and rejects invalid or degenerate bounds", () => {
   assert.notEqual(fitCamera(bounds, 1600, 900).aspect, fitCamera(bounds, 900, 1600).aspect);
   assert.throws(() => fitCamera({ ...bounds, visibleMeshes: 0 }, 100, 100));
@@ -71,5 +103,9 @@ function assertPaddedCornersInside(
     const depth = fit.position.z - z;
     assert.ok(halfWidth <= depth * tangent * fit.aspect + 1e-12);
     assert.ok(halfHeight <= depth * tangent + 1e-12);
+    const paddedMinY = fittedBounds.min.y - (fittedBounds.max.y - fittedBounds.min.y) * 0.05;
+    const paddedMaxY = fittedBounds.max.y + (fittedBounds.max.y - fittedBounds.min.y) * 0.05;
+    assert.ok(paddedMinY >= fit.target.y - depth * tangent - 1e-12);
+    assert.ok(paddedMaxY <= fit.target.y + depth * tangent + 1e-12);
   }
 }
