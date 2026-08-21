@@ -89,6 +89,7 @@ type ActiveState = {
 } | { readonly role: null; readonly mode: "rest"; readonly token: null };
 
 interface ActionRecord {
+  readonly key: string;
   readonly token: string;
   readonly clip: THREE.AnimationClip;
   readonly action: MotionActionLike;
@@ -112,7 +113,7 @@ export class MotionController {
   private readonly onFault?: (fault: MotionFault) => void;
   private readonly finishedListener = (event: MotionMixerEvent) => this.finished(event);
   private readonly actions = new Map<string, ActionRecord>();
-  private readonly roleTokens = new Map<AvatarMotionRole, string>();
+  private readonly roleRecords = new Map<AvatarMotionRole, ActionRecord>();
   private readonly failedTokens = new Set<string>();
   private identity: MotionRuntimeIdentity | null = null;
   private active: ActiveState = { role: null, mode: "rest", token: null };
@@ -147,22 +148,34 @@ export class MotionController {
     this.latestProjection = null;
     this.desiredSteadyRole = "idle";
     this.failedTokens.clear();
-    this.roleTokens.clear();
+    this.roleRecords.clear();
     this.active = { role: null, mode: "rest", token: null };
     this.lastActiveSignature = null;
 
     for (const role of ["idle", "listening", "thinking", "speaking", "success", "failure"] as const) {
       const motion = input.motions.get(role);
       if (!motion) continue;
-      this.roleTokens.set(role, motion.motionToken);
-      if (this.actions.has(motion.motionToken)) continue;
+      const steady = isSteadyRole(role);
+      const clip = steady ? (motion.steadyClip ?? motion.clip) : motion.clip;
+      const key = actionKey(motion.motionToken, steady ? "steady" : "terminal");
+      const existing = this.actions.get(key)
+        ?? [...this.actions.values()].find((record) => (
+          record.token === motion.motionToken && record.clip === clip
+        ));
+      if (existing) {
+        this.roleRecords.set(role, existing);
+        continue;
+      }
       try {
-        const action = this.mixer.clipAction(motion.clip, this.root);
-        this.actions.set(motion.motionToken, {
+        const action = this.mixer.clipAction(clip, this.root);
+        const record = {
+          key,
           token: motion.motionToken,
-          clip: motion.clip,
+          clip,
           action,
-        });
+        };
+        this.actions.set(key, record);
+        this.roleRecords.set(role, record);
       } catch {
         this.reportFault(motion.motionToken);
       }
@@ -288,7 +301,7 @@ export class MotionController {
       // Cleanup is best-effort and must remain idempotent.
     }
     this.actions.clear();
-    this.roleTokens.clear();
+    this.roleRecords.clear();
     this.identity = null;
     this.latestProjection = null;
     this.active = { role: null, mode: "rest", token: null };
@@ -322,9 +335,9 @@ export class MotionController {
       return;
     }
 
-    const source = this.active.mode === "rest" ? null : this.recordForToken(this.active.token);
+    const source = this.active.mode === "rest" ? null : this.recordForActive();
     const modeChangedSameAction = this.active.mode === "one_shot"
-      && source?.token === target.token;
+      && source === target;
     if (modeChangedSameAction) {
       this.clearTransition(true);
       if (!this.configureAndPlay(target, "loop")) {
@@ -347,7 +360,7 @@ export class MotionController {
       this.fallbackAfterFault(causedBySequence);
       return;
     }
-    if (source && source.token !== target.token) {
+    if (source && source !== target) {
       if (!this.safeFadeOut(source, 0.2) || !this.safeFadeIn(target, 0.2)) {
         this.fallbackAfterFault(causedBySequence);
         return;
@@ -376,14 +389,14 @@ export class MotionController {
       return;
     }
 
-    const source = this.active.mode === "rest" ? null : this.recordForToken(this.active.token);
-    const restartingSameAction = this.active.mode === "one_shot" && this.active.token === target.token;
+    const source = this.active.mode === "rest" ? null : this.recordForActive();
+    const restartingSameAction = this.active.mode === "one_shot" && source === target;
     this.clearTransition(true);
     if (!this.configureAndPlay(target, "one_shot")) {
       this.fallbackAfterFault(causedBySequence);
       return;
     }
-    if (!restartingSameAction && source && source.token !== target.token) {
+    if (!restartingSameAction && source && source !== target) {
       if (!this.safeFadeOut(source, 0.12) || !this.safeFadeIn(target, 0.12)) {
         this.fallbackAfterFault(causedBySequence);
         return;
@@ -486,23 +499,23 @@ export class MotionController {
   }
 
   private recordForRole(role: AvatarMotionRole): ActionRecord | null {
-    const token = this.roleTokens.get(role);
-    return token === undefined ? null : this.recordForToken(token);
+    const record = this.roleRecords.get(role);
+    return record && !this.failedTokens.has(record.token) ? record : null;
   }
 
-  private recordForToken(token: string | null): ActionRecord | null {
-    if (token === null || this.failedTokens.has(token)) return null;
-    return this.actions.get(token) ?? null;
+  private recordForActive(): ActionRecord | null {
+    if (this.active.mode === "rest" || this.active.role === null) return null;
+    return this.recordForRole(this.active.role);
   }
 
   private participatingActions(): ActionRecord[] {
     const records = new Map<string, ActionRecord>();
     if (this.transition) {
-      records.set(this.transition.source.token, this.transition.source);
-      records.set(this.transition.target.token, this.transition.target);
+      records.set(this.transition.source.key, this.transition.source);
+      records.set(this.transition.target.key, this.transition.target);
     } else if (this.active.mode !== "rest") {
-      const active = this.recordForToken(this.active.token);
-      if (active) records.set(active.token, active);
+      const active = this.recordForActive();
+      if (active) records.set(active.key, active);
     }
     return [...records.values()];
   }
@@ -526,11 +539,14 @@ export class MotionController {
         // renderer-terminal failure.
       }
     }
-    const record = this.actions.get(token);
-    if (record) {
+    for (const [key, record] of this.actions) {
+      if (record.token !== token) continue;
       this.safeStop(record);
       this.uncache(record);
-      this.actions.delete(token);
+      this.actions.delete(key);
+    }
+    for (const [role, record] of this.roleRecords) {
+      if (record.token === token) this.roleRecords.delete(role);
     }
     if (this.active.mode !== "rest" && this.active.token === token) {
       this.active = { role: null, mode: "rest", token: null };
@@ -576,7 +592,7 @@ export class MotionController {
 
   private stopActiveAction(): void {
     if (this.active.mode === "rest") return;
-    const record = this.recordForToken(this.active.token);
+    const record = this.recordForActive();
     if (record) this.safeStop(record);
   }
 
@@ -596,6 +612,7 @@ export class MotionController {
       // Continue cleanup.
     }
     this.actions.clear();
+    this.roleRecords.clear();
   }
 
   private uncache(record: ActionRecord): void {
@@ -671,4 +688,15 @@ function steadyRoleFor(phase: PresentationPhase): SteadyRole {
   if (phase === "thinking" || phase === "responding") return "thinking";
   if (phase === "speaking") return "speaking";
   return "idle";
+}
+
+function isSteadyRole(role: AvatarMotionRole): boolean {
+  return role === "idle"
+    || role === "listening"
+    || role === "thinking"
+    || role === "speaking";
+}
+
+function actionKey(token: string, variant: "steady" | "terminal"): string {
+  return `${token}:${variant}`;
 }

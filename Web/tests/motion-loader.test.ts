@@ -181,6 +181,103 @@ test("loadMotion preserves cubic-spline hips values and does not require a norma
   );
 });
 
+test("loadMotion falls back to the first authored planar sample when rest hips are unavailable", async () => {
+  const sourceValues = [
+    0.1, 0.9, -0.2,
+    0.2, 1.1, 0.1,
+    0.4, 1.3, 0.4,
+  ];
+  const source = new THREE.AnimationClip("linear", 1, [
+    new THREE.VectorKeyframeTrack("hips.position", [0, 0.5, 1], sourceValues),
+  ]);
+  const sourceSnapshot = Array.from(source.tracks[0]!.values);
+  const dependencies = fakeDependencies({
+    parsedAnimations: [{}],
+    createClip() { return source; },
+  });
+
+  const result = await loadMotion(input(), fakeAvatar({ includeRestHips: false }), new AbortController().signal, dependencies);
+  const steady = (result as unknown as { steadyClip?: THREE.AnimationClip }).steadyClip;
+  assert.ok(steady);
+  assert.deepEqual(Array.from(source.tracks[0]!.values), sourceSnapshot);
+  assert.deepEqual(Array.from(steady.tracks[0]!.times), Array.from(new Float32Array([0, 0.5, 1])));
+  assert.deepEqual(Array.from(steady.tracks[0]!.values), Array.from(new Float32Array([
+    0.1, 0.9, -0.2,
+    0.1, 1.1, -0.2,
+    0.1, 1.3, -0.2,
+  ])));
+});
+
+test("loadMotion preserves cubic steady Y data and falls back to the first authored planar sample without rest hips", async () => {
+  const sourceValues = [
+    1, 0.5, 2, 0.25, 0.5, -0.75, 3, 0.6, -4,
+    4, 1.5, 5, -2, 0.75, 1.25, 6, 0.8, 7,
+  ];
+  const track = new THREE.VectorKeyframeTrack("hips.position", [0, 1], sourceValues);
+  const cubicInterpolant = (() => ({})) as typeof track.createInterpolant;
+  cubicInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true;
+  track.createInterpolant = cubicInterpolant;
+  const source = new THREE.AnimationClip("cubic", 1, [track]);
+  const sourceSnapshot = Array.from(track.values);
+  const dependencies = fakeDependencies({
+    parsedAnimations: [{}],
+    createClip() { return source; },
+  });
+
+  const result = await loadMotion(input(), fakeAvatar({ includeRestHips: false }), new AbortController().signal, dependencies);
+  const steady = (result as unknown as { steadyClip?: THREE.AnimationClip }).steadyClip;
+  assert.ok(steady);
+  assert.deepEqual(Array.from(source.tracks[0]!.values), sourceSnapshot);
+  assert.deepEqual(Array.from(steady.tracks[0]!.values), Array.from(new Float32Array([
+    0, 0.5, 0, 0.25, 0.5, -0.75, 0, 0.6, 0,
+    0, 1.5, 0, 0.25, 0.75, -0.75, 0, 0.8, 0,
+  ])));
+  assert.equal(steady.tracks[0]!.createInterpolant, cubicInterpolant);
+});
+
+test("loadMotion anchors steady planar centers to finite normalized rest hips", async () => {
+  const linearSource = new THREE.AnimationClip("linear-rest-anchor", 1, [
+    new THREE.VectorKeyframeTrack("hips.position", [0, 1], [2, 0.9, -3, 4, 1.1, 5]),
+  ]);
+  const linearSnapshot = Array.from(linearSource.tracks[0]!.values);
+  const linearResult = await loadMotion(
+    input(),
+    fakeAvatar({ restHips: [7, 2, 8] }),
+    new AbortController().signal,
+    fakeDependencies({ parsedAnimations: [{}], createClip() { return linearSource; } }),
+  );
+  const linearSteady = linearResult.steadyClip;
+  assert.ok(linearSteady);
+  assert.deepEqual(Array.from(linearSource.tracks[0]!.values), linearSnapshot);
+  assert.deepEqual(Array.from(linearSteady.tracks[0]!.values), Array.from(new Float32Array([
+    7, 0.9, 8,
+    7, 1.1, 8,
+  ])));
+
+  const cubicTrack = new THREE.VectorKeyframeTrack("hips.position", [0, 1], [
+    1, 0.1, 2, 2, 0.5, -3, 3, 0.6, 4,
+    4, 0.3, 5, 6, 0.75, 7, 8, 0.9, 9,
+  ]);
+  const cubicInterpolant = (() => ({})) as typeof cubicTrack.createInterpolant;
+  cubicInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true;
+  cubicTrack.createInterpolant = cubicInterpolant;
+  const cubicSource = new THREE.AnimationClip("cubic-rest-anchor", 1, [cubicTrack]);
+  const cubicSnapshot = Array.from(cubicTrack.values);
+  const cubicResult = await loadMotion(
+    input(),
+    fakeAvatar({ restHips: [7, 2, 8] }),
+    new AbortController().signal,
+    fakeDependencies({ parsedAnimations: [{}], createClip() { return cubicSource; } }),
+  );
+  const cubicSteady = cubicResult.steadyClip;
+  assert.ok(cubicSteady);
+  assert.deepEqual(Array.from(cubicTrack.values), cubicSnapshot);
+  assert.deepEqual(Array.from(cubicSteady.tracks[0]!.values), Array.from(new Float32Array([
+    0, 0.1, 0, 7, 0.5, 8, 0, 0.6, 0,
+    0, 0.3, 0, 7, 0.75, 8, 0, 0.9, 0,
+  ])));
+});
+
 function input(overrides: Partial<UniqueMotionInput> = {}): UniqueMotionInput {
   return {
     sessionID: "11111111-1111-4111-8111-111111111111",
@@ -256,10 +353,14 @@ function validParser() {
   };
 }
 
-function fakeAvatar(options: { includeRestHips?: boolean; boneNames?: string[] } = {}) {
+function fakeAvatar(options: {
+  includeRestHips?: boolean;
+  restHips?: [number, number, number];
+  boneNames?: string[];
+} = {}) {
   const hips = options.includeRestHips === false
     ? undefined
-    : { position: [1, 2, 3] };
+    : { position: options.restHips ?? [1, 2, 3] };
   const boneNames = options.boneNames ?? ["hips", "head"];
   return {
     humanoid: {

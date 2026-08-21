@@ -20,7 +20,7 @@ import {
   type MotionRuntimeIdentity,
 } from "./motion-controller.js";
 import { expandBoundsForOffsets, fitCamera, type Bounds3 } from "./camera.js";
-import type { PresentationPhase } from "./contract.js";
+import type { AvatarMotionRole, PresentationPhase } from "./contract.js";
 import type { PresentationEffect } from "./presentation.js";
 
 const localAssetURL = /^miller-avatar-local:\/\/app\/session\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.vrm$/u;
@@ -149,16 +149,16 @@ export function collectMotionBounds(
   avatar: VRM,
   registry: MotionRegistry,
   baseBounds: Bounds3,
-): ReadonlyMap<string, Bounds3> {
+): ReadonlyMap<AvatarMotionRole, Bounds3> {
   const target = rootMotionTarget(avatar);
-  const bounds = new Map<string, Bounds3>();
+  const bounds = new Map<AvatarMotionRole, Bounds3>();
   if (!target) return bounds;
-  for (const motion of registry.values()) {
-    if (bounds.has(motion.motionToken)) continue;
+  for (const [role, motion] of registry) {
+    const clip = isSteadyRole(role) ? (motion.steadyClip ?? motion.clip) : motion.clip;
     const offsets: Array<{ x: number; y: number; z: number }> = [];
-    appendRootMotionOffsets(motion.clip, target, offsets);
+    appendRootMotionOffsets(clip, target, offsets);
     bounds.set(
-      motion.motionToken,
+      role,
       expandBoundsForOffsets(baseBounds, offsets),
     );
   }
@@ -319,7 +319,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private motionRegistry: MotionRegistry = new Map();
   private evidence: AvatarEvidence | undefined;
   private cameraBounds: Bounds3 | undefined;
-  private motionBounds: ReadonlyMap<string, Bounds3> = new Map();
+  private motionBounds: ReadonlyMap<AvatarMotionRole, Bounds3> = new Map();
   private reducedMotion = false;
   private suspended = false;
   private phase: PresentationPhase = "idle";
@@ -581,9 +581,9 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   private applyActiveMotionBounds(event: MotionActiveEvent): void {
-    this.cameraBounds = event.motionToken === null
+    this.cameraBounds = event.role === null
       ? this.evidence?.bounds
-      : this.motionBounds.get(event.motionToken) ?? this.evidence?.bounds;
+      : this.motionBounds.get(event.role) ?? this.evidence?.bounds;
     if (!this.reducedMotion && this.evidence) this.fitToAvatar();
   }
 
@@ -749,6 +749,13 @@ function materialTextures(material: THREE.Material): Set<THREE.Texture> {
 
 function textureIsDecoded(texture: THREE.Texture): boolean {
   return texture.source.data !== null && texture.source.data !== undefined;
+}
+
+function isSteadyRole(role: AvatarMotionRole): boolean {
+  return role === "idle"
+    || role === "listening"
+    || role === "thinking"
+    || role === "speaking";
 }
 
 export function disposeAvatarResources(root: THREE.Object3D): void {

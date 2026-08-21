@@ -193,7 +193,7 @@ test("root-motion framing includes cubic-spline extrema between keys", () => {
   assert.ok(Math.abs(Math.max(...offsets.map((offset) => offset.y)) - 16 / 27) < 1e-6);
 });
 
-test("root-motion framing is isolated to the active motion token", () => {
+test("root-motion framing is isolated to the active motion role", () => {
   const listening = new THREE.AnimationClip("listening", 1, [
     new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [
       0, 0.7, 0,
@@ -222,10 +222,10 @@ test("root-motion framing is isolated to the active motion token", () => {
     ["speaking", { motionToken: "speak", clip: speaking }],
   ]) as never;
 
-  const byToken = collectMotionBounds(avatar, registry, base);
+  const byRole = collectMotionBounds(avatar, registry, base);
 
-  const listeningBounds = byToken.get("listen");
-  const speakingBounds = byToken.get("speak");
+  const listeningBounds = byRole.get("listening");
+  const speakingBounds = byRole.get("speaking");
   assert.ok(listeningBounds);
   assert.ok(speakingBounds);
   assert.ok(Math.abs(listeningBounds.min.y + 0.2) < 1e-6);
@@ -234,6 +234,33 @@ test("root-motion framing is isolated to the active motion token", () => {
   assert.ok(Math.abs(speakingBounds.min.y) < 1e-6);
   assert.ok(Math.abs(speakingBounds.max.y - 4.8) < 1e-6);
   assert.equal(speakingBounds.visibleMeshes, 1);
+});
+
+test("role-specific framing uses the actual steady or terminal clip when a token is shared", () => {
+  const original = new THREE.AnimationClip("shared-original", 1, [
+    new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [0, 0.9, 0, 0, 0.9, 3]),
+  ]);
+  const steady = new THREE.AnimationClip("shared-steady", 1, [
+    new THREE.VectorKeyframeTrack("normalizedHips.position", [0, 1], [0, 0.9, 0, 0, 0.9, 0]),
+  ]);
+  const avatar = {
+    humanoid: {
+      normalizedHumanBones: { hips: { node: { name: "normalizedHips" } } },
+      normalizedRestPose: { hips: { position: [0, 0.9, 0] } },
+    },
+  } as never;
+  const base = {
+    min: { x: -0.5, y: 0, z: -0.25 },
+    max: { x: 0.5, y: 1.8, z: 0.25 },
+    visibleMeshes: 1,
+  };
+  const bounds = collectMotionBounds(avatar, new Map([
+    ["idle", { motionToken: "shared", clip: original, steadyClip: steady }],
+    ["success", { motionToken: "shared", clip: original, steadyClip: steady }],
+  ]) as never, base);
+
+  assert.equal(bounds.get("idle")?.max.z, 0.25);
+  assert.equal(bounds.get("success")?.max.z, 3.25);
 });
 
 test("Reduced Motion settles normalized and spring state before rendering", () => {

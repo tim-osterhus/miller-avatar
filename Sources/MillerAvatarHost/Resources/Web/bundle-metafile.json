@@ -529,7 +529,7 @@
       "format": "esm"
     },
     "src/motion-controller.ts": {
-      "bytes": 22081,
+      "bytes": 22878,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -545,7 +545,7 @@
       "format": "esm"
     },
     "src/motion-loader.ts": {
-      "bytes": 11663,
+      "bytes": 14476,
       "imports": [
         {
           "path": "three",
@@ -571,7 +571,7 @@
       "format": "esm"
     },
     "src/renderer.ts": {
-      "bytes": 27179,
+      "bytes": 27397,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -636,7 +636,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 826145,
+      "bytes": 827499,
       "inputs": {
         "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
           "bytesInOutput": 31826
@@ -678,16 +678,16 @@
           "bytesInOutput": 755
         },
         "src/motion-controller.ts": {
-          "bytesInOutput": 10063
+          "bytesInOutput": 10367
         },
         "src/motion-loader.ts": {
-          "bytesInOutput": 4633
+          "bytesInOutput": 5636
         },
         "src/presentation.ts": {
           "bytesInOutput": 4149
         },
         "src/renderer.ts": {
-          "bytesInOutput": 12434
+          "bytesInOutput": 12481
         },
         "src/runtime.ts": {
           "bytesInOutput": 545

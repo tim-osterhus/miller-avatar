@@ -172,6 +172,25 @@ test("shared tokens create one action and change mode without self-crossfading",
   assert.equal(shared.resetCalls, 4);
 });
 
+test("a token shared by steady and terminal roles uses distinct derived and original actions", () => {
+  const harness = new ControllerHarness();
+  const original = new THREE.AnimationClip("shared-original", 1, []);
+  const steady = new THREE.AnimationClip("shared-steady", 1, []);
+  harness.controller.replaceRegistry({
+    ...harness.identity,
+    motions: new Map([
+      ["idle", { motionToken: "shared", clip: original, steadyClip: steady }],
+      ["success", { motionToken: "shared", clip: original, steadyClip: steady }],
+    ]),
+  } as never);
+
+  harness.project("idle");
+  assert.equal(harness.mixer.actions.get("shared-steady")?.playCalls, 1);
+  harness.project("succeeded");
+  assert.equal(harness.mixer.actions.get("shared-original")?.playCalls, 1);
+  assert.notEqual(harness.mixer.actions.get("shared-steady"), harness.mixer.actions.get("shared-original"));
+});
+
 test("session, model, generation, profile, motion, and projection identities fence work", () => {
   const harness = new ControllerHarness();
   harness.replaceAll();

@@ -22,6 +22,8 @@ export interface UniqueMotionInput {
 export interface ConvertedMotion {
   readonly motionToken: string;
   readonly clip: THREE.AnimationClip;
+  /** The same motion with planar hips travel removed for semantic steady roles. */
+  readonly steadyClip?: THREE.AnimationClip;
 }
 
 export type MotionLoaderResult = ConvertedMotion;
@@ -141,12 +143,16 @@ export async function loadMotion(
     }
     requireFiniteConvertedTracks(filteredTracks);
     clip.tracks = filteredTracks;
+    const hipsTarget = normalizedHipsTarget(avatar);
+    const steadyClip = hipsTarget === null
+      ? undefined
+      : deriveSteadyInPlaceClip(clip, hipsTarget.name, hipsTarget.restPlanar);
     if (signal.aborted || !isCurrent(input)) {
       disposeDetachedClip(clip, dependencies);
       createdClip = undefined;
       throw cancelledError();
     }
-    return { motionToken: input.motionToken, clip };
+    return { motionToken: input.motionToken, clip, steadyClip };
   } catch (error) {
     if (createdClip !== undefined) {
       disposeDetachedClip(createdClip, dependencies);
@@ -180,6 +186,76 @@ export function normalizedHumanoidNodeNames(avatar: VRM): ReadonlySet<string> {
   }
   if (names.size === 0) throw new MotionLoadError("motion_load_failed", "avatar has no normalized humanoid bones");
   return names;
+}
+
+export function deriveSteadyInPlaceClip(
+  clip: THREE.AnimationClip,
+  hipsName: string,
+  restPlanar?: { readonly x: number; readonly z: number },
+): THREE.AnimationClip {
+  const steady = clip.clone();
+  steady.name = `${clip.name}:steady`;
+  const track = steady.tracks.find((candidate) => candidate.name === `${hipsName}.position`);
+  if (!track || track.times.length === 0) return steady;
+
+  const stride = track.values.length / track.times.length;
+  const cubic = track.createInterpolant?.isInterpolantFactoryMethodGLTFCubicSpline === true;
+  if (!cubic && stride === 3) {
+    const firstX = restPlanar?.x ?? track.values[0];
+    const firstZ = restPlanar?.z ?? track.values[2];
+    for (let index = 0; index < track.values.length; index += 3) {
+      track.values[index] = firstX;
+      track.values[index + 2] = firstZ;
+    }
+  } else if (cubic && stride === 9) {
+    const firstValue = 3;
+    const firstX = restPlanar?.x ?? track.values[firstValue];
+    const firstZ = restPlanar?.z ?? track.values[firstValue + 2];
+    for (let index = 0; index < track.values.length; index += 9) {
+      track.values[index] = 0;
+      track.values[index + 2] = 0;
+      track.values[index + 3] = firstX;
+      track.values[index + 5] = firstZ;
+      track.values[index + 6] = 0;
+      track.values[index + 8] = 0;
+    }
+  }
+  return steady;
+}
+
+interface NormalizedHipsTarget {
+  readonly name: string;
+  readonly restPlanar?: { readonly x: number; readonly z: number };
+}
+
+function normalizedHipsTarget(avatar: VRM): NormalizedHipsTarget | null {
+  const humanoid = avatar.humanoid as typeof avatar.humanoid & {
+    normalizedHumanBones?: Record<string, unknown>;
+    normalizedRestPose?: {
+      hips?: {
+        position?: readonly unknown[] | { x?: unknown; y?: unknown; z?: unknown };
+      };
+    };
+  };
+  const bones = humanoid?.normalizedHumanBones;
+  const node = (bones?.hips as { node?: { name?: unknown } } | undefined)?.node;
+  if (typeof node?.name !== "string" || node.name.trim() === "") return null;
+
+  const rawRest = humanoid?.normalizedRestPose?.hips?.position;
+  const rest = Array.isArray(rawRest)
+    ? rawRest
+    : rawRest
+      ? [rawRest.x, rawRest.y, rawRest.z]
+      : [];
+  const restX = rest[0];
+  const restZ = rest[2];
+  const restPlanar = typeof restX === "number"
+    && Number.isFinite(restX)
+    && typeof restZ === "number"
+    && Number.isFinite(restZ)
+    ? { x: restX, z: restZ }
+    : undefined;
+  return { name: node.name, restPlanar };
 }
 
 interface MotionJSON {
