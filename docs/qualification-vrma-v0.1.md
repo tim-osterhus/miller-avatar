@@ -1,13 +1,14 @@
 # VRMA v0.1 qualification record
 
-Status: `HISTORICAL_V5.1_RECORD_WITH_ALPHA3_CHECKPOINT_UPDATE`
+Status: `CURRENT_ALPHA8_WITH_HISTORICAL_V5.1_EVIDENCE`
 
 The first part of this record preserves the public source, dependency, legal,
 and offline Web-bundle evidence captured at V5.1. At that historical stage,
 the native `Resources/build-manifest.json` was intentionally unchanged and
 V5.2 still had to regenerate it. Those statements and the original test counts
-below describe that earlier checkpoint. They are not the current alpha.3
-release state. **Alpha.3 checkpoint update** describes the current checkpoint.
+below describe that earlier checkpoint, not the current release state. The
+later checkpoint sections preserve each correction in order; **Alpha.8
+repeating-motion stabilization** describes the current package checkpoint.
 
 ## Closed scope
 
@@ -287,3 +288,44 @@ No private model, motion, source path, animation pack, or generated motion
 cache entered the repository or package. Exact-model clipping, placement, and
 live resize remain owner-visible replacement-candidate gates; this record does
 not infer their visual result from headless tests.
+
+## Alpha.8 repeating-motion stabilization
+
+Owner-visible integrated qualification of alpha.7 confirmed the camera-depth,
+placement, and live-resize corrections, then found that the configured
+Listening motion moved the avatar farther away on successive cycles. The
+admitted clip was not loop-ready: its authored hips translation ended at a
+different planar position from where it began. The mixer repeated the authored
+track; the camera did not accumulate transforms or refit per cycle.
+
+The alpha.8 renderer correction was committed as
+`f35328094389c4a67f378c3ba7eb8a0527c6f185`; its regenerated native package
+manifest was committed as
+`5f01eacf105a8b64227afe58ede6c230d59d8025`. The loader now keeps each admitted
+source clip unchanged and derives an in-place variant for `idle`, `listening`,
+`thinking`, and `speaking`. The
+derived clip anchors hips X/Z to finite normalized-rest values, preserves hips
+Y and all other skeletal animation, and zeroes only planar cubic-spline
+tangents. Missing normalized-rest X/Z uses the first authored planar sample as
+a nonblocking compatibility fallback. `success` and `failure` retain the
+original clip and authored root motion. Role-specific camera bounds follow the
+actual derived or original clip even when one motion token is shared across
+roles.
+
+Fresh headless evidence passed:
+
+- focused motion-loader, controller, and renderer tests: PASS, with 45 tests
+  and 0 failures;
+- complete Web tests and TypeScript checking: PASS, with 89 tests and 0
+  failures;
+- Swift package tests: PASS, with 311 tests and 0 failures;
+- dependency, deterministic dual-bundle, native build, rollback, cache,
+  cleanup, and prohibited-asset contracts: PASS;
+- independent adversarial review: PASS, with no P0, P1, or P2 findings;
+- `git diff --check`: PASS.
+
+No private model, motion, source path, animation pack, or generated motion
+cache entered the repository or package. The exact private Listening clip was
+used only for local diagnosis. Owner-visible confirmation that its repeated
+cycles remain spatially stable is still required on the replacement integrated
+candidate; this record does not infer that visual result from headless tests.

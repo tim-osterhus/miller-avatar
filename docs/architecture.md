@@ -130,6 +130,16 @@ quarantined, timed-out, or runtime-failed motions use role or normalized-rest
 fallback. Removing a motion or profile removes local metadata and releases
 prepared bytes. It leaves the original user file untouched.
 
+The Web runtime derives a second clip for the four repeating steady roles:
+`idle`, `listening`, `thinking`, and `speaking`. It anchors normalized hips X/Z
+to the target avatar's finite normalized-rest position, preserves all Y values
+and skeletal tracks, and zeroes only planar cubic-spline tangents. If rest X/Z
+is unavailable, the first authored planar sample is the compatibility fallback.
+The original clip remains immutable and is used by one-shot `success` and
+`failure` roles. Camera bounds are keyed by semantic role so a motion token
+shared between a steady and terminal role uses the bounds of the clip that will
+actually play.
+
 Reduced Motion stops the mixer and restores the normalized rest pose. Custom
 triggers and user-authored motion graphs are deferred from v0.1. The package
 does not bundle a model, motion, animation pack, or motion cache.
@@ -186,18 +196,17 @@ remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
 
 The repositories document automated checks and command paths. The remediated
-C7 source/headless matrix passes. The alpha.7 package checkpoint keeps a
-0.01-meter near plane and a minimum 100-meter far plane so skinning and spring
-bones can move toward the camera without crossing a rest-pose-tight clipping
-plane. When horizontal fit leaves spare vertical room, the target shifts within
-the proven padded bounds so the avatar sits lower in the surface. A root
-`ResizeObserver` refits the camera when its caller changes the surface size and
-re-renders the static frame under Reduced Motion. Alpha.7 retains alpha.6's
-active-motion envelope, renderable-material filtering, and settled rest pose,
-plus the renderer-persistence and bounded reachable auxiliary-track repairs.
+C7 source/headless matrix passes. The alpha.8 package checkpoint derives
+role-specific in-place clips for indefinitely repeating steady roles while
+preserving original clips for terminal one-shots. It retains alpha.7's
+0.01-meter near plane, minimum 100-meter far plane, bottom-biased placement,
+and root `ResizeObserver`; alpha.6's active-motion envelope,
+renderable-material filtering, and settled rest pose; plus the
+renderer-persistence and bounded reachable auxiliary-track repairs.
 Alpha.2 does not contain the persistence repair, alpha.3 retains the
 over-strict auxiliary-track rule, alpha.4 retains incorrect first-frame hips
 reanchoring, alpha.5 uses the union of every configured motion envelope, and
-alpha.6 uses a rest-pose-tight camera depth range. Private-asset visual,
+alpha.6 uses a rest-pose-tight camera depth range. Alpha.7 preserves arbitrary
+planar travel in indefinitely repeating steady-role clips. Private-asset visual,
 physical focus, VoiceOver, real Live, signing, and final release qualification
 remain separate gates.

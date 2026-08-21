@@ -73,6 +73,12 @@ quarantined, or runtime-failed motion falls back to the current steady role,
 model. Removing a motion or profile removes local metadata and leaves the
 original user file untouched.
 
+Repeating `idle`, `listening`, `thinking`, and `speaking` roles retain authored
+vertical movement and skeletal performance but run with planar hips travel
+anchored to the avatar's normalized rest position. This prevents locomoting or
+non-loop-ready clips from moving farther across or into the scene on every
+cycle. One-shot `success` and `failure` roles retain their authored root motion.
+
 Reduced Motion stops motion advancement and restores the normalized rest pose.
 The package bundles no model, VRMA, animation pack, motion cache, or user-file
 copy. Legacy VRM 0.x compatibility remains deferred.
@@ -126,16 +132,18 @@ See `PROVENANCE.md` and `THIRD_PARTY_NOTICES.md`.
 ## Qualification status
 
 The repository contains automated contract, build, cleanup, and signed-boundary
-checks. The alpha.7 package checkpoint gives animated geometry safe camera
-depth, uses spare vertical room to place the avatar lower in its surface, and
-refits after the caller changes that surface's dimensions. It retains alpha.6's
-active-motion framing, renderable-material filtering, and settled Reduced
-Motion rest frame, plus alpha.4's renderer-persistence and bounded
-auxiliary-track compatibility repairs.
+checks. The alpha.8 package checkpoint stabilizes repeating steady-role motion
+at normalized rest X/Z while preserving authored Y movement and terminal
+one-shot root motion. It retains alpha.7's safe camera depth, bottom-biased
+placement, and caller-driven surface resizing; alpha.6's active-motion framing,
+renderable-material filtering, and settled Reduced Motion rest frame; and
+alpha.4's renderer-persistence and bounded auxiliary-track compatibility
+repairs.
 Alpha.2 does not contain the persistence repair, alpha.3 retains the
 over-strict auxiliary-track admission rule, alpha.4 retains the incorrect
 first-frame hips reanchoring, alpha.5 uses a profile-wide camera envelope, and
-alpha.6 uses a rest-pose-tight camera depth range.
+alpha.6 uses a rest-pose-tight camera depth range. Alpha.7 preserves arbitrary
+planar travel in indefinitely repeating steady-role clips.
 Owner-visible private-asset, focus, accessibility, and real Live checks remain
 explicitly separate. This documentation does not claim signing, notarization,
 or final v0.1 release qualification.
