@@ -3,15 +3,15 @@ import Testing
 @testable import MillerAvatarCore
 
 @Test func buildIdentity() {
-    #expect(MillerAvatarBuild.productName == "Miller Avatar Alpha")
+    #expect(MillerAvatarBuild.productName == "Miller Avatar")
     #expect(
-        MillerAvatarBuild.bundleIdentifier == "ai.millrace.miller-avatar.alpha"
+        MillerAvatarBuild.bundleIdentifier == "ai.millrace.miller-avatar"
     )
     #expect(MillerAvatarBuild.minimumMacOSMajor == 15)
 }
 
 @Test func buildVersionIdentityIsPackageOwned() {
-    #expect(MillerAvatarBuild.shortVersion == "0.0.1")
+    #expect(MillerAvatarBuild.shortVersion == "0.1.0")
     #expect(MillerAvatarBuild.bundleVersion == "1")
 }
 

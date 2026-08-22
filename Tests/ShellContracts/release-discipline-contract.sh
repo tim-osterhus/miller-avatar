@@ -57,9 +57,9 @@ import { readFileSync } from "node:fs";
 const manifest = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const expectedSourceRevision = process.argv[3];
 assert.deepEqual(manifest.product, {
-  name: "Miller Avatar Alpha",
-  bundle_identifier: "ai.millrace.miller-avatar.alpha",
-  short_version: "0.0.1",
+  name: "Miller Avatar",
+  bundle_identifier: "ai.millrace.miller-avatar",
+  short_version: "0.1.0",
   build_version: "1",
   deployment_target: "15.0",
 });

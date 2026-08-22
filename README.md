@@ -18,7 +18,7 @@ creates synthetic values only for its controls. The renderer session UUID
 exposed in `HostSnapshot` is an internal callback-fencing value, not Miller's
 request or session state.
 
-## Standalone alpha
+## Version 0.1
 
 The current repository milestone assembles a Swift 6.1 macOS 15 diagnostic
 application with a native-first fallback UI and contained WebKit renderer. It
@@ -144,9 +144,12 @@ over-strict auxiliary-track admission rule, alpha.4 retains the incorrect
 first-frame hips reanchoring, alpha.5 uses a profile-wide camera envelope, and
 alpha.6 uses a rest-pose-tight camera depth range. Alpha.7 preserves arbitrary
 planar travel in indefinitely repeating steady-role clips.
-Owner-visible private-asset, focus, accessibility, and real Live checks remain
-explicitly separate. This documentation does not claim signing, notarization,
-or final v0.1 release qualification.
+Owner-visible private-model use in Miller has confirmed model import, VRMA role
+mapping, Basic Chat and Live Voice projection, persistent speaking/listening
+motion, Reduced Motion, resizing, profile replacement, retry, and repeated
+open/close cycles. Miller Avatar v0.1 remains a source-only release; signing
+and notarization apply to consuming applications rather than this Swift package
+tag.
 The V5.1 source and bundle record is in
 [`docs/qualification-vrma-v0.1.md`](docs/qualification-vrma-v0.1.md).
 

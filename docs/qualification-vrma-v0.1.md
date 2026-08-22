@@ -326,6 +326,9 @@ Fresh headless evidence passed:
 
 No private model, motion, source path, animation pack, or generated motion
 cache entered the repository or package. The exact private Listening clip was
-used only for local diagnosis. Owner-visible confirmation that its repeated
-cycles remain spatially stable is still required on the replacement integrated
-candidate; this record does not infer that visual result from headless tests.
+used only for local diagnosis. Owner-visible qualification subsequently
+confirmed stable repeated Listening cycles, corrected camera depth and
+placement, dynamic surface resizing, profile replacement, retry, Reduced
+Motion, Basic Chat, and Live Voice behavior. Those observations complete the
+source-package v0.1 gate; signing and notarization remain responsibilities of
+consuming applications.
