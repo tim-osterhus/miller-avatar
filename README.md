@@ -23,7 +23,7 @@ creates synthetic values only for its controls. The renderer session UUID
 exposed in `HostSnapshot` is an internal callback-fencing value, not Miller's
 request or session state.
 
-## Version 0.1
+## Version 0.1.1
 
 The current repository milestone assembles a Swift 6.1 macOS 15 diagnostic
 application with a native-first fallback UI and contained WebKit renderer. It
@@ -66,7 +66,7 @@ current tested admission table in `docs/asset-policy.md`, and existing profile
 records continue to mean Lightweight. High Quality is an explicit opt-in for a
 model import, not a silent relaxation of the default.
 
-The planned combined `v0.1.1` package release adds the High Quality profile
+The combined `v0.1.1` package release adds the High Quality profile
 mode alongside optional lip sync. High Quality defines three explicit outer
 byte ceilings. Captured GLB bytes, buffer bytes, and accessor-referenced bytes
 are each capped at exactly **2.5 GiB (2,684,354,560 bytes)**. Other aggregate
@@ -94,13 +94,17 @@ reclassify an existing profile. VRMA motion admission remains separate and
 keeps its existing Lightweight budget in either model mode.
 
 The same `v0.1.1` release carries additive optional lip sync. Scalar-only mouth
-cues remain compatible, while complete five-vowel cues use `aa`, `ih`, `ou`,
-`ee`, and `oh`. Miller derives those cues from played remote Live Voice output.
-Raw audio and spectral data do not cross the package bridge. Miller Avatar does
-not acquire microphone audio. Models without every vowel expression use
-the documented fallback. This is a responsive approximation, not a phoneme-
-accuracy claim. Until the combined tag is published, the repository's
-`v0.1.0` source-only release remains the public package checkpoint.
+cues remain compatible: `scalar` stays required, while `vowels` is either absent
+or a complete value in the closed order `aa`, `ih`, `ou`, `ee`, `oh`. Loaded
+models report those five expression capabilities. Miller derives cues only from
+played remote Live Voice output. Raw audio, spectral data, transcript text, and
+provider values do not cross the package bridge, and Miller Avatar requests no
+audio permission. Policy Off clears and suppresses mouth presentation;
+Reduced Motion takes precedence and also clears it. A policy re-enable waits
+for a newer accepted cue, so a stale cue is never replayed. Models without every
+vowel expression use the documented fallback. This is a responsive
+approximation, not a phoneme-accuracy claim. The immutable `v0.1.1` tag is the
+public package checkpoint for these combined capabilities.
 
 ## Bounded VRMA motion
 

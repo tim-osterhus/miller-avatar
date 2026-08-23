@@ -10,5 +10,11 @@ THIRD_PARTY_NOTICES.md and embedded unchanged at
 Contents/Resources/Legal/THIRD_PARTY_NOTICES.md. Build-only Apache License 2.0
 and MIT dependencies are also identified there.
 
+The optional lip-sync mouth controller independently adapts bounded behavior
+reviewed from the VRM Studio 2 donor at commit
+dc077143a2bc279f384cc4e2acaa86c459efb489. Its complete root MIT notice is
+retained in THIRD_PARTY_NOTICES.md; no donor runtime, microphone path, audio,
+model, motion, screen capture, or private fixture is distributed.
+
 No avatar, animation, texture, font, sound, decoder binary, WebAssembly module,
 sample asset, or private fixture is distributed.

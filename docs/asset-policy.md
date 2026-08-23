@@ -124,6 +124,23 @@ the existing retry and quarantine behavior. They are not hidden by silently
 falling back to Lightweight. Lightweight retains its five-second deadline;
 High Quality has no fixed deadline but still responds to explicit cancellation.
 
+## Mouth cues and privacy boundary
+
+Miller Avatar accepts scalar-only mouth cues for compatibility and optionally a
+complete five-vowel value in the closed order `aa`, `ih`, `ou`, `ee`, `oh`.
+Partial, unknown, non-finite, or out-of-range vowel objects fail closed. Model
+capabilities report one Boolean per supported expression; unsupported weights
+use the renderer's documented `aa` fallback. The package receives no raw audio,
+PCM, spectrum, transcript, provider value, or microphone-derived signal and
+requests no audio permission.
+
+Mouth cues are presentation-only. Policy Off clears and suppresses current and
+future mouth values while preserving playback and speaking lifecycle state.
+Reduced Motion has precedence and clears mouth values even when policy is On.
+Policy re-enable does not replay a prior cue; stale ordering and lifecycle
+fences remain active. Interruption, replacement, hide/revoke, failure, retry,
+reset, suspension, and disposal clear scalar and vowel state together.
+
 ## Numeric envelopes
 
 | Value | Allowed envelope |

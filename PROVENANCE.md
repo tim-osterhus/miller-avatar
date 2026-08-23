@@ -48,6 +48,42 @@ source. Rewritten; no research-spike source file was copied into the public repo
   system-cache cleanup. Build-root, clean-root, rollback, interruption, and
   shared-cache comparisons protect that boundary.
 
+## Optional lip-sync behavioral donor
+
+The optional mouth-cue work reviewed the local MIT `vrm-studio-2` donor
+repository, pinned to immutable commit
+`dc077143a2bc279f384cc4e2acaa86c459efb489` (`fix: distinguish live lip sync
+vowels`). The reviewed donor evidence was:
+
+- `src/js/lip_sync_analysis.js`, for the closed `aa`, `ih`, `ou`, `ee`, `oh`
+  ordering and bounded formant-classification behavior;
+- `tests/lip_sync_analysis.test.js`, for deterministic silence, ambiguity,
+  formant, and bounded-output cases; and
+- smoothing behavior in `src/js/vrm_audio.js`, specifically the attack rate
+  `0.55`, release rate `0.30`, and zero threshold `0.001`.
+
+Miller Avatar independently reimplemented the package-side pure
+`Web/src/mouth-controller.ts` behavior: closed five-vowel values, capability
+fallback, scalar-only compatibility, immutable bounded outputs, and the
+reviewed attack/release smoothing constants. No donor source file or donor
+test file was copied into this repository. The donor's classifier and its
+runtime integration remain outside Miller Avatar; Miller owns played-output
+classification in its private Live peer.
+
+The donor root `LICENSE` at that commit is the MIT License, copyright `(c) 2026
+ZaberKo`; the complete notice is retained in `THIRD_PARTY_NOTICES.md`. The
+donor `package.json` simultaneously declares `"license": "ISC"`. That
+metadata conflicts with the root license text and is recorded here rather than
+silently normalized: Miller Avatar relies on the reviewed root MIT notice for
+the behavioral evidence, does not claim an ISC license for the adaptation, and
+does not copy the donor package metadata or dependency graph.
+
+Microphone acquisition, `getUserMedia`, `AudioContext`/`AnalyserNode` runtime
+ownership, raw PCM or spectral data, donor UI, model/motion/audio/screen
+capture assets, and private fixture paths or metadata were not copied. The
+package itself requests no audio permission and receives only the bounded
+scalar or complete five-vowel bridge value.
+
 Generated `Sources/MillerAvatarHost/Resources/Web/` files come only from
 `scripts/bundle-web.sh` and the exact locked npm graph.
 `Resources/build-manifest.json` comes only from `scripts/build.sh`. Their

@@ -23,6 +23,7 @@ const expectedMetafileInputs = [
   "src/main.ts",
   "src/motion-controller.ts",
   "src/motion-loader.ts",
+  "src/mouth-controller.ts",
   "src/presentation.ts",
   "src/renderer.ts",
   "src/runtime.ts",

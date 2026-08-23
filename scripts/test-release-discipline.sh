@@ -100,7 +100,7 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 assert.deepEqual(manifest.product, {
   name: "Miller Avatar",
   bundle_identifier: "ai.millrace.miller-avatar",
-  short_version: "0.1.0",
+  short_version: "0.1.1",
   build_version: "1",
   deployment_target: "15.0",
 });

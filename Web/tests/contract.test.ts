@@ -43,6 +43,55 @@ assert.equal(bridgeContract.maximumContainerDepth, 8);
 assert.equal(bridgeContract.maximumArrayLength, 64);
 assert.equal(bridgeContract.maximumSafeInteger, 9_007_199_254_740_991);
 
+assert.doesNotThrow(() => observationDecoder().decode(JSON.stringify(observationAt(
+  1,
+  1,
+  "profile_model_loaded",
+  {
+    profile_revision: 1,
+    model_token: modelToken,
+    capabilities: { aa: true, look_at: true, spring_bone: false, mtoon_materials: 10_240 },
+  },
+))));
+assert.throws(() => observationDecoder().decode(JSON.stringify(observationAt(
+  1,
+  1,
+  "profile_model_loaded",
+  {
+    profile_revision: 1,
+    model_token: modelToken,
+    capabilities: { aa: true, look_at: true, spring_bone: false, mtoon_materials: 10_241 },
+  },
+))), /invalid_value/);
+
+for (const [key, maximum] of Object.entries({
+  visible_meshes: 40_960,
+  decoded_textures: 1_280,
+  material_bindings: 10_240,
+})) {
+  const accepted = { ...firstFramePayload(), [key]: maximum };
+  assert.doesNotThrow(() => {
+    const decoder = observationDecoder();
+    decoder.decode(JSON.stringify(observationAt(1, 1, "profile_model_loaded", {
+      profile_revision: 1,
+      model_token: modelToken,
+      capabilities: capabilities(),
+    })));
+    decoder.decode(JSON.stringify(observationAt(2, 1, "first_frame", accepted)));
+  }, `${key} accepts HQ maximum`);
+
+  const rejected = { ...accepted, [key]: maximum + 1 };
+  assert.throws(() => {
+    const decoder = observationDecoder();
+    decoder.decode(JSON.stringify(observationAt(1, 1, "profile_model_loaded", {
+      profile_revision: 1,
+      model_token: modelToken,
+      capabilities: capabilities(),
+    })));
+    decoder.decode(JSON.stringify(observationAt(2, 1, "first_frame", rejected)));
+  }, /invalid_value/, `${key} rejects above HQ maximum`);
+}
+
 const validNames = fixtureNames("valid");
 assert.deepEqual(validNames, [
   "command-configure.json",

@@ -186,6 +186,7 @@ const allowedBundleInputs = new Set([
   "src/main.ts",
   "src/motion-controller.ts",
   "src/motion-loader.ts",
+  "src/mouth-controller.ts",
   "src/presentation.ts",
   "src/renderer.ts",
   "src/runtime.ts",
@@ -223,7 +224,7 @@ assert.equal(buildManifest.schema, "miller-avatar.build-manifest/v1");
 assert.deepEqual(buildManifest.product, {
   name: "Miller Avatar",
   bundle_identifier: "ai.millrace.miller-avatar",
-  short_version: "0.1.0",
+  short_version: "0.1.1",
   build_version: "1",
   deployment_target: "15.0",
 });

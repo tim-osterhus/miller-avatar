@@ -1,6 +1,6 @@
 # VRMA v0.1 qualification record
 
-Status: `CURRENT_ALPHA8_WITH_HISTORICAL_V5.1_EVIDENCE`
+Status: `CURRENT_V0_1_1_PACKAGE_CHECKPOINT_WITH_HISTORICAL_ALPHA8_EVIDENCE`
 
 The first part of this record preserves the public source, dependency, legal,
 and offline Web-bundle evidence captured at V5.1. At that historical stage,
@@ -8,12 +8,13 @@ the native `Resources/build-manifest.json` was intentionally unchanged and
 V5.2 still had to regenerate it. Those statements and the original test counts
 below describe that earlier checkpoint, not the current release state. The
 later checkpoint sections preserve each correction in order; **Alpha.8
-repeating-motion stabilization** describes the current package checkpoint.
+repeating-motion stabilization** describes the final v0.1.0 package
+checkpoint, while the final section records v0.1.1.
 
 The Alpha.8 sections remain historical evidence for the published v0.1.0
-source checkpoint. The final section records the planned combined v0.1.1
-release scope; it is not a claim that that tag has been published or that its
-owner-visible gates have already passed.
+source checkpoint. The final section records the current combined v0.1.1
+release checkpoint and its package-level evidence; it does not replace the
+separate owner-visible qualification required by consuming applications.
 
 ## Closed scope
 
@@ -340,13 +341,12 @@ consuming applications.
 
 ## v0.1.1 combined release qualification
 
-Status: `PLANNED_COMBINED_LIP_SYNC_AND_HIGH_QUALITY`
+Status: `CURRENT_V0_1_1_RELEASE`
 
-The next package release is one immutable `v0.1.1` containing both optional
+This package release is one immutable `v0.1.1` containing both optional
 played-output lip sync and High Quality VRM model admission. There is no
 separate High Quality package tag. The release review and full package gate
-must cover the existing lip-sync tranche together with HQ1–HQ3 before the tag
-is published.
+cover the existing lip-sync tranche together with HQ1–HQ3.
 
 ### High Quality admission scope
 
@@ -393,9 +393,82 @@ responsive five-vowel approximation. It must not claim phoneme accuracy.
 
 ### Evidence boundary
 
-The combined release is not qualified by this historical record until the
-HQ1–HQ3 source/headless checks, package release-discipline checks, and the
-optional lip-sync review complete. Private model and audio qualification remains
+The combined release is published as one immutable `v0.1.1` checkpoint.
+Private model and audio qualification remains
 owner-visible evidence only. No private model, motion, audio, transcript,
 source path, or identifying metadata may enter this repository, its bundle, or
 this public record.
+
+### Task 6 provenance and package boundary
+
+The reviewed behavioral donor is the local MIT `vrm-studio-2` repository at
+immutable commit
+`dc077143a2bc279f384cc4e2acaa86c459efb489`. The reviewed files are
+`src/js/lip_sync_analysis.js`, `tests/lip_sync_analysis.test.js`, and the
+smoothing behavior in `src/js/vrm_audio.js`. Miller Avatar adapts only the
+pure five-vowel ordering, bounded fallback, and `0.55` attack/`0.30` release
+smoothing behavior in its independently implemented controller. The donor root
+MIT notice, copyright `(c) 2026 ZaberKo`, is retained in
+`THIRD_PARTY_NOTICES.md`.
+
+At the same donor commit, `package.json` declares `"license": "ISC"` while the
+root `LICENSE` is MIT. This metadata discrepancy is retained in the public
+provenance record; no ISC license is claimed for the adaptation. No donor
+source/test file, microphone acquisition, `AudioContext`/`AnalyserNode`
+ownership, raw audio, model, motion, screen capture, private fixture, or
+machine-specific generated metadata is copied into the package.
+
+### Task 6 release identity and evidence boundary
+
+The candidate build identity is `0.1.1` with build number `1`. Lightweight
+remains the default; High Quality is per-import and per-profile, with exact
+2.5 GiB captured-file, buffer, and accessor ceilings, a 20x aggregate posture,
+and a 4x image-dimension posture. Integrity checks, explicit cancellation,
+runtime allocation failures below the policy ceiling, stored-mode authority,
+and the unchanged Lightweight VRMA budget remain in force. Optional lip sync
+and High Quality are one combined release; no separate tag is created.
+
+The generated Web and native manifests are regenerated from reviewed source
+and package-lock inputs. The candidate package gate copies no private assets
+into public artifacts. Its bounded signed-boundary probe launches only the
+package's diagnostic app long enough to prove native-wrapper and Web-renderer
+readiness; it does not launch or replace Miller and is not a visual-quality
+claim.
+
+### Task 6 headless execution record
+
+The release-closure commands were run on the candidate. Only the final bounded
+signed-boundary probe launched the diagnostic app:
+
+- `scripts/bundle-web.sh`: PASS with Node `22.22.0`, npm `10.9.4`, and the
+  locked dependency graph. The generated `app.js`, `bundle-manifest.json`, and
+  `bundle-metafile.json` include the already-implemented mouth controller and
+  its policy/renderer sources.
+- `scripts/build.sh`: PASS. The ad-hoc-signed diagnostic app assembled with
+  product short version `0.1.1`; the build script itself did not launch the
+  app. The separate bounded signed-boundary probe below launched it.
+- `scripts/test-release-discipline.sh`: PASS, including deterministic native
+  builds, simulated toolchain/Swift/assembly/code-sign failures, publication
+  rollback, interruption cleanup, declared-root cleanup, and shared-cache
+  preservation.
+- Web type checking: PASS. Web test compilation and execution: PASS, 116/116.
+  The exact generated-module closure contains 20 emitted inputs, including the
+  package-owned `src/mouth-controller.ts`.
+- Swift package tests: PASS, 350/350.
+- `scripts/verify-dependencies.sh`: PASS with 65 locked packages and 20 emitted
+  inputs.
+- `scripts/test.sh`: PASS, including all Web, Swift, shell-contract,
+  deterministic-build, rollback, injected-failure, publication, interruption,
+  and cleanup gates.
+- `git diff --check`: PASS. Tracked/public asset-extension, generated Web
+  resource, native manifest, and embedded legal-notice scans found no model,
+  motion, audio, screen-capture, private fixture, or private path marker.
+- `scripts/test-signed-boundary.sh`: PASS against the freshly built,
+  ad-hoc-signed diagnostic app. The probe verified the exact expected
+  entitlement keys and reached both wrapper and renderer readiness. This is a
+  production-boundary check, not owner-visible visual qualification.
+
+The generated native manifest records only reviewed source, legal, static, and
+Web-resource hashes; the generated Web manifests record the locked graph and
+relative input names. The annotated `v0.1.1` tag identifies the independently
+reviewed commit containing this evidence and the complete release diff.

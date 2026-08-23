@@ -1058,7 +1058,7 @@ private extension PresentationObservation {
                     aa: try capabilities.boolean("aa"),
                     lookAt: try capabilities.boolean("look_at"),
                     springBone: try capabilities.boolean("spring_bone"),
-                    mtoonMaterials: try capabilities.integer("mtoon_materials", maximum: 512),
+                    mtoonMaterials: try capabilities.integer("mtoon_materials", maximum: 10_240),
                     vowels: vowelCapabilities
                 )
             ))
@@ -1072,9 +1072,9 @@ private extension PresentationObservation {
                 modelToken: try payload.uuid("model_token"),
                 viewportWidth: try payload.integer("viewport_width", minimum: 1, maximum: 8_192),
                 viewportHeight: try payload.integer("viewport_height", minimum: 1, maximum: 8_192),
-                visibleMeshes: try payload.integer("visible_meshes", minimum: 1, maximum: 2_048),
-                decodedTextures: try payload.integer("decoded_textures", maximum: 64),
-                materialBindings: try payload.integer("material_bindings", minimum: 1, maximum: 512),
+                visibleMeshes: try payload.integer("visible_meshes", minimum: 1, maximum: 40_960),
+                decodedTextures: try payload.integer("decoded_textures", maximum: 1_280),
+                materialBindings: try payload.integer("material_bindings", minimum: 1, maximum: 10_240),
                 alphaProbePixels: try payload.integer("alpha_probe_pixels", minimum: 1, maximum: 4_096)
             ))
         case "motion_status":

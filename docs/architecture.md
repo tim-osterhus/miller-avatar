@@ -17,9 +17,12 @@ mouth-cue revocation, Reduced Motion, suspension/resume reconciliation, and
 serialized visibility commands. It also admits immutable in-memory bytes for the
 closed GLB-form VRM 1.0 envelope; the full policy is in `asset-policy.md`.
 The mouth boundary remains scalar-compatible and can carry one complete
-five-vowel value (`aa`, `ih`, `ou`, `ee`, `oh`). The package validates and
-renders those bounded cues; it does not capture audio or derive them from
-microphone input.
+five-vowel value (`aa`, `ih`, `ou`, `ee`, `oh`). `scalar` remains required;
+`vowels` is absent for legacy cues or contains all five finite bounded values.
+The loaded model reports a closed capability flag for each expression, and the
+renderer folds unsupported non-`aa` weights into `aa` when available. The
+package validates and renders those bounded cues; it does not capture audio,
+request audio permission, or derive cues from microphone input.
 
 The caller owns semantic session, request, generation, playback, projection,
 and cue identity values. `ProjectPhasePayload` carries the caller's projection
@@ -31,6 +34,15 @@ assistant state. The standalone diagnostic app creates synthetic values for its
 controls. The host also allocates an internal renderer session UUID for
 callback fencing and exposes it in `HostSnapshot`; that value is not Miller's
 request or session identity.
+
+Mouth policy is renderer presentation policy, not audio or playback policy.
+`mouth_cues_enabled == false` clears the current scalar and vowel target and
+suppresses later valid cues while still accepting their ordering metadata.
+Reduced Motion is stronger: it clears and suppresses mouth presentation even
+when mouth cues are enabled. Re-enabling a policy does not replay an older cue;
+the next newer accepted cue is required. Suspension, visibility revocation,
+playback replacement, reset, renderer failure, and disposal clear both scalar
+and vowel presentation.
 
 ## Public host surface
 

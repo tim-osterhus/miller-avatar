@@ -143,6 +143,104 @@ import Testing
         ))
     }
 
+    @Test func evidenceDecodersAcceptHighQualityMaximaAndRejectAboveThem() throws {
+        let profileCapabilities: [String: Any] = [
+            "aa": true,
+            "look_at": true,
+            "spring_bone": false,
+            "mtoon_materials": 10_240,
+        ]
+
+        #expect(throws: Never.self) {
+            try observationDecoder().decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": profileCapabilities,
+                ]
+            ))
+        }
+        #expect(throws: (any Error).self) {
+            try observationDecoder().decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": [
+                        "aa": true,
+                        "look_at": true,
+                        "spring_bone": false,
+                        "mtoon_materials": 10_241,
+                    ],
+                ]
+            ))
+        }
+
+        func firstFrameDecoder() throws -> PresentationObservationDecoder {
+            let decoder = observationDecoder()
+            _ = try decoder.decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": [
+                        "aa": true,
+                        "look_at": true,
+                        "spring_bone": false,
+                        "mtoon_materials": 1,
+                    ],
+                ]
+            ))
+            return decoder
+        }
+
+        let maxima = [
+            "visible_meshes": 40_960,
+            "decoded_textures": 1_280,
+            "material_bindings": 10_240,
+        ]
+        for (key, maximum) in maxima {
+            var payload: [String: Any] = [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "viewport_width": 800,
+                "viewport_height": 600,
+                "visible_meshes": 1,
+                "decoded_textures": 2,
+                "material_bindings": 2,
+                "alpha_probe_pixels": 5,
+            ]
+            payload[key] = maximum
+            // The exact HQ boundary remains valid even though this decoder does not
+            // carry the profile's admission mode.
+            #expect(throws: Never.self) {
+                try firstFrameDecoder().decode(observation(
+                    sequence: 2,
+                    causedBySequence: 1,
+                    type: "first_frame",
+                    payload: payload
+                ))
+            }
+
+            payload[key] = maximum + 1
+            #expect(throws: (any Error).self) {
+                try firstFrameDecoder().decode(observation(
+                    sequence: 2,
+                    causedBySequence: 1,
+                    type: "first_frame",
+                    payload: payload
+                ))
+            }
+        }
+    }
+
     @Test func partialNullUnknownOrOutOfRangeVowelsAreRejected() {
         func seededDecoder() throws -> PresentationCommandDecoder {
             let decoder = commandDecoder()

@@ -11,7 +11,7 @@ import Testing
 }
 
 @Test func buildVersionIdentityIsPackageOwned() {
-    #expect(MillerAvatarBuild.shortVersion == "0.1.0")
+    #expect(MillerAvatarBuild.shortVersion == "0.1.1")
     #expect(MillerAvatarBuild.bundleVersion == "1")
 }
 
