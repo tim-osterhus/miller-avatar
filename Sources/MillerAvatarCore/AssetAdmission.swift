@@ -70,7 +70,7 @@ package enum AssetAdmissionResult: Equatable, Sendable {
 
 package struct AssetAdmission: Sendable {
     private let budget: AssetBudget
-    private let timeoutNanoseconds: UInt64
+    private let timeoutNanoseconds: UInt64?
     private let monotonicNow: @Sendable () -> UInt64
     private let isCancelled: @Sendable () -> Bool
 
@@ -85,9 +85,45 @@ package struct AssetAdmission: Sendable {
         }
     ) {
         self.budget = budget
-        self.timeoutNanoseconds = timeoutNanoseconds ?? budget.preflightNanoseconds
+        self.timeoutNanoseconds = timeoutNanoseconds ?? budget.preflightDeadlineNanoseconds
         self.monotonicNow = monotonicNow
         self.isCancelled = isCancelled
+    }
+
+    package init(
+        mode: AvatarAssetQualityMode,
+        timeoutNanoseconds: UInt64? = nil,
+        monotonicNow: @escaping @Sendable () -> UInt64 = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        isCancelled: @escaping @Sendable () -> Bool = {
+            Task.isCancelled
+        }
+    ) {
+        self.init(
+            budget: .budget(for: mode),
+            timeoutNanoseconds: timeoutNanoseconds,
+            monotonicNow: monotonicNow,
+            isCancelled: isCancelled
+        )
+    }
+
+    package init(
+        qualityMode: AvatarAssetQualityMode,
+        timeoutNanoseconds: UInt64? = nil,
+        monotonicNow: @escaping @Sendable () -> UInt64 = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        isCancelled: @escaping @Sendable () -> Bool = {
+            Task.isCancelled
+        }
+    ) {
+        self.init(
+            mode: qualityMode,
+            timeoutNanoseconds: timeoutNanoseconds,
+            monotonicNow: monotonicNow,
+            isCancelled: isCancelled
+        )
     }
 
     package func admit(_ capturedBytes: Data) async -> AssetAdmissionResult {
@@ -103,9 +139,15 @@ package struct AssetAdmission: Sendable {
     }
 
     package func admitSynchronously(_ capturedBytes: Data) -> AssetAdmissionResult {
-        let start = monotonicNow()
-        let (deadline, overflow) = start.addingReportingOverflow(timeoutNanoseconds)
-        guard !overflow else { return .rejected(.resourceLimit) }
+        let deadline: UInt64?
+        if let timeoutNanoseconds {
+            let start = monotonicNow()
+            let (value, overflow) = start.addingReportingOverflow(timeoutNanoseconds)
+            guard !overflow else { return .rejected(.resourceLimit) }
+            deadline = value
+        } else {
+            deadline = nil
+        }
 
         do {
             try checkpoint(deadline: deadline)
@@ -151,9 +193,14 @@ package struct AssetAdmission: Sendable {
         }
     }
 
-    private func checkpoint(deadline: UInt64) throws {
-        guard !isCancelled(), monotonicNow() < deadline else {
+    private func checkpoint(deadline: UInt64?) throws {
+        guard !isCancelled() else {
             throw DeadlineError.exceeded
+        }
+        if let deadline {
+            guard monotonicNow() < deadline else {
+                throw DeadlineError.exceeded
+            }
         }
     }
 }
@@ -680,6 +727,7 @@ private struct SemanticValidator {
             let count = try uint(accessor["count"])
             guard count > 0 else { throw AdmissionError.invalid }
             let elementBytes = try AssetBudget.multiply(componentBytes, componentCount)
+            _ = try checkedScalarCount(count: count, componentCount: componentCount)
 
             let denseOffset: UInt64?
             let stride: UInt64
@@ -710,16 +758,14 @@ private struct SemanticValidator {
 
             let logicalBytes = try AssetBudget.multiply(count, elementBytes)
             let logicalTotal = try AssetBudget.add(accessorBytes, logicalBytes)
-            try AssetBudget.require(
-                logicalTotal,
-                maximum: budget.accessorReferencedBytes
-            )
+            let accessorCeiling = budget.accessorReferencedBytes
+            try AssetBudget.require(logicalTotal, maximum: accessorCeiling)
             let sparse = try validateSparseAccessor(
                 accessor["sparse"],
                 accessorCount: count,
                 componentBytes: componentBytes,
                 elementBytes: elementBytes,
-                remainingReferencedBytes: budget.accessorReferencedBytes - logicalTotal
+                remainingReferencedBytes: accessorCeiling - logicalTotal
             )
             guard denseOffset != nil || sparse != nil else {
                 throw AdmissionError.invalid
@@ -730,10 +776,7 @@ private struct SemanticValidator {
                 sparse?.referencedBytes ?? 0
             )
             accessorBytes = try AssetBudget.add(accessorBytes, referenced)
-            try AssetBudget.require(
-                accessorBytes,
-                maximum: budget.accessorReferencedBytes
-            )
+            try AssetBudget.require(accessorBytes, maximum: accessorCeiling)
             let info = AccessorInfo(
                 componentType: componentType,
                 componentBytes: componentBytes,
@@ -796,10 +839,7 @@ private struct SemanticValidator {
         let indicesLength = try AssetBudget.multiply(sparseCount, indexBytes)
         let valuesLength = try AssetBudget.multiply(sparseCount, elementBytes)
         let referencedBytes = try AssetBudget.add(indicesLength, valuesLength)
-        try AssetBudget.require(
-            referencedBytes,
-            maximum: remainingReferencedBytes
-        )
+        try AssetBudget.require(referencedBytes, maximum: remainingReferencedBytes)
         guard indicesLocalOffset % indexBytes == 0,
               valuesLocalOffset % componentBytes == 0,
               try AssetBudget.add(indicesLocalOffset, indicesLength) <= indicesView.length,
@@ -852,6 +892,10 @@ private struct SemanticValidator {
 
     private func validateFiniteValues(_ accessor: AccessorInfo) throws {
         guard accessor.componentType == 5126 else { return }
+        _ = try checkedScalarCount(
+            count: accessor.count,
+            componentCount: accessor.componentCount
+        )
         var sparsePosition = 0
         for element in 0..<accessor.count {
             if element % 256 == 0 { try checkpoint() }
@@ -909,20 +953,31 @@ private struct SemanticValidator {
             }
         }
         var marks = Array(repeating: UInt8(0), count: nodes.count)
-        func visit(_ node: Int) throws {
-            try checkpoint()
-            guard marks[node] != 1 else { throw AdmissionError.invalid }
-            if marks[node] == 2 { return }
-            marks[node] = 1
-            for child in edges[node] {
-                try checkpoint()
-                try visit(child)
-            }
-            marks[node] = 2
-        }
         for node in nodes.indices {
-            try checkpoint()
-            try visit(node)
+            guard marks[node] == 0 else { continue }
+            var stack: [(node: Int, nextChild: Int)] = [(node, 0)]
+            marks[node] = 1
+            while let frame = stack.last {
+                try checkpoint()
+                if frame.nextChild == edges[frame.node].count {
+                    marks[frame.node] = 2
+                    stack.removeLast()
+                    continue
+                }
+
+                let child = edges[frame.node][frame.nextChild]
+                stack[stack.count - 1].nextChild += 1
+                try checkpoint()
+                switch marks[child] {
+                case 0:
+                    marks[child] = 1
+                    stack.append((child, 0))
+                case 1:
+                    throw AdmissionError.invalid
+                default:
+                    continue
+                }
+            }
         }
 
         let scenes = try optionalArray("scenes")
@@ -983,9 +1038,13 @@ private struct SemanticValidator {
                         $0.hasPrefix("WEIGHTS_") ? String($0.dropFirst(8)) : nil
                     }
                 )
-                guard jointSets == weightSets else { throw AdmissionError.invalid }
+                guard jointSets == weightSets,
+                      jointSets.isEmpty || jointSets == ["0"]
+                else {
+                    throw AdmissionError.invalid
+                }
                 try AssetBudget.require(
-                    UInt64(jointSets.count * 4),
+                    try AssetBudget.multiply(UInt64(jointSets.count), 4),
                     maximum: budget.vertexJointInfluences
                 )
                 let primitiveElementCount: UInt64
@@ -1136,7 +1195,10 @@ private struct SemanticValidator {
         }
         guard accessor.normalized else { throw AdmissionError.invalid }
         var result: [Double] = []
-        result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        result.reserveCapacity(try checkedScalarCount(
+            count: accessor.count,
+            componentCount: accessor.componentCount
+        ))
         var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
@@ -1185,7 +1247,10 @@ private struct SemanticValidator {
             else {
                 throw AdmissionError.invalid
             }
-            try AssetBudget.require(UInt64(joints.count), maximum: budget.jointsPerSkin)
+            try AssetBudget.require(
+                UInt64(joints.count),
+                maximum: budget.jointsPerSkin
+            )
             jointCounts.append(UInt64(joints.count))
             for joint in joints {
                 try checkpoint()
@@ -1375,14 +1440,23 @@ private struct SemanticValidator {
             try AssetBudget.require(heightValue, maximum: budget.imageDimension)
             let pixels = try AssetBudget.multiply(widthValue, heightValue)
             decodedPixels = try AssetBudget.add(decodedPixels, pixels)
-            try AssetBudget.require(decodedPixels, maximum: budget.decodedImagePixels)
+            try AssetBudget.require(
+                decodedPixels,
+                maximum: budget.decodedImagePixels
+            )
             baseBytes = try AssetBudget.add(baseBytes, try AssetBudget.multiply(pixels, 4))
             mipBytes = try AssetBudget.add(
                 mipBytes,
                 try AssetBudget.mipmappedRGBA8Bytes(pixelCount: pixels)
             )
-            try AssetBudget.require(baseBytes, maximum: budget.decodedRGBA8Bytes)
-            try AssetBudget.require(mipBytes, maximum: budget.mipmappedRGBA8Bytes)
+            try AssetBudget.require(
+                baseBytes,
+                maximum: budget.decodedRGBA8Bytes
+            )
+            try AssetBudget.require(
+                mipBytes,
+                maximum: budget.mipmappedRGBA8Bytes
+            )
         }
     }
 
@@ -1395,7 +1469,10 @@ private struct SemanticValidator {
         if let humanoid = vrm["humanoid"] as? [String: Any],
            let bones = humanoid["humanBones"] as? [String: Any]
         {
-            try AssetBudget.require(UInt64(bones.count), maximum: budget.humanoidBoneEntries)
+            try AssetBudget.require(
+                UInt64(bones.count),
+                maximum: budget.humanoidBoneEntries
+            )
             for value in bones.values {
                 try checkpoint()
                 guard let bone = value as? [String: Any] else { throw AdmissionError.invalid }
@@ -1416,8 +1493,14 @@ private struct SemanticValidator {
             let springs = try optionalArray(spring["springs"])
             let colliders = try optionalArray(spring["colliders"])
             let groups = try optionalArray(spring["colliderGroups"])
-            try AssetBudget.require(UInt64(colliders.count), maximum: budget.springColliders)
-            try AssetBudget.require(UInt64(groups.count), maximum: budget.springColliderGroups)
+            try AssetBudget.require(
+                UInt64(colliders.count),
+                maximum: budget.springColliders
+            )
+            try AssetBudget.require(
+                UInt64(groups.count),
+                maximum: budget.springColliderGroups
+            )
             let nodeCount = try optionalArray("nodes").count
             for value in colliders {
                 try checkpoint()
@@ -1574,7 +1657,10 @@ private struct SemanticValidator {
     private func floatingValues(_ accessor: AccessorInfo) throws -> [Double] {
         guard accessor.componentType == 5126 else { throw AdmissionError.invalid }
         var result: [Double] = []
-        result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        result.reserveCapacity(try checkedScalarCount(
+            count: accessor.count,
+            componentCount: accessor.componentCount
+        ))
         var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
@@ -1586,7 +1672,10 @@ private struct SemanticValidator {
             for component in 0..<accessor.componentCount {
                 if let base {
                     result.append(
-                        Double(float32(at: try AssetBudget.add(base, component * 4)))
+                        Double(float32(at: try AssetBudget.add(
+                            base,
+                            try AssetBudget.multiply(component, 4)
+                        )))
                     )
                 } else {
                     result.append(0)
@@ -1598,7 +1687,10 @@ private struct SemanticValidator {
 
     private func integerValues(_ accessor: AccessorInfo) throws -> [UInt64] {
         var result: [UInt64] = []
-        result.reserveCapacity(Int(accessor.count * accessor.componentCount))
+        result.reserveCapacity(try checkedScalarCount(
+            count: accessor.count,
+            componentCount: accessor.componentCount
+        ))
         var sparsePosition = 0
         for element in 0..<accessor.count {
             try checkpoint(at: element)
@@ -1629,6 +1721,20 @@ private struct SemanticValidator {
             }
         }
         return result
+    }
+
+    private func checkedScalarCount(
+        count: UInt64,
+        componentCount: UInt64
+    ) throws -> Int {
+        let scalarCount = try AssetBudget.multiply(count, componentCount)
+        guard count <= UInt64(Int.max),
+              scalarCount <= UInt64(Int.max),
+              let represented = Int(exactly: scalarCount)
+        else {
+            throw AdmissionError.invalid
+        }
+        return represented
     }
 
     private func elementOffset(

@@ -150,6 +150,19 @@ import Testing
             )
         }
     }
+
+    @Test func acceptsAnExplicitHighQualityMode() throws {
+        let bytes = try SyntheticGLBFactory.make()
+        #expect(
+            try GLBParser.parse(bytes, mode: .highQuality)
+                == GLBParser.parse(bytes, budget: .highQuality)
+        )
+    }
+
+    @Test func guardsTheUInt32GLBLengthRepresentationWithoutAllocating() {
+        #expect(GLBParser.isRepresentableGLBLength(Int(UInt32.max)))
+        #expect(!GLBParser.isRepresentableGLBLength(Int(UInt32.max) + 1))
+    }
 }
 
 private extension UInt32 {

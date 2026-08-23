@@ -5,6 +5,11 @@ public enum AssetBudgetError: Error, Equatable, Sendable {
     case arithmeticOverflow
 }
 
+public enum AvatarAssetQualityMode: String, Codable, Sendable {
+    case lightweight
+    case highQuality = "high_quality"
+}
+
 public struct AssetCeiling: Equatable, Sendable {
     public let name: String
     public let limit: UInt64
@@ -43,8 +48,83 @@ public struct AssetBudget: Equatable, Sendable {
     public let springColliderGroups: UInt64
     public let nodeConstraints: UInt64
     public let preflightNanoseconds: UInt64
+    public let qualityMode: AvatarAssetQualityMode
 
-    public static let alpha = AssetBudget(
+    public init(
+        capturedBytes: UInt64,
+        jsonBytes: UInt64,
+        jsonValues: UInt64,
+        jsonNesting: UInt64,
+        nodes: UInt64,
+        meshes: UInt64,
+        meshPrimitives: UInt64,
+        materials: UInt64,
+        images: UInt64,
+        textures: UInt64,
+        samplers: UInt64,
+        imageDimension: UInt64,
+        decodedImagePixels: UInt64,
+        decodedRGBA8Bytes: UInt64,
+        mipmappedRGBA8Bytes: UInt64,
+        bufferBytes: UInt64,
+        accessorReferencedBytes: UInt64,
+        vertices: UInt64,
+        indices: UInt64,
+        triangles: UInt64,
+        morphTargetsPerPrimitive: UInt64,
+        morphScalarValues: UInt64,
+        skins: UInt64,
+        jointsPerSkin: UInt64,
+        vertexJointInfluences: UInt64,
+        humanoidBoneEntries: UInt64,
+        expressions: UInt64,
+        springJoints: UInt64,
+        springColliders: UInt64,
+        springColliderGroups: UInt64,
+        nodeConstraints: UInt64,
+        preflightNanoseconds: UInt64,
+        qualityMode: AvatarAssetQualityMode = .lightweight
+    ) {
+        self.capturedBytes = capturedBytes
+        self.jsonBytes = jsonBytes
+        self.jsonValues = jsonValues
+        self.jsonNesting = jsonNesting
+        self.nodes = nodes
+        self.meshes = meshes
+        self.meshPrimitives = meshPrimitives
+        self.materials = materials
+        self.images = images
+        self.textures = textures
+        self.samplers = samplers
+        self.imageDimension = imageDimension
+        self.decodedImagePixels = decodedImagePixels
+        self.decodedRGBA8Bytes = decodedRGBA8Bytes
+        self.mipmappedRGBA8Bytes = mipmappedRGBA8Bytes
+        self.bufferBytes = bufferBytes
+        self.accessorReferencedBytes = accessorReferencedBytes
+        self.vertices = vertices
+        self.indices = indices
+        self.triangles = triangles
+        self.morphTargetsPerPrimitive = morphTargetsPerPrimitive
+        self.morphScalarValues = morphScalarValues
+        self.skins = skins
+        self.jointsPerSkin = jointsPerSkin
+        self.vertexJointInfluences = vertexJointInfluences
+        self.humanoidBoneEntries = humanoidBoneEntries
+        self.expressions = expressions
+        self.springJoints = springJoints
+        self.springColliders = springColliders
+        self.springColliderGroups = springColliderGroups
+        self.nodeConstraints = nodeConstraints
+        self.preflightNanoseconds = preflightNanoseconds
+        self.qualityMode = qualityMode
+    }
+
+    public init(qualityMode: AvatarAssetQualityMode) {
+        self = Self.budget(for: qualityMode)
+    }
+
+    public static let lightweight = AssetBudget(
         capturedBytes: 128 * 1_024 * 1_024,
         jsonBytes: 8 * 1_024 * 1_024,
         jsonValues: 262_144,
@@ -76,8 +156,69 @@ public struct AssetBudget: Equatable, Sendable {
         springColliders: 512,
         springColliderGroups: 512,
         nodeConstraints: 512,
-        preflightNanoseconds: 5_000_000_000
+        preflightNanoseconds: 5_000_000_000,
+        qualityMode: .lightweight
     )
+
+    public static let alpha = lightweight
+
+    private static let highQualityByteCeiling: UInt64 = 2_684_354_560
+
+    public static let highQuality = AssetBudget.highQualityBudget
+
+    private static let highQualityBudget: AssetBudget = {
+        let light = lightweight
+        return AssetBudget(
+            capturedBytes: highQualityByteCeiling,
+            jsonBytes: scaled(light.jsonBytes),
+            jsonValues: scaled(light.jsonValues),
+            jsonNesting: light.jsonNesting,
+            nodes: scaled(light.nodes),
+            meshes: scaled(light.meshes),
+            meshPrimitives: scaled(light.meshPrimitives),
+            materials: scaled(light.materials),
+            images: scaled(light.images),
+            textures: scaled(light.textures),
+            samplers: scaled(light.samplers),
+            imageDimension: light.imageDimension * 4,
+            decodedImagePixels: scaled(light.decodedImagePixels),
+            decodedRGBA8Bytes: scaled(light.decodedRGBA8Bytes),
+            mipmappedRGBA8Bytes: scaled(light.mipmappedRGBA8Bytes),
+            bufferBytes: highQualityByteCeiling,
+            accessorReferencedBytes: highQualityByteCeiling,
+            vertices: scaled(light.vertices),
+            indices: scaled(light.indices),
+            triangles: scaled(light.triangles),
+            morphTargetsPerPrimitive: scaled(light.morphTargetsPerPrimitive),
+            morphScalarValues: scaled(light.morphScalarValues),
+            skins: scaled(light.skins),
+            jointsPerSkin: scaled(light.jointsPerSkin),
+            vertexJointInfluences: light.vertexJointInfluences,
+            humanoidBoneEntries: scaled(light.humanoidBoneEntries),
+            expressions: scaled(light.expressions),
+            springJoints: scaled(light.springJoints),
+            springColliders: scaled(light.springColliders),
+            springColliderGroups: scaled(light.springColliderGroups),
+            nodeConstraints: scaled(light.nodeConstraints),
+            preflightNanoseconds: light.preflightNanoseconds,
+            qualityMode: .highQuality
+        )
+    }()
+
+    private static func scaled(_ value: UInt64) -> UInt64 {
+        value * 20
+    }
+
+    public static func budget(for mode: AvatarAssetQualityMode) -> AssetBudget {
+        switch mode {
+        case .lightweight: return .lightweight
+        case .highQuality: return .highQuality
+        }
+    }
+
+    public var preflightDeadlineNanoseconds: UInt64? {
+        qualityMode == .highQuality ? nil : preflightNanoseconds
+    }
 
     package var glbParsingLimits: GLBParsingLimits {
         GLBParsingLimits(
@@ -89,40 +230,43 @@ public struct AssetBudget: Equatable, Sendable {
     }
 
     public var allCeilings: [AssetCeiling] {
-        [
-            .init(name: "capturedBytes", limit: capturedBytes),
-            .init(name: "jsonBytes", limit: jsonBytes),
-            .init(name: "jsonValues", limit: jsonValues),
-            .init(name: "jsonNesting", limit: jsonNesting),
-            .init(name: "nodes", limit: nodes),
-            .init(name: "meshes", limit: meshes),
-            .init(name: "meshPrimitives", limit: meshPrimitives),
-            .init(name: "materials", limit: materials),
-            .init(name: "images", limit: images),
-            .init(name: "textures", limit: textures),
-            .init(name: "samplers", limit: samplers),
-            .init(name: "imageDimension", limit: imageDimension),
-            .init(name: "decodedImagePixels", limit: decodedImagePixels),
-            .init(name: "decodedRGBA8Bytes", limit: decodedRGBA8Bytes),
-            .init(name: "mipmappedRGBA8Bytes", limit: mipmappedRGBA8Bytes),
-            .init(name: "bufferBytes", limit: bufferBytes),
-            .init(name: "accessorReferencedBytes", limit: accessorReferencedBytes),
-            .init(name: "vertices", limit: vertices),
-            .init(name: "indices", limit: indices),
-            .init(name: "triangles", limit: triangles),
-            .init(name: "morphTargetsPerPrimitive", limit: morphTargetsPerPrimitive),
-            .init(name: "morphScalarValues", limit: morphScalarValues),
-            .init(name: "skins", limit: skins),
-            .init(name: "jointsPerSkin", limit: jointsPerSkin),
-            .init(name: "vertexJointInfluences", limit: vertexJointInfluences),
-            .init(name: "humanoidBoneEntries", limit: humanoidBoneEntries),
-            .init(name: "expressions", limit: expressions),
-            .init(name: "springJoints", limit: springJoints),
-            .init(name: "springColliders", limit: springColliders),
-            .init(name: "springColliderGroups", limit: springColliderGroups),
-            .init(name: "nodeConstraints", limit: nodeConstraints),
-            .init(name: "preflightNanoseconds", limit: preflightNanoseconds),
+        var ceilings = [
+            AssetCeiling(name: "capturedBytes", limit: capturedBytes),
+            AssetCeiling(name: "jsonBytes", limit: jsonBytes),
+            AssetCeiling(name: "jsonValues", limit: jsonValues),
+            AssetCeiling(name: "jsonNesting", limit: jsonNesting),
+            AssetCeiling(name: "nodes", limit: nodes),
+            AssetCeiling(name: "meshes", limit: meshes),
+            AssetCeiling(name: "meshPrimitives", limit: meshPrimitives),
+            AssetCeiling(name: "materials", limit: materials),
+            AssetCeiling(name: "images", limit: images),
+            AssetCeiling(name: "textures", limit: textures),
+            AssetCeiling(name: "samplers", limit: samplers),
+            AssetCeiling(name: "imageDimension", limit: imageDimension),
+            AssetCeiling(name: "decodedImagePixels", limit: decodedImagePixels),
+            AssetCeiling(name: "decodedRGBA8Bytes", limit: decodedRGBA8Bytes),
+            AssetCeiling(name: "mipmappedRGBA8Bytes", limit: mipmappedRGBA8Bytes),
+            AssetCeiling(name: "bufferBytes", limit: bufferBytes),
+            AssetCeiling(name: "accessorReferencedBytes", limit: accessorReferencedBytes),
+            AssetCeiling(name: "vertices", limit: vertices),
+            AssetCeiling(name: "indices", limit: indices),
+            AssetCeiling(name: "triangles", limit: triangles),
+            AssetCeiling(name: "morphTargetsPerPrimitive", limit: morphTargetsPerPrimitive),
+            AssetCeiling(name: "morphScalarValues", limit: morphScalarValues),
+            AssetCeiling(name: "skins", limit: skins),
+            AssetCeiling(name: "jointsPerSkin", limit: jointsPerSkin),
+            AssetCeiling(name: "vertexJointInfluences", limit: vertexJointInfluences),
+            AssetCeiling(name: "humanoidBoneEntries", limit: humanoidBoneEntries),
+            AssetCeiling(name: "expressions", limit: expressions),
+            AssetCeiling(name: "springJoints", limit: springJoints),
+            AssetCeiling(name: "springColliders", limit: springColliders),
+            AssetCeiling(name: "springColliderGroups", limit: springColliderGroups),
+            AssetCeiling(name: "nodeConstraints", limit: nodeConstraints),
         ]
+        if qualityMode == .lightweight {
+            ceilings.append(.init(name: "preflightNanoseconds", limit: preflightNanoseconds))
+        }
+        return ceilings
     }
 
     public static func allows(_ value: UInt64, maximum: UInt64) -> Bool {

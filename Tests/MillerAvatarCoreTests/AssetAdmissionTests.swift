@@ -1051,6 +1051,157 @@ import UniformTypeIdentifiers
             monotonicNow: { 0 }
         ).admit(bytes).isRejected)
     }
+
+    @Test func highQualityHasNoDeadlineButStillHonorsExplicitTimeoutAndCancellation() async throws {
+        let bytes = try SyntheticGLBFactory.make()
+        let noDeadlineClock = CheckpointClock(samples: [0, UInt64.max])
+        #expect(await AssetAdmission(
+            mode: .highQuality,
+            monotonicNow: { noDeadlineClock.now() }
+        ).admit(bytes).isAdmitted)
+        #expect(noDeadlineClock.callCount == 0)
+
+        #expect(await AssetAdmission(
+            mode: .highQuality,
+            timeoutNanoseconds: 0,
+            monotonicNow: { 9_000_000_000 }
+        ).admit(bytes) == .rejected(.resourceLimit))
+
+        let probe = CancellationProbe(cancelOnCheck: 1)
+        #expect(await AssetAdmission(
+            mode: .highQuality,
+            isCancelled: { probe.isCancelled() }
+        ).admit(bytes) == .rejected(.resourceLimit))
+    }
+
+    @Test func rejectsUnsupportedSkinInfluenceLayouts() async throws {
+        let layouts: [[String: Int]] = [
+            ["JOINTS_1": 1, "WEIGHTS_1": 2],
+            ["JOINTS_0": 1],
+            ["JOINTS_0": 1, "WEIGHTS_1": 2],
+            ["JOINTS_0": 1, "WEIGHTS_0": 2, "JOINTS_1": 1, "WEIGHTS_1": 2],
+        ]
+        for attributes in layouts {
+            let fixture = skinnedDocument(jointIndex: 0)
+            var document = fixture.document
+            var meshes = document["meshes"] as! [[String: Any]]
+            var primitives = meshes[0]["primitives"] as! [[String: Any]]
+            primitives[0]["attributes"] = attributes
+            meshes[0]["primitives"] = primitives
+            document["meshes"] = meshes
+
+            for mode in [AvatarAssetQualityMode.lightweight, .highQuality] {
+                #expect(await AssetAdmission(mode: mode).admit(
+                    try SyntheticGLBFactory.make(document: document, binary: fixture.binary)
+                ).isRejected)
+            }
+        }
+    }
+
+    @Test func validatesDeepNodeChainsIterativelyInHighQualityMode() async throws {
+        let nodeCount = 10_000
+        let nodes: [[String: Any]] = (0..<nodeCount).map { index in
+            index + 1 < nodeCount ? ["children": [index + 1]] : [:]
+        }
+        let document = SyntheticGLBFactory.minimalDocument(extra: ["nodes": nodes])
+        #expect(await AssetAdmission(mode: .highQuality).admit(
+            try SyntheticGLBFactory.make(document: document)
+        ).isAdmitted)
+    }
+
+    @Test func highQualityAdmitsAboveLightweightButRejectsAboveItsFiniteCeiling() async throws {
+        let expressions = Dictionary(
+            uniqueKeysWithValues: (0..<200).map { ("custom\($0)", [String: Any]()) }
+        )
+        let aboveLightweightDocument = SyntheticGLBFactory.minimalDocument(extra: [
+            "nodes": Array(repeating: [String: Any](), count: 5_000),
+            "extensions": [
+                "VRMC_vrm": [
+                    "specVersion": "1.0",
+                    "expressions": ["custom": expressions],
+                ],
+            ],
+        ])
+        let aboveLightweight = try SyntheticGLBFactory.make(
+            document: aboveLightweightDocument
+        )
+        #expect(await AssetAdmission(mode: .lightweight).admit(aboveLightweight).isRejected)
+        #expect(await AssetAdmission(mode: .highQuality).admit(aboveLightweight).isAdmitted)
+
+        let aboveHighQualityDocument = SyntheticGLBFactory.minimalDocument(extra: [
+            "nodes": Array(
+                repeating: [String: Any](),
+                count: Int(AssetBudget.highQuality.nodes) + 1
+            ),
+        ])
+        let aboveHighQuality = try SyntheticGLBFactory.make(
+            document: aboveHighQualityDocument
+        )
+        #expect(
+            await AssetAdmission(mode: .highQuality).admit(aboveHighQuality)
+                == .rejected(.resourceLimit)
+        )
+    }
+
+    @Test func rejectsHugeDeclaredAccessorCountsBeforeRuntimeMaterialization() async throws {
+        let hugeCount = UInt64(Int.max) + 1
+        let denseDocument = SyntheticGLBFactory.minimalDocument(extra: [
+            "buffers": [["byteLength": 4]],
+            "bufferViews": [["buffer": 0, "byteLength": 4]],
+            "accessors": [[
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": hugeCount,
+                "type": "SCALAR",
+            ]],
+        ])
+        let sparseDocument = SyntheticGLBFactory.minimalDocument(extra: [
+            "buffers": [["byteLength": 8]],
+            "bufferViews": [
+                ["buffer": 0, "byteOffset": 0, "byteLength": 1],
+                ["buffer": 0, "byteOffset": 4, "byteLength": 4],
+            ],
+            "accessors": [[
+                "componentType": 5126,
+                "count": hugeCount,
+                "type": "SCALAR",
+                "sparse": [
+                    "count": 1,
+                    "indices": ["bufferView": 0, "componentType": 5121],
+                    "values": ["bufferView": 1],
+                ],
+            ]],
+        ])
+
+        for document in [denseDocument, sparseDocument] {
+            let binary = document["buffers"] as! [[String: Any]]
+            let binaryCount = binary[0]["byteLength"] as! Int
+            let bytes = try SyntheticGLBFactory.make(
+                document: document,
+                binary: Data(repeating: 0, count: binaryCount)
+            )
+            for mode in [AvatarAssetQualityMode.lightweight, .highQuality] {
+                #expect(await AssetAdmission(mode: mode).admit(bytes).isRejected)
+            }
+        }
+    }
+
+    @Test func malformedAndArithmeticOverflowInputsRejectIdenticallyInBothModes() async throws {
+        let malformed = Data([0, 1, 2])
+        let overflowDocument = SyntheticGLBFactory.minimalDocument(extra: [
+            "accessors": [[
+                "componentType": 5126,
+                "count": UInt64.max,
+                "type": "MAT4",
+            ]],
+        ])
+        let overflow = try SyntheticGLBFactory.make(document: overflowDocument)
+
+        for mode in [AvatarAssetQualityMode.lightweight, .highQuality] {
+            #expect(await AssetAdmission(mode: mode).admit(malformed) == .rejected(.assetRejected))
+            #expect(await AssetAdmission(mode: mode).admit(overflow) == .rejected(.resourceLimit))
+        }
+    }
 }
 
 private extension AssetAdmissionResult {

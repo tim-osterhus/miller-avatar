@@ -41,6 +41,22 @@ package enum GLBParser {
 
     package static func parse(
         _ data: Data,
+        mode: AvatarAssetQualityMode,
+        checkpoint: (() throws -> Void)? = nil
+    ) throws -> ParsedGLB {
+        try parse(data, budget: .budget(for: mode), checkpoint: checkpoint)
+    }
+
+    package static func parse(
+        _ data: Data,
+        qualityMode: AvatarAssetQualityMode,
+        checkpoint: (() throws -> Void)? = nil
+    ) throws -> ParsedGLB {
+        try parse(data, mode: qualityMode, checkpoint: checkpoint)
+    }
+
+    package static func parse(
+        _ data: Data,
         limits: GLBParsingLimits,
         checkpoint: (() throws -> Void)? = nil
     ) throws -> ParsedGLB {
@@ -53,7 +69,9 @@ package enum GLBParser {
         else {
             throw GLBParserError.invalidHeader
         }
-        guard readUInt32(data, at: 8) == UInt32(data.count) else {
+        guard Self.isRepresentableGLBLength(data.count),
+              readUInt32(data, at: 8) == UInt32(data.count)
+        else {
             throw GLBParserError.invalidLength
         }
 
@@ -92,6 +110,10 @@ package enum GLBParser {
             binary: binary,
             hasBinaryChunk: hasBinaryChunk
         )
+    }
+
+    package static func isRepresentableGLBLength(_ count: Int) -> Bool {
+        count >= 0 && UInt64(count) <= UInt64(UInt32.max)
     }
 
     private static func readChunk(
@@ -154,7 +176,9 @@ private struct StrictJSONValidator {
         try checkpointIfNeeded()
         guard UInt64(depth) <= maximumDepth else { throw GLBParserError.jsonTooComplex }
         valueCount = try AssetBudget.add(valueCount, 1)
-        guard valueCount <= maximumValues else { throw GLBParserError.jsonTooComplex }
+        guard valueCount <= maximumValues else {
+            throw GLBParserError.jsonTooComplex
+        }
         skipWhitespace()
         guard index < bytes.count else { throw GLBParserError.invalidJSON }
         switch bytes[index] {
