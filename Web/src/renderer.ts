@@ -13,6 +13,14 @@ import {
 } from "./motion-loader.js";
 import type { LoadedAvatar, MotionRegistry, RendererBackend, RendererPolicy } from "./bridge.js";
 import {
+  MouthController,
+  mouthVowelNames,
+  zeroMouthVowelWeights,
+  type MouthCapabilities,
+  type MouthTarget,
+  type MouthVowelWeights,
+} from "./mouth-controller.js";
+import {
   MotionController,
   type MotionActiveEvent,
   type MotionFault,
@@ -26,6 +34,45 @@ import type { PresentationEffect } from "./presentation.js";
 const localAssetURL = /^miller-avatar-local:\/\/app\/session\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.vrm$/u;
 const maximumViewportDimension = 8_192;
 const probeDimension = 64;
+
+export interface MouthExpressionManager {
+  getExpression(name: string): unknown | null | undefined;
+  setValue(name: string, value: number): void;
+}
+
+/**
+ * Narrow non-WebGL construction seam for renderer lifecycle tests. Production
+ * construction leaves this undefined and creates the real canvas/renderer and
+ * loader.
+ */
+export interface RendererTestSeam {
+  readonly canvas: HTMLCanvasElement;
+  readonly renderer: THREE.WebGLRenderer;
+  readonly loadVRM: typeof loadVRM;
+}
+
+export function detectMouthCapabilities(
+  expressionManager: MouthExpressionManager | null | undefined,
+): MouthCapabilities {
+  const capabilities = Object.fromEntries(
+    mouthVowelNames.map((vowel) => {
+      const expression = expressionManager?.getExpression(vowel);
+      return [vowel, expression !== null && expression !== undefined];
+    }),
+  ) as MouthCapabilities;
+  return Object.freeze(capabilities);
+}
+
+export function applyMouthExpressionValues(
+  expressionManager: MouthExpressionManager | null | undefined,
+  capabilities: MouthCapabilities,
+  values: MouthVowelWeights,
+): void {
+  if (!expressionManager) return;
+  for (const vowel of mouthVowelNames) {
+    if (capabilities[vowel]) expressionManager.setValue(vowel, values[vowel]);
+  }
+}
 
 export interface AvatarEvidence {
   bounds: Bounds3;
@@ -307,8 +354,9 @@ function pushRootOffset(
 }
 
 export class ThreeVRMRendererBackend implements RendererBackend {
-  private readonly canvas = globalThis.document.createElement("canvas");
+  private readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly loadVRMCandidate: typeof loadVRM;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
   private readonly clock = new THREE.Clock(false);
@@ -322,28 +370,36 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private motionBounds: ReadonlyMap<AvatarMotionRole, Bounds3> = new Map();
   private reducedMotion = false;
   private mouthCuesEnabled = true;
+  private mouthCapabilities: MouthCapabilities = emptyMouthCapabilities();
+  private mouthController: MouthController | undefined;
+  private mouthTarget: MouthTarget | null = null;
   private suspended = false;
   private phase: PresentationPhase = "idle";
-  private mouthScalar = 0;
   private projectionSequence = 0;
   private motionFaultHandler: ((fault: MotionFault) => void) | undefined;
   private motionActiveHandler: ((event: MotionActiveEvent) => void) | undefined;
   private viewport = { width: 0, height: 0 };
   private readonly stopResizeObservation: () => void;
 
-  constructor(private readonly root: HTMLElement) {
-    const context = this.canvas.getContext("webgl2", {
-      alpha: true,
-      antialias: true,
-      powerPreference: "high-performance",
-    });
-    if (!context) throw new Error("webgl2 unavailable");
-    this.renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
-      canvas: this.canvas,
-      context,
-    });
+  constructor(private readonly root: HTMLElement, testSeam?: RendererTestSeam) {
+    this.canvas = testSeam?.canvas ?? globalThis.document.createElement("canvas");
+    this.loadVRMCandidate = testSeam?.loadVRM ?? loadVRM;
+    if (testSeam) {
+      this.renderer = testSeam.renderer;
+    } else {
+      const context = this.canvas.getContext("webgl2", {
+        alpha: true,
+        antialias: true,
+        powerPreference: "high-performance",
+      });
+      if (!context) throw new Error("webgl2 unavailable");
+      this.renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        canvas: this.canvas,
+        context,
+      });
+    }
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setClearColor(0x000000, 0);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x293040, 2));
@@ -351,13 +407,15 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     keyLight.position.set(1, 2, 3);
     this.scene.add(keyLight);
     root.replaceChildren(this.canvas);
-    this.stopResizeObservation = observeRootResize(root, () => {
-      this.resize();
-      if (this.reducedMotion && this.avatar && this.evidence) {
-        this.applyFramePresentation(0);
-        this.renderer.render(this.scene, this.camera);
-      }
-    });
+    this.stopResizeObservation = testSeam
+      ? () => {}
+      : observeRootResize(root, () => {
+        this.resize();
+        if (this.reducedMotion && this.avatar && this.evidence) {
+          this.applyFramePresentation(0);
+          this.renderer.render(this.scene, this.camera);
+        }
+      });
     this.resize();
   }
 
@@ -369,23 +427,25 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.motionController?.setReducedMotion(reducedMotion);
     if (reducedMotion || this.suspended) this.clock.stop();
     else this.clock.start();
-    if (reducedMotion) {
+    if (reducedMotion || !mouthCuesEnabled) {
       this.applyPhase(this.phase);
-      this.setMouth(0);
+      this.clearMouth();
     }
     if (changed) this.fitToAvatar();
   }
 
   async loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar> {
     requireSessionAssetURL(url);
-    const { avatar, specVersion } = await loadVRM(url, signal);
+    const { avatar, specVersion } = await this.loadVRMCandidate(url, signal);
+    let candidateMotionController: MotionController | undefined;
     try {
       requireVRM1(avatar, specVersion);
-      this.removeAvatar();
-      this.avatar = avatar;
-      this.mixer = new THREE.AnimationMixer(avatar.scene);
-      this.motionController = new MotionController({
-        mixer: this.mixer as unknown as MotionMixerLike,
+      const evidence = collectAvatarEvidence(avatar.scene);
+      const mouthCapabilities = detectMouthCapabilities(avatar.expressionManager);
+      const mouthController = new MouthController(mouthCapabilities);
+      const mixer = new THREE.AnimationMixer(avatar.scene);
+      candidateMotionController = new MotionController({
+        mixer: mixer as unknown as MotionMixerLike,
         root: avatar.scene,
         resetNormalizedPose: () => {
           settleStaticRestPose(avatar);
@@ -397,30 +457,31 @@ export class ThreeVRMRendererBackend implements RendererBackend {
           this.motionActiveHandler?.(event);
         },
       });
+
+      this.removeAvatar();
+      this.avatar = avatar;
+      this.mouthCapabilities = mouthCapabilities;
+      this.mouthController = mouthController;
+      this.mixer = mixer;
+      this.motionController = candidateMotionController;
+      candidateMotionController = undefined;
       this.scene.add(avatar.scene);
       if (avatar.lookAt) avatar.lookAt.target = this.camera;
-      this.evidence = collectAvatarEvidence(avatar.scene);
-      this.cameraBounds = this.evidence.bounds;
+      this.evidence = evidence;
+      this.cameraBounds = evidence.bounds;
       this.fitToAvatar();
       return {
         capabilities: {
-          aa: avatar.expressionManager?.getExpression("aa") !== null
-            && avatar.expressionManager !== undefined,
+          aa: this.mouthCapabilities.aa,
+          vowels: this.mouthCapabilities,
           look_at: avatar.lookAt !== undefined,
           spring_bone: avatar.springBoneManager !== undefined,
           mtoon_materials: this.evidence.mtoonMaterials,
         },
       };
     } catch (error) {
-      this.motionController?.dispose();
-      this.motionController = undefined;
-      this.motionIdentity = undefined;
-      this.mixer = undefined;
+      candidateMotionController?.dispose();
       this.scene.remove(avatar.scene);
-      if (this.avatar === avatar) {
-        this.avatar = undefined;
-        this.evidence = undefined;
-      }
       disposeAvatarResources(avatar.scene);
       throw error;
     }
@@ -449,6 +510,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   setSuspended(suspended: boolean): void {
     this.suspended = suspended;
     this.motionController?.setSuspended(suspended);
+    if (suspended) this.clearMouth();
     if (suspended || this.reducedMotion) this.clock.stop();
     else this.clock.start();
   }
@@ -493,18 +555,24 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     if (this.suspended) return;
     this.motionController?.update(deltaSeconds);
     this.applyPhase(this.phase);
-    this.setMouth(this.reducedMotion ? 0 : this.mouthScalar);
+    this.setMouth();
     this.maintainLookAtTarget();
     if (!this.reducedMotion) this.avatar?.update(deltaSeconds);
   }
 
   apply(effect: PresentationEffect, causedBySequence?: number): void {
     switch (effect.type) {
-      case "apply_mouth":
-        this.mouthScalar = effect.command.payload.scalar;
+      case "apply_mouth": {
+        const target = copyMouthTarget(effect.command.payload);
+        if (this.reducedMotion || !this.mouthCuesEnabled || this.suspended || !mouthTargetHasActivity(target)) {
+          this.clearMouth();
+        } else {
+          this.mouthTarget = target;
+        }
         return;
+      }
       case "clear_mouth":
-        this.mouthScalar = 0;
+        this.clearMouth();
         return;
       case "apply_projection":
         this.phase = effect.command.payload.phase;
@@ -516,10 +584,11 @@ export class ThreeVRMRendererBackend implements RendererBackend {
         return;
       case "set_mouth_cues_enabled":
         this.mouthCuesEnabled = effect.enabled;
+        if (!effect.enabled) this.clearMouth();
         return;
       case "reset":
         this.phase = "idle";
-        this.mouthScalar = 0;
+        this.clearMouth();
         this.projectionSequence = Math.min(Number.MAX_SAFE_INTEGER, this.projectionSequence + 1);
         this.projectMotion({
           projection_sequence: this.projectionSequence,
@@ -534,7 +603,15 @@ export class ThreeVRMRendererBackend implements RendererBackend {
           mouthCuesEnabled: effect.mouthCuesEnabled,
         });
         this.phase = effect.phase;
-        this.mouthScalar = effect.mouthScalar;
+        const reconciledMouth = copyMouthTarget({ scalar: effect.mouthScalar });
+        if (this.reducedMotion
+          || !this.mouthCuesEnabled
+          || this.suspended
+          || !mouthTargetHasActivity(reconciledMouth)) {
+          this.clearMouth();
+        } else {
+          this.mouthTarget = reconciledMouth;
+        }
         if (effect.lastProjectionSequence !== null) {
           this.projectionSequence = effect.lastProjectionSequence;
           this.projectMotion({
@@ -628,9 +705,18 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     }
   }
 
-  private setMouth(value: number): void {
+  private setMouth(): void {
     const manager = this.avatar?.expressionManager;
-    if (manager?.getExpression("aa")) manager.setValue("aa", value);
+    const values = this.reducedMotion || !this.mouthCuesEnabled || !this.mouthTarget
+      ? this.mouthController?.clear() ?? zeroMouthVowelWeights()
+      : this.mouthController?.update(this.mouthTarget) ?? zeroMouthVowelWeights();
+    applyMouthExpressionValues(manager, this.mouthCapabilities, values);
+  }
+
+  private clearMouth(): void {
+    this.mouthTarget = null;
+    const values = this.mouthController?.clear() ?? zeroMouthVowelWeights();
+    applyMouthExpressionValues(this.avatar?.expressionManager, this.mouthCapabilities, values);
   }
 
   private applyPhase(phase: PresentationPhase): void {
@@ -648,6 +734,9 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   }
 
   private removeAvatar(): void {
+    this.clearMouth();
+    this.mouthController = undefined;
+    this.mouthCapabilities = emptyMouthCapabilities();
     this.motionController?.dispose();
     this.motionController = undefined;
     this.motionIdentity = undefined;
@@ -666,7 +755,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
 
   private applyFramePresentation(_deltaSeconds: number): void {
     this.applyPhase(this.phase);
-    this.setMouth(this.reducedMotion ? 0 : this.mouthScalar);
+    this.setMouth();
     this.maintainLookAtTarget();
   }
 
@@ -696,6 +785,30 @@ export class ThreeVRMRendererBackend implements RendererBackend {
       causedBySequence,
     });
   }
+}
+
+function emptyMouthCapabilities(): MouthCapabilities {
+  return Object.freeze({
+    aa: false,
+    ih: false,
+    ou: false,
+    ee: false,
+    oh: false,
+  });
+}
+
+function copyMouthTarget(target: { scalar: number; vowels?: MouthVowelWeights }): MouthTarget {
+  if (!target.vowels) return Object.freeze({ scalar: target.scalar });
+  return Object.freeze({
+    scalar: target.scalar,
+    vowels: Object.freeze({ ...target.vowels }),
+  });
+}
+
+function mouthTargetHasActivity(target: MouthTarget): boolean {
+  const vowels = target.vowels;
+  if (!vowels) return target.scalar > 0;
+  return mouthVowelNames.some((vowel) => vowels[vowel] > 0);
 }
 
 async function loadVRM(

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
+  applyMouthExpressionValues,
   collectAvatarEvidence,
   collectMotionBounds,
   collectRootMotionOffsets,
   countAlphaPixels,
+  detectMouthCapabilities,
   disposeAvatarResources,
   phasePresentationFor,
   requireVRM1,
@@ -13,6 +15,9 @@ import {
   requireSessionMotionURL,
   settleStaticRestPose,
   observeRootResize,
+  ThreeVRMRendererBackend,
+  type MouthExpressionManager,
+  type RendererTestSeam,
 } from "../src/renderer.js";
 
 test("VRM admission accepts only version 1 metadata", () => {
@@ -324,4 +329,398 @@ test("avatar disposal releases each shared GPU resource exactly once", () => {
 
   disposeAvatarResources(root);
   assert.deepEqual(calls, { texture: 1, material: 1, geometry: 1 });
+});
+
+
+test("mouth capability detection probes every standard vowel expression", () => {
+  const lookedUp: string[] = [];
+  const supported = new Set(["aa", "ou"]);
+  const manager = {
+    getExpression(name: string): object | null {
+      lookedUp.push(name);
+      return supported.has(name) ? {} : null;
+    },
+    setValue(_name: string, _value: number): void {},
+  };
+
+  assert.deepEqual(detectMouthCapabilities(manager), {
+    aa: true,
+    ih: false,
+    ou: true,
+    ee: false,
+    oh: false,
+  });
+  assert.deepEqual(lookedUp, ["aa", "ih", "ou", "ee", "oh"]);
+});
+
+test("mouth expression application writes every supported output, including inactive zeros", () => {
+  const calls: Array<[string, number]> = [];
+  const manager = {
+    getExpression(_name: string): object | null { return {}; },
+    setValue(name: string, value: number): void { calls.push([name, value]); },
+  };
+
+  applyMouthExpressionValues(manager, {
+    aa: true,
+    ih: false,
+    ou: true,
+    ee: false,
+    oh: false,
+  }, {
+    aa: 0.4,
+    ih: 0,
+    ou: 0,
+    ee: 0,
+    oh: 0,
+  });
+
+  assert.deepEqual(calls, [["aa", 0.4], ["ou", 0]]);
+});
+
+
+const rendererTestVowels = ["aa", "ih", "ou", "ee", "oh"] as const;
+type RendererTestVowelWeights = Record<(typeof rendererTestVowels)[number], number>;
+
+class RecordingExpressionManager implements MouthExpressionManager {
+  readonly values = new Map<string, number>();
+  readonly calls: Array<[string, number]> = [];
+
+  getExpression(name: string): object | null {
+    return rendererTestVowels.includes(name as (typeof rendererTestVowels)[number])
+      ? {}
+      : null;
+  }
+
+  setValue(name: string, value: number): void {
+    this.values.set(name, value);
+    this.calls.push([name, value]);
+  }
+}
+
+type RendererTestModel = {
+  readonly token: string;
+  readonly avatar: never;
+  readonly manager: RecordingExpressionManager;
+  readonly geometryDisposals: () => number;
+  readonly materialDisposals: () => number;
+  readonly specVersion: string;
+};
+
+function makeRendererTestModel(
+  token: string,
+  metaVersion: "0" | "1" = "1",
+): RendererTestModel {
+  const manager = new RecordingExpressionManager();
+  const scene = new THREE.Group();
+  const geometry = new THREE.BoxGeometry(1, 2, 1);
+  const material = new THREE.MeshBasicMaterial();
+  let geometryDisposals = 0;
+  let materialDisposals = 0;
+  const disposeGeometry = geometry.dispose.bind(geometry);
+  const disposeMaterial = material.dispose.bind(material);
+  geometry.dispose = () => {
+    geometryDisposals += 1;
+    disposeGeometry();
+  };
+  material.dispose = () => {
+    materialDisposals += 1;
+    disposeMaterial();
+  };
+  scene.add(new THREE.Mesh(geometry, material));
+  const avatar = {
+    meta: { metaVersion },
+    scene,
+    expressionManager: manager,
+    update(_deltaSeconds: number): void {},
+    humanoid: {
+      resetNormalizedPose(): void {},
+      normalizedHumanBones: { hips: { node: { name: "hips" } } },
+      normalizedRestPose: { hips: { position: [0, 0, 0] } },
+    },
+  };
+  return {
+    token,
+    avatar: avatar as never,
+    manager,
+    geometryDisposals: () => geometryDisposals,
+    materialDisposals: () => materialDisposals,
+    specVersion: "1.0",
+  };
+}
+
+class RendererSurfaceDouble {
+  outputColorSpace = THREE.SRGBColorSpace;
+  disposeCount = 0;
+  contextLossCount = 0;
+
+  setClearColor(_color: THREE.ColorRepresentation, _alpha: number): void {}
+  setSize(_width: number, _height: number, _updateStyle?: boolean): void {}
+  render(_scene: THREE.Scene, _camera: THREE.Camera): void {}
+  dispose(): void { this.disposeCount += 1; }
+  forceContextLoss(): void { this.contextLossCount += 1; }
+  getRenderTarget(): THREE.WebGLRenderTarget | null { return null; }
+  getClearColor(target: THREE.Color): THREE.Color { return target.set(0); }
+  getClearAlpha(): number { return 0; }
+  setRenderTarget(_target: THREE.WebGLRenderTarget | null): void {}
+  clear(_color?: boolean, _depth?: boolean, _stencil?: boolean): void {}
+  readRenderTargetPixels(
+    _target: THREE.WebGLRenderTarget,
+    _x: number,
+    _y: number,
+    _width: number,
+    _height: number,
+    pixels: Uint8Array,
+  ): void { pixels.fill(0); }
+}
+
+function modelURL(token: string): string {
+  return `miller-avatar-local://app/session/11111111-1111-4111-8111-111111111111/${token}.vrm`;
+}
+
+function rendererHarness(models: readonly RendererTestModel[]) {
+  const byURL = new Map(models.map((model) => [modelURL(model.token), model]));
+  const surface = new RendererSurfaceDouble();
+  let canvasRemoves = 0;
+  const canvas = {
+    remove(): void { canvasRemoves += 1; },
+  } as unknown as HTMLCanvasElement;
+  const root = {
+    clientWidth: 640,
+    clientHeight: 480,
+    replaceChildren(): void {},
+  } as unknown as HTMLElement;
+  const seam: RendererTestSeam = {
+    canvas,
+    renderer: surface as unknown as THREE.WebGLRenderer,
+    loadVRM: async (url: string, _signal: AbortSignal) => {
+      const model = byURL.get(url);
+      if (!model) throw new Error(`unexpected test model URL: ${url}`);
+      return { avatar: model.avatar, specVersion: model.specVersion };
+    },
+  };
+  return {
+    backend: new ThreeVRMRendererBackend(root, seam),
+    surface,
+    canvasRemoves: () => canvasRemoves,
+  };
+}
+
+async function loadRendererTestModel(
+  backend: ThreeVRMRendererBackend,
+  model: RendererTestModel,
+): Promise<void> {
+  await backend.loadModel(modelURL(model.token), new AbortController().signal);
+}
+
+function mouthValues(manager: RecordingExpressionManager): RendererTestVowelWeights {
+  return Object.fromEntries(rendererTestVowels.map((vowel) => [
+    vowel,
+    manager.values.get(vowel) ?? 0,
+  ])) as RendererTestVowelWeights;
+}
+
+function mouthEffect(target: {
+  scalar: number;
+  vowels?: RendererTestVowelWeights;
+}): never {
+  return {
+    type: "apply_mouth",
+    command: {
+      type: "set_mouth",
+      payload: {
+        generation_id: "11111111-1111-4111-8111-111111111111",
+        playback_id: "22222222-2222-4222-8222-222222222222",
+        cue_index: 1,
+        playback_offset_ms: 0,
+        ...target,
+      },
+    },
+  } as never;
+}
+
+function reconcileMouthEffect(options: {
+  mouthCuesEnabled?: boolean;
+  reducedMotion?: boolean;
+} = {}): never {
+  return {
+    type: "reconcile",
+    lastProjectionSequence: 1,
+    generationID: null,
+    phase: "idle",
+    playbackID: null,
+    mouthScalar: 1,
+    mouthCuesEnabled: options.mouthCuesEnabled ?? true,
+    reducedMotion: options.reducedMotion ?? false,
+  } as never;
+}
+
+const zeroRendererTestMouth: RendererTestVowelWeights = {
+  aa: 0,
+  ih: 0,
+  ou: 0,
+  ee: 0,
+  oh: 0,
+};
+
+const rendererMouthLifecycleCases: Array<{
+  name: string;
+  run(backend: ThreeVRMRendererBackend): void;
+}> = [
+  {
+    name: "policy Off reconcile",
+    run(backend) {
+      backend.configure({ reducedMotion: false, mouthCuesEnabled: false });
+      backend.apply(reconcileMouthEffect({ mouthCuesEnabled: false }));
+      backend.configure({ reducedMotion: false, mouthCuesEnabled: true });
+    },
+  },
+  {
+    name: "Reduced Motion reconcile",
+    run(backend) {
+      backend.configure({ reducedMotion: true, mouthCuesEnabled: true });
+      backend.apply(reconcileMouthEffect({ reducedMotion: true }));
+      backend.configure({ reducedMotion: false, mouthCuesEnabled: true });
+    },
+  },
+  {
+    name: "suspension and resume reconcile",
+    run(backend) {
+      backend.setSuspended(true);
+      backend.apply(reconcileMouthEffect());
+      backend.setSuspended(false);
+    },
+  },
+  {
+    name: "reset",
+    run(backend) {
+      backend.apply(mouthEffect({ scalar: 1 }));
+      backend.update(0);
+      backend.apply({
+        type: "reset",
+        generationID: null,
+        reason: "operator",
+      } as never);
+    },
+  },
+];
+
+test("renderer mouth lifecycle keeps output zero through policy, suspension, reset, and reconcile transitions", async () => {
+  for (const scenario of rendererMouthLifecycleCases) {
+    const model = makeRendererTestModel(`33333333-3333-4333-8333-${scenario.name === "reset" ? "333333333333" : "444444444444"}`);
+    const harness = rendererHarness([model]);
+    await loadRendererTestModel(harness.backend, model);
+
+    scenario.run(harness.backend);
+    harness.backend.update(0);
+
+    assert.deepEqual(mouthValues(model.manager), zeroRendererTestMouth, scenario.name);
+    harness.backend.dispose();
+  }
+});
+
+test("renderer mouth lifecycle bounds malformed scalar and vowel targets", async () => {
+  const malformedTargets: Array<{
+    name: string;
+    target: { scalar: number; vowels?: RendererTestVowelWeights };
+    expected: RendererTestVowelWeights;
+  }> = [
+    { name: "scalar NaN", target: { scalar: Number.NaN }, expected: zeroRendererTestMouth },
+    { name: "scalar infinity", target: { scalar: Number.POSITIVE_INFINITY }, expected: zeroRendererTestMouth },
+    { name: "scalar negative", target: { scalar: -0.5 }, expected: zeroRendererTestMouth },
+    {
+      name: "scalar over-range",
+      target: { scalar: 1.5 },
+      expected: { ...zeroRendererTestMouth, aa: 0.55 },
+    },
+    {
+      name: "vowel NaN",
+      target: { scalar: 0, vowels: { aa: Number.NaN, ih: 0, ou: 0, ee: 0, oh: 0 } },
+      expected: zeroRendererTestMouth,
+    },
+    {
+      name: "vowel infinity",
+      target: { scalar: 0, vowels: { aa: Number.POSITIVE_INFINITY, ih: 0, ou: 0, ee: 0, oh: 0 } },
+      expected: zeroRendererTestMouth,
+    },
+    {
+      name: "vowel negative",
+      target: { scalar: 0, vowels: { aa: -0.5, ih: 0, ou: 0, ee: 0, oh: 0 } },
+      expected: zeroRendererTestMouth,
+    },
+    {
+      name: "vowel over-range",
+      target: { scalar: 0, vowels: { aa: 0, ih: 1.5, ou: 0, ee: 0, oh: 0 } },
+      expected: { ...zeroRendererTestMouth, ih: 0.55 },
+    },
+  ];
+
+  for (const malformed of malformedTargets) {
+    const model = makeRendererTestModel("44444444-4444-4444-8444-444444444444");
+    const harness = rendererHarness([model]);
+    await loadRendererTestModel(harness.backend, model);
+
+    harness.backend.apply(mouthEffect(malformed.target));
+    harness.backend.update(0);
+
+    assert.deepEqual(mouthValues(model.manager), malformed.expected, malformed.name);
+    harness.backend.dispose();
+  }
+});
+
+test("failed replacement admission preserves the active avatar mouth and motion runtime", async () => {
+  const prior = makeRendererTestModel("55555555-5555-4555-8555-555555555555");
+  const rejected = makeRendererTestModel("66666666-6666-4666-8666-666666666666", "0");
+  const harness = rendererHarness([prior, rejected]);
+  await loadRendererTestModel(harness.backend, prior);
+
+  harness.backend.apply(mouthEffect({ scalar: 1 }));
+  harness.backend.update(0);
+  assert.equal(mouthValues(prior.manager).aa, 0.55);
+
+  await assert.rejects(
+    harness.backend.loadModel(modelURL(rejected.token), new AbortController().signal),
+    /VRM 1.0/,
+  );
+
+  assert.doesNotThrow(() => harness.backend.replaceMotions(new Map() as never, {
+    sessionID: "11111111-1111-4111-8111-111111111111",
+    profileRevision: 1,
+    modelToken: prior.token,
+    generation: 1,
+  }));
+  harness.backend.apply(mouthEffect({ scalar: 1 }));
+  harness.backend.update(0);
+  assert.ok(Math.abs((mouthValues(prior.manager).aa) - 0.7975) < 1e-12);
+  assert.equal(prior.geometryDisposals(), 0);
+  assert.equal(prior.materialDisposals(), 0);
+  assert.equal(rejected.geometryDisposals(), 1);
+  assert.equal(rejected.materialDisposals(), 1);
+  harness.backend.dispose();
+});
+
+test("successful replacement disposes the old avatar and leaves the new mouth runtime active", async () => {
+  const prior = makeRendererTestModel("77777777-7777-4777-8777-777777777777");
+  const replacement = makeRendererTestModel("88888888-8888-4888-8888-888888888888");
+  const harness = rendererHarness([prior, replacement]);
+  await loadRendererTestModel(harness.backend, prior);
+  harness.backend.apply(mouthEffect({ scalar: 1 }));
+  harness.backend.update(0);
+
+  await loadRendererTestModel(harness.backend, replacement);
+
+  assert.deepEqual(mouthValues(prior.manager), zeroRendererTestMouth);
+  assert.equal(prior.geometryDisposals(), 1);
+  assert.equal(prior.materialDisposals(), 1);
+  assert.equal(replacement.geometryDisposals(), 0);
+  assert.equal(replacement.materialDisposals(), 0);
+
+  harness.backend.apply(mouthEffect({ scalar: 1 }));
+  harness.backend.update(0);
+  assert.equal(mouthValues(replacement.manager).aa, 0.55);
+  harness.backend.dispose();
+  assert.equal(replacement.geometryDisposals(), 1);
+  assert.equal(replacement.materialDisposals(), 1);
+  assert.equal(harness.surface.disposeCount, 1);
+  assert.equal(harness.surface.contextLossCount, 1);
+  assert.equal(harness.canvasRemoves(), 1);
 });
