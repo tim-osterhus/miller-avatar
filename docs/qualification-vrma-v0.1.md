@@ -1,6 +1,6 @@
 # VRMA v0.1 qualification record
 
-Status: `CURRENT_V0_1_1_PACKAGE_CHECKPOINT_WITH_HISTORICAL_ALPHA8_EVIDENCE`
+Status: `CURRENT_V0_1_2_PACKAGE_CHECKPOINT_WITH_HISTORICAL_EVIDENCE`
 
 The first part of this record preserves the public source, dependency, legal,
 and offline Web-bundle evidence captured at V5.1. At that historical stage,
@@ -9,12 +9,13 @@ V5.2 still had to regenerate it. Those statements and the original test counts
 below describe that earlier checkpoint, not the current release state. The
 later checkpoint sections preserve each correction in order; **Alpha.8
 repeating-motion stabilization** describes the final v0.1.0 package
-checkpoint, while the final section records v0.1.1.
+checkpoint, while the later sections record v0.1.1 and v0.1.2.
 
 The Alpha.8 sections remain historical evidence for the published v0.1.0
-source checkpoint. The final section records the current combined v0.1.1
-release checkpoint and its package-level evidence; it does not replace the
-separate owner-visible qualification required by consuming applications.
+source checkpoint, and the v0.1.1 section records that historical combined
+release. The final section records the current v0.1.2 admission-compatibility
+checkpoint and its package-level evidence; it does not replace the separate
+owner-visible qualification required by consuming applications.
 
 ## Closed scope
 
@@ -341,7 +342,7 @@ consuming applications.
 
 ## v0.1.1 combined release qualification
 
-Status: `CURRENT_V0_1_1_RELEASE`
+Status: `HISTORICAL_V0_1_1_RELEASE`
 
 This package release is one immutable `v0.1.1` containing both optional
 played-output lip sync and High Quality VRM model admission. There is no
@@ -472,3 +473,30 @@ The generated native manifest records only reviewed source, legal, static, and
 Web-resource hashes; the generated Web manifests record the locked graph and
 relative input names. The annotated `v0.1.1` tag identifies the independently
 reviewed commit containing this evidence and the complete release diff.
+
+## v0.1.2 admission-compatibility qualification
+
+Status: `CURRENT_V0_1_2_RELEASE`
+
+Version 0.1.2 corrects one VRM/glTF validation error without widening either
+admission profile. Morph-target `NORMAL` and `TANGENT` accessors are finite
+displacement deltas, not final unit-vector attributes, so they are no longer
+subject to the base normal/tangent `[-1.1, 1.1]` component envelope. Morph
+`POSITION` deltas retain their existing bounded displacement envelope. All
+Lightweight and High Quality byte, pixel, topology, structure, integrity,
+cancellation, and runtime-allocation behavior remains unchanged.
+
+Sanitized synthetic regressions cover finite morph normal deltas outside the
+unit-vector range, VEC3 morph tangent deltas, excessive morph position deltas,
+and non-finite morph values. A private owner-supplied VRM 1.0 model that fits
+the documented High Quality envelope was used only for local confirmation of
+the corrected admission path. No private model, name, digest, source path,
+texture, or identifying metadata entered this repository or package.
+
+The v0.1.2 candidate was regenerated from reviewed source. The full package
+gate passed with 65 locked Web packages and 20 emitted inputs, Web tests at
+116/116, and Swift tests at 354/354. Shell contracts, deterministic builds,
+simulated toolchain/Swift/assembly/code-sign failures, publication rollback,
+interruption cleanup, generated-manifest verification, and `git diff --check`
+also passed. The annotated `v0.1.2` tag identifies the immutable release
+checkpoint containing this correction and evidence.
