@@ -25,15 +25,17 @@ import Testing
 
     @Test func everyValidFixtureIsAccepted() throws {
         let fixtures = try fixtureURLs(in: "valid")
-        #expect(fixtures.count == 19)
+        #expect(fixtures.count == 21)
         #expect(
             Set(fixtures.map { $0.deletingPathExtension().lastPathComponent })
                 == [
                 "command-configure", "command-load-profile", "command-project-phase",
                 "command-project-succeeded",
                 "command-set-visibility", "command-set-policy", "command-set-mouth",
+                "command-set-mouth-vowels",
                 "command-reset", "command-dispose", "observation-wrapper-ready",
                 "observation-renderer-ready", "observation-profile-model-loaded",
+                "observation-profile-model-loaded-vowels",
                 "observation-first-frame", "observation-suspended", "observation-resumed",
                 "observation-disposed", "observation-failed",
                 "observation-motion-status", "observation-motion-active",
@@ -70,7 +72,244 @@ import Testing
             "command-stale-playback", "command-mouth-cue-decrease",
             "command-mouth-offset-decrease", "command-hidden-visibility-revokes-playback",
             "command-post-disposal",
+            "command-set-mouth-partial-vowels", "command-set-mouth-unknown-vowel",
+            "command-set-mouth-out-of-range-vowel",
+            "observation-profile-model-loaded-vowel-mismatch",
         ]))
+    }
+
+    @Test func scalarOnlySetMouthIsAccepted() throws {
+        let decoder = commandDecoder()
+        _ = try decoder.decode(command(
+            type: "project_phase",
+            payload: [
+                "projection_sequence": 1,
+                "generation_id": Self.generationID,
+                "phase": "speaking",
+                "playback_id": Self.playbackID,
+            ]
+        ))
+        let envelope = try decoder.decode(command(
+            sequence: 2,
+            type: "set_mouth",
+            payload: [
+                "generation_id": Self.generationID,
+                "playback_id": Self.playbackID,
+                "cue_index": 1,
+                "playback_offset_ms": 100,
+                "scalar": 0.5,
+            ]
+        ))
+        guard case .setMouth(let payload) = envelope.command else {
+            Issue.record("expected set_mouth")
+            return
+        }
+        #expect(payload.vowels == nil)
+    }
+
+    @Test func completeFiveKeyVowelsAreAccepted() throws {
+        let decoder = commandDecoder()
+        _ = try decoder.decode(command(
+            type: "project_phase",
+            payload: [
+                "projection_sequence": 1,
+                "generation_id": Self.generationID,
+                "phase": "speaking",
+                "playback_id": Self.playbackID,
+            ]
+        ))
+        let envelope = try decoder.decode(command(
+            sequence: 2,
+            type: "set_mouth",
+            payload: [
+                "generation_id": Self.generationID,
+                "playback_id": Self.playbackID,
+                "cue_index": 1,
+                "playback_offset_ms": 100,
+                "scalar": 0.25,
+                "vowels": ["aa": 0.9, "ih": 0.8, "ou": 0.7, "ee": 0.6, "oh": 0.5],
+            ]
+        ))
+        guard case .setMouth(let payload) = envelope.command else {
+            Issue.record("expected set_mouth")
+            return
+        }
+        #expect(payload.vowels == MouthVowelWeights(
+            aa: 0.9,
+            ih: 0.8,
+            ou: 0.7,
+            ee: 0.6,
+            oh: 0.5
+        ))
+    }
+
+    @Test func partialNullUnknownOrOutOfRangeVowelsAreRejected() {
+        func seededDecoder() throws -> PresentationCommandDecoder {
+            let decoder = commandDecoder()
+            _ = try decoder.decode(command(
+                type: "project_phase",
+                payload: [
+                    "projection_sequence": 1,
+                    "generation_id": Self.generationID,
+                    "phase": "speaking",
+                    "playback_id": Self.playbackID,
+                ]
+            ))
+            return decoder
+        }
+
+        for vowels in [
+            // Partial: missing the closed oh key.
+            ["aa": 0.9, "ih": 0.8, "ou": 0.7, "ee": 0.6] as [String: Any],
+            // Null level.
+            ["aa": NSNull(), "ih": 0.8, "ou": 0.7, "ee": 0.6, "oh": 0.5],
+            // Unknown vowel key.
+            ["aa": 0.9, "ih": 0.8, "ou": 0.7, "ee": 0.6, "oh": 0.5, "ax": 0.4],
+            // Below range.
+            ["aa": -0.1, "ih": 0.8, "ou": 0.7, "ee": 0.6, "oh": 0.5],
+            // Above range.
+            ["aa": 1.1, "ih": 0.8, "ou": 0.7, "ee": 0.6, "oh": 0.5],
+        ] {
+            #expect(throws: (any Error).self) {
+                try seededDecoder().decode(command(
+                    sequence: 2,
+                    type: "set_mouth",
+                    payload: [
+                        "generation_id": Self.generationID,
+                        "playback_id": Self.playbackID,
+                        "cue_index": 1,
+                        "playback_offset_ms": 100,
+                        "scalar": 0.5,
+                        "vowels": vowels,
+                    ]
+                ))
+            }
+        }
+
+        for vowelJSON in ["NaN", "Infinity"] {
+            let raw = """
+            {"schema":"miller-avatar.presentation-command/v2","session_id":"11111111-1111-4111-8111-111111111111","sequence":2,"type":"set_mouth","payload":{"generation_id":"33333333-3333-4333-8333-333333333333","playback_id":"44444444-4444-4444-8444-444444444444","cue_index":1,"playback_offset_ms":100,"scalar":0.5,"vowels":{"aa":\(vowelJSON),"ih":0.8,"ou":0.7,"ee":0.6,"oh":0.5}}}
+            """
+            #expect(throws: (any Error).self) {
+                try seededDecoder().decode(Data(raw.utf8))
+            }
+        }
+    }
+
+    @Test func mouthVowelWeightsValidityCoversFiniteRange() {
+        #expect(MouthVowelWeights(aa: 0, ih: 0.25, ou: 0.5, ee: 0.75, oh: 1).isValid)
+        #expect(!MouthVowelWeights(aa: .nan, ih: 0.5, ou: 0.5, ee: 0.5, oh: 0.5).isValid)
+        #expect(!MouthVowelWeights(aa: .infinity, ih: 0.5, ou: 0.5, ee: 0.5, oh: 0.5).isValid)
+        #expect(!MouthVowelWeights(aa: -0.1, ih: 0.5, ou: 0.5, ee: 0.5, oh: 0.5).isValid)
+        #expect(!MouthVowelWeights(aa: 1.1, ih: 0.5, ou: 0.5, ee: 0.5, oh: 0.5).isValid)
+    }
+
+    @Test func legacyCapabilitiesWithoutVowelsAreAccepted() throws {
+        #expect(throws: Never.self) {
+            try observationDecoder().decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: [
+                    "profile_revision": 1,
+                    "model_token": Self.modelToken,
+                    "capabilities": [
+                        "aa": true,
+                        "look_at": true,
+                        "spring_bone": false,
+                        "mtoon_materials": 512,
+                    ],
+                ]
+            ))
+        }
+    }
+
+    @Test func enrichedCapabilitiesRequireExactVowelKeysAndMatchingAA() throws {
+        func capabilitiesPayload(vowels: Any, aa: Bool) -> [String: Any] {
+            [
+                "profile_revision": 1,
+                "model_token": Self.modelToken,
+                "capabilities": [
+                    "aa": aa,
+                    "look_at": true,
+                    "spring_bone": false,
+                    "mtoon_materials": 512,
+                    "vowels": vowels,
+                ] as [String: Any],
+            ]
+        }
+
+        #expect(throws: Never.self) {
+            try observationDecoder().decode(observation(
+                sequence: 1,
+                causedBySequence: 1,
+                type: "profile_model_loaded",
+                payload: capabilitiesPayload(
+                    vowels: ["aa": true, "ih": true, "ou": true, "ee": true, "oh": false],
+                    aa: true
+                )
+            ))
+        }
+
+        for (vowels, aa) in [
+            // Partial vowel set.
+            (["aa": true, "ih": true, "ou": true, "ee": true] as [String: Any], true),
+            // Unknown vowel key.
+            (["aa": true, "ih": true, "ou": true, "ee": true, "oh": true, "ax": true], true),
+            // Null vowel flag.
+            (["aa": NSNull(), "ih": true, "ou": true, "ee": true, "oh": true], true),
+            // Top-level aa must equal vowels.aa.
+            (["aa": false, "ih": true, "ou": true, "ee": true, "oh": true], true),
+        ] {
+            #expect(throws: (any Error).self) {
+                try observationDecoder().decode(observation(
+                    sequence: 1,
+                    causedBySequence: 1,
+                    type: "profile_model_loaded",
+                    payload: capabilitiesPayload(vowels: vowels, aa: aa)
+                ))
+            }
+        }
+    }
+
+    @Test func configureSetPolicyAndReconcileWireJSONRequiresMouthCuesEnabled() {
+        for (type, payloadWithoutCueFlag) in [
+            ("configure", ["profile": "lightweight", "reduced_motion": false] as [String: Any]),
+            ("set_policy", ["reduced_motion": true]),
+            (
+                "reconcile_presentation",
+                [
+                    "last_projection_sequence": 1,
+                    "generation_id": Self.generationID,
+                    "phase": "speaking",
+                    "playback_id": Self.playbackID,
+                    "reduced_motion": false,
+                ]
+            ),
+        ] {
+            #expect(throws: (any Error).self) {
+                try commandDecoder().decode(command(type: type, payload: payloadWithoutCueFlag))
+            }
+            var payloadWithCueFlag = payloadWithoutCueFlag
+            payloadWithCueFlag["mouth_cues_enabled"] = false
+            #expect(throws: Never.self) {
+                try commandDecoder().decode(command(type: type, payload: payloadWithCueFlag))
+            }
+        }
+    }
+
+    @Test func publicInitializersDefaultMouthCuesEnabledToTrue() {
+        #expect(ConfigurePayload(reducedMotion: false).mouthCuesEnabled == true)
+        #expect(SetPolicyPayload(reducedMotion: true).mouthCuesEnabled == true)
+        #expect(
+            ReconcilePresentationPayload(
+                lastProjectionSequence: nil,
+                generationID: nil,
+                phase: .idle,
+                playbackID: nil,
+                reducedMotion: false
+            ).mouthCuesEnabled == true
+        )
     }
 
     @Test func hiddenVisibilityRevokesPlaybackButPreservesGeneration() throws {
@@ -585,6 +824,7 @@ import Testing
                 "phase": "speaking",
                 "playback_id": Self.playbackID,
                 "reduced_motion": true,
+                "mouth_cues_enabled": true,
             ]
         ))
         #expect(envelope.command == .reconcilePresentation(.init(

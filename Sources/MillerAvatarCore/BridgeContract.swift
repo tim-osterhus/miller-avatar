@@ -204,10 +204,16 @@ public enum FailureOperation: String, CaseIterable, Codable, Equatable, Sendable
 public struct ConfigurePayload: Codable, Equatable, Sendable {
     public let profile: String
     public let reducedMotion: Bool
+    public let mouthCuesEnabled: Bool
 
-    public init(profile: String = "lightweight", reducedMotion: Bool) {
+    public init(
+        profile: String = "lightweight",
+        reducedMotion: Bool,
+        mouthCuesEnabled: Bool = true
+    ) {
         self.profile = profile
         self.reducedMotion = reducedMotion
+        self.mouthCuesEnabled = mouthCuesEnabled
     }
 }
 
@@ -241,8 +247,31 @@ public struct SetVisibilityPayload: Codable, Equatable, Sendable {
 public struct SetPolicyPayload: Codable, Equatable, Sendable {
     public let reducedMotion: Bool
 
-    public init(reducedMotion: Bool) {
+    public let mouthCuesEnabled: Bool
+
+    public init(reducedMotion: Bool, mouthCuesEnabled: Bool = true) {
         self.reducedMotion = reducedMotion
+        self.mouthCuesEnabled = mouthCuesEnabled
+    }
+}
+
+public struct MouthVowelWeights: Codable, Equatable, Sendable {
+    public let aa: Double
+    public let ih: Double
+    public let ou: Double
+    public let ee: Double
+    public let oh: Double
+
+    public init(aa: Double, ih: Double, ou: Double, ee: Double, oh: Double) {
+        self.aa = aa
+        self.ih = ih
+        self.ou = ou
+        self.ee = ee
+        self.oh = oh
+    }
+
+    package var isValid: Bool {
+        [aa, ih, ou, ee, oh].allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 }
     }
 }
 
@@ -252,19 +281,22 @@ public struct SetMouthPayload: Codable, Equatable, Sendable {
     public let cueIndex: UInt64
     public let playbackOffsetMilliseconds: UInt64
     public let scalar: Double
+    public let vowels: MouthVowelWeights?
 
     public init(
         generationID: UUID,
         playbackID: UUID,
         cueIndex: UInt64,
         playbackOffsetMilliseconds: UInt64,
-        scalar: Double
+        scalar: Double,
+        vowels: MouthVowelWeights? = nil
     ) {
         self.generationID = generationID
         self.playbackID = playbackID
         self.cueIndex = cueIndex
         self.playbackOffsetMilliseconds = playbackOffsetMilliseconds
         self.scalar = scalar
+        self.vowels = vowels
     }
 }
 
@@ -274,19 +306,22 @@ public struct ReconcilePresentationPayload: Codable, Equatable, Sendable {
     public let phase: PresentationPhase
     public let playbackID: UUID?
     public let reducedMotion: Bool
+    public let mouthCuesEnabled: Bool
 
     public init(
         lastProjectionSequence: UInt64?,
         generationID: UUID?,
         phase: PresentationPhase,
         playbackID: UUID?,
-        reducedMotion: Bool
+        reducedMotion: Bool,
+        mouthCuesEnabled: Bool = true
     ) {
         self.lastProjectionSequence = lastProjectionSequence
         self.generationID = generationID
         self.phase = phase
         self.playbackID = playbackID
         self.reducedMotion = reducedMotion
+        self.mouthCuesEnabled = mouthCuesEnabled
     }
 }
 
@@ -335,12 +370,36 @@ public struct AssetCapabilities: Codable, Equatable, Sendable {
     public let lookAt: Bool
     public let springBone: Bool
     public let mtoonMaterials: UInt64
+    public let vowels: MouthVowelCapabilities?
 
-    public init(aa: Bool, lookAt: Bool, springBone: Bool, mtoonMaterials: UInt64) {
+    public init(
+        aa: Bool,
+        lookAt: Bool,
+        springBone: Bool,
+        mtoonMaterials: UInt64,
+        vowels: MouthVowelCapabilities? = nil
+    ) {
         self.aa = aa
         self.lookAt = lookAt
         self.springBone = springBone
         self.mtoonMaterials = mtoonMaterials
+        self.vowels = vowels
+    }
+}
+
+public struct MouthVowelCapabilities: Codable, Equatable, Sendable {
+    public let aa: Bool
+    public let ih: Bool
+    public let ou: Bool
+    public let ee: Bool
+    public let oh: Bool
+
+    public init(aa: Bool, ih: Bool, ou: Bool, ee: Bool, oh: Bool) {
+        self.aa = aa
+        self.ih = ih
+        self.ou = ou
+        self.ee = ee
+        self.oh = oh
     }
 }
 
@@ -816,12 +875,13 @@ private extension PresentationCommand {
     static func decode(type: String, payload: BridgeObject) throws -> Self {
         switch type {
         case "configure":
-            try payload.requireKeys(["profile", "reduced_motion"])
+            try payload.requireKeys(["profile", "reduced_motion", "mouth_cues_enabled"])
             guard try payload.string("profile") == "lightweight" else {
                 throw BridgeContractError.invalidValue
             }
             return .configure(ConfigurePayload(
-                reducedMotion: try payload.boolean("reduced_motion")
+                reducedMotion: try payload.boolean("reduced_motion"),
+                mouthCuesEnabled: try payload.boolean("mouth_cues_enabled")
             ))
         case "load_profile":
             try payload.requireKeys(["profile_revision", "model_token", "motion_bindings"])
@@ -877,7 +937,7 @@ private extension PresentationCommand {
         case "reconcile_presentation":
             try payload.requireKeys([
                 "last_projection_sequence", "generation_id", "phase", "playback_id",
-                "reduced_motion",
+                "reduced_motion", "mouth_cues_enabled",
             ])
             let lastProjectionSequence = try payload.optionalInteger(
                 "last_projection_sequence", minimum: 1
@@ -897,7 +957,8 @@ private extension PresentationCommand {
                 generationID: generationID,
                 phase: phase,
                 playbackID: playbackID,
-                reducedMotion: try payload.boolean("reduced_motion")
+                reducedMotion: try payload.boolean("reduced_motion"),
+                mouthCuesEnabled: try payload.boolean("mouth_cues_enabled")
             ))
         case "set_visibility":
             try payload.requireKeys(["visibility"])
@@ -906,14 +967,19 @@ private extension PresentationCommand {
             }
             return .setVisibility(SetVisibilityPayload(visibility: visibility))
         case "set_policy":
-            try payload.requireKeys(["reduced_motion"])
+            try payload.requireKeys(["reduced_motion", "mouth_cues_enabled"])
             return .setPolicy(SetPolicyPayload(
-                reducedMotion: try payload.boolean("reduced_motion")
+                reducedMotion: try payload.boolean("reduced_motion"),
+                mouthCuesEnabled: try payload.boolean("mouth_cues_enabled")
             ))
         case "set_mouth":
-            try payload.requireKeys([
+            let baseKeys: Set<String> = [
                 "generation_id", "playback_id", "cue_index", "playback_offset_ms", "scalar",
-            ])
+            ]
+            guard Set(payload.values.keys) == baseKeys
+                || Set(payload.values.keys) == baseKeys.union(["vowels"])
+            else { throw BridgeContractError.invalidKeys }
+            let vowels = try payload.optionalMouthVowelWeights("vowels")
             return .setMouth(SetMouthPayload(
                 generationID: try payload.uuid("generation_id"),
                 playbackID: try payload.uuid("playback_id"),
@@ -921,7 +987,8 @@ private extension PresentationCommand {
                 playbackOffsetMilliseconds: try payload.integer(
                     "playback_offset_ms", maximum: 86_400_000
                 ),
-                scalar: try payload.number("scalar", minimum: 0, maximum: 1)
+                scalar: try payload.number("scalar", minimum: 0, maximum: 1),
+                vowels: vowels
             ))
         case "reset":
             try payload.requireKeys(["generation_id", "reason"])
@@ -977,7 +1044,13 @@ private extension PresentationObservation {
         case "profile_model_loaded":
             try payload.requireKeys(["profile_revision", "model_token", "capabilities"])
             let capabilities = try payload.object("capabilities")
-            try capabilities.requireKeys(["aa", "look_at", "spring_bone", "mtoon_materials"])
+            let baseCapabilityKeys: Set<String> = [
+                "aa", "look_at", "spring_bone", "mtoon_materials",
+            ]
+            guard Set(capabilities.values.keys) == baseCapabilityKeys
+                || Set(capabilities.values.keys) == baseCapabilityKeys.union(["vowels"])
+            else { throw BridgeContractError.invalidKeys }
+            let vowelCapabilities = try capabilities.mouthVowelCapabilities("vowels")
             return .profileModelLoaded(ProfileModelLoadedPayload(
                 profileRevision: try payload.integer("profile_revision", minimum: 1),
                 modelToken: try payload.uuid("model_token"),
@@ -985,7 +1058,8 @@ private extension PresentationObservation {
                     aa: try capabilities.boolean("aa"),
                     lookAt: try capabilities.boolean("look_at"),
                     springBone: try capabilities.boolean("spring_bone"),
-                    mtoonMaterials: try capabilities.integer("mtoon_materials", maximum: 512)
+                    mtoonMaterials: try capabilities.integer("mtoon_materials", maximum: 512),
+                    vowels: vowelCapabilities
                 )
             ))
         case "first_frame":
@@ -1163,6 +1237,44 @@ private struct BridgeObject {
             throw BridgeContractError.invalidValue
         }
         return result
+    }
+
+    func optionalMouthVowelWeights(_ key: String) throws -> MouthVowelWeights? {
+        guard values[key] != nil else { return nil }
+        guard !(values[key] is NSNull), let object = values[key] as? [String: Any] else {
+            throw BridgeContractError.invalidValue
+        }
+        let vowelObject = BridgeObject(values: object)
+        try vowelObject.requireKeys(["aa", "ih", "ou", "ee", "oh"])
+        let weights = MouthVowelWeights(
+            aa: try vowelObject.number("aa", minimum: 0, maximum: 1),
+            ih: try vowelObject.number("ih", minimum: 0, maximum: 1),
+            ou: try vowelObject.number("ou", minimum: 0, maximum: 1),
+            ee: try vowelObject.number("ee", minimum: 0, maximum: 1),
+            oh: try vowelObject.number("oh", minimum: 0, maximum: 1)
+        )
+        guard weights.isValid else { throw BridgeContractError.invalidValue }
+        return weights
+    }
+
+    func mouthVowelCapabilities(_ key: String) throws -> MouthVowelCapabilities? {
+        guard values[key] != nil else { return nil }
+        guard !(values[key] is NSNull), let object = values[key] as? [String: Any] else {
+            throw BridgeContractError.invalidValue
+        }
+        let vowelObject = BridgeObject(values: object)
+        try vowelObject.requireKeys(["aa", "ih", "ou", "ee", "oh"])
+        let capabilities = MouthVowelCapabilities(
+            aa: try vowelObject.boolean("aa"),
+            ih: try vowelObject.boolean("ih"),
+            ou: try vowelObject.boolean("ou"),
+            ee: try vowelObject.boolean("ee"),
+            oh: try vowelObject.boolean("oh")
+        )
+        guard (try boolean("aa")) == capabilities.aa else {
+            throw BridgeContractError.invalidValue
+        }
+        return capabilities
     }
 
     func uuid(_ key: String) throws -> UUID {
