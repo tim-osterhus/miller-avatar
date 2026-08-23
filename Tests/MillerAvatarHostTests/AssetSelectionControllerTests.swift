@@ -47,6 +47,24 @@ import MillerAvatarCore
 
         #expect(result == .rejected(.resourceLimit))
     }
+
+    @Test func qualityModeCaptureUsesItsFinitePolicyCeiling() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("avatar.vrm")
+        try Data([1, 2, 3]).write(to: file)
+
+        let result = AssetSelectionController.capture(
+            url: file,
+            qualityMode: .highQuality
+        )
+
+        #expect(result == .captured(Data([1, 2, 3])))
+        #expect(AssetBudget.highQuality.capturedBytes == 2_684_354_560)
+        #expect(AssetBudget.highQuality.capturedBytes < UInt64(Int.max))
+    }
 }
 
 private final class RecordingSecurityScope: SecurityScopedAccess, @unchecked Sendable {

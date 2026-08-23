@@ -32,6 +32,7 @@ package struct AvatarProfile: Codable, Equatable, Sendable {
     package static let maximumConsecutiveLoadFailures = 3
     package static let rightsLabel = "local_user_supplied"
     package static let performanceProfile = "lightweight"
+    package static let maximumRepresentableCapturedBytes = UInt64(Int.max)
 
     package let schemaVersion: Int
     package let id: UUID
@@ -43,6 +44,15 @@ package struct AvatarProfile: Codable, Equatable, Sendable {
     package let performanceProfile: String
     package let consecutiveLoadFailures: Int
 
+    package var qualityMode: AvatarAssetQualityMode? {
+        AvatarAssetQualityMode(rawValue: performanceProfile)
+    }
+
+    package func requireQualityMode() throws -> AvatarAssetQualityMode {
+        guard let qualityMode else { throw AvatarProfileStoreError.corruptStore }
+        return qualityMode
+    }
+
     package var isQuarantined: Bool {
         consecutiveLoadFailures == Self.maximumConsecutiveLoadFailures
     }
@@ -53,7 +63,8 @@ package struct AvatarProfile: Codable, Equatable, Sendable {
         modelBookmark: Data,
         modelSHA256: String,
         capturedByteCount: UInt64,
-        consecutiveLoadFailures: Int = 0
+        consecutiveLoadFailures: Int = 0,
+        qualityMode: AvatarAssetQualityMode = .lightweight
     ) {
         self.init(
             schemaVersion: Self.currentSchemaVersion,
@@ -63,7 +74,7 @@ package struct AvatarProfile: Codable, Equatable, Sendable {
             modelSHA256: modelSHA256,
             capturedByteCount: capturedByteCount,
             rightsLabel: Self.rightsLabel,
-            performanceProfile: Self.performanceProfile,
+            performanceProfile: qualityMode.rawValue,
             consecutiveLoadFailures: consecutiveLoadFailures
         )
     }
@@ -149,13 +160,14 @@ package struct AvatarProfile: Codable, Equatable, Sendable {
     }
 
     private var isValid: Bool {
-        schemaVersion == Self.currentSchemaVersion
+        guard let qualityMode else { return false }
+        return schemaVersion == Self.currentSchemaVersion
             && Self.isValidDisplayName(displayName)
             && modelBookmark.count <= Self.maximumBookmarkBytes
             && Self.isValidSHA256(modelSHA256)
-            && capturedByteCount <= AssetBudget.alpha.capturedBytes
+            && capturedByteCount <= Self.maximumRepresentableCapturedBytes
+            && capturedByteCount <= AssetBudget.budget(for: qualityMode).capturedBytes
             && rightsLabel == Self.rightsLabel
-            && performanceProfile == Self.performanceProfile
             && (0...Self.maximumConsecutiveLoadFailures)
                 .contains(consecutiveLoadFailures)
     }
@@ -229,6 +241,7 @@ public struct AvatarProfileSummary: Equatable, Sendable {
     public let modelCapturedByteCount: UInt64
     public let modelConsecutiveLoadFailures: Int
     public let modelStatus: AvatarModelStatus
+    public let qualityMode: AvatarAssetQualityMode
     public let motions: [AvatarMotionSummary]
     public let motionBindings: [AvatarMotionRole: UUID]
 
@@ -242,12 +255,37 @@ public struct AvatarProfileSummary: Equatable, Sendable {
         motions: [AvatarMotionSummary],
         motionBindings: [AvatarMotionRole: UUID]
     ) {
+        self.init(
+            id: id,
+            displayName: displayName,
+            profileRevision: profileRevision,
+            modelCapturedByteCount: modelCapturedByteCount,
+            modelConsecutiveLoadFailures: modelConsecutiveLoadFailures,
+            modelStatus: modelStatus,
+            motions: motions,
+            motionBindings: motionBindings,
+            qualityMode: .lightweight
+        )
+    }
+
+    public init(
+        id: UUID,
+        displayName: String,
+        profileRevision: UInt64,
+        modelCapturedByteCount: UInt64,
+        modelConsecutiveLoadFailures: Int,
+        modelStatus: AvatarModelStatus,
+        motions: [AvatarMotionSummary],
+        motionBindings: [AvatarMotionRole: UUID],
+        qualityMode: AvatarAssetQualityMode
+    ) {
         self.id = id
         self.displayName = displayName
         self.profileRevision = profileRevision
         self.modelCapturedByteCount = modelCapturedByteCount
         self.modelConsecutiveLoadFailures = modelConsecutiveLoadFailures
         self.modelStatus = modelStatus
+        self.qualityMode = qualityMode
         self.motions = motions
         self.motionBindings = motionBindings
     }
@@ -385,6 +423,15 @@ package struct StoredAvatarProfile: Codable, Equatable, Sendable {
     package let motionLibrary: [UUID: StoredAvatarMotionReference]
     package let motionBindings: [AvatarMotionRole: UUID]
 
+    package var qualityMode: AvatarAssetQualityMode? {
+        AvatarAssetQualityMode(rawValue: performanceProfile)
+    }
+
+    package func requireQualityMode() throws -> AvatarAssetQualityMode {
+        guard let qualityMode else { throw AvatarProfileStoreError.corruptStore }
+        return qualityMode
+    }
+
     package init(
         id: UUID,
         displayName: String,
@@ -394,7 +441,8 @@ package struct StoredAvatarProfile: Codable, Equatable, Sendable {
         profileRevision: UInt64,
         motionLibrary: [UUID: StoredAvatarMotionReference],
         motionBindings: [AvatarMotionRole: UUID],
-        consecutiveLoadFailures: Int = 0
+        consecutiveLoadFailures: Int = 0,
+        qualityMode: AvatarAssetQualityMode = .lightweight
     ) {
         self.init(
             schemaVersion: Self.currentSchemaVersion,
@@ -404,7 +452,7 @@ package struct StoredAvatarProfile: Codable, Equatable, Sendable {
             modelSHA256: modelSHA256,
             capturedByteCount: capturedByteCount,
             rightsLabel: AvatarProfile.rightsLabel,
-            performanceProfile: AvatarProfile.performanceProfile,
+            performanceProfile: qualityMode.rawValue,
             consecutiveLoadFailures: consecutiveLoadFailures,
             profileRevision: profileRevision,
             motionLibrary: motionLibrary,
@@ -451,8 +499,16 @@ package struct StoredAvatarProfile: Codable, Equatable, Sendable {
                 ? .quarantined
                 : .available,
             motions: motionLibrary.values.sorted(by: motionSort).map(\.summary),
-            motionBindings: motionBindings
+            motionBindings: motionBindings,
+            qualityMode: validatedQualityMode
         )
+    }
+
+    private var validatedQualityMode: AvatarAssetQualityMode {
+        guard let qualityMode else {
+            preconditionFailure("invalid stored avatar quality mode")
+        }
+        return qualityMode
     }
 
     package var isQuarantined: Bool {
@@ -560,13 +616,14 @@ package struct StoredAvatarProfile: Codable, Equatable, Sendable {
     }
 
     private var isValid: Bool {
-        schemaVersion == Self.currentSchemaVersion
+        guard let qualityMode else { return false }
+        return schemaVersion == Self.currentSchemaVersion
             && AvatarProfile.isValidDisplayName(displayName)
             && modelBookmark.count <= AvatarProfile.maximumBookmarkBytes
             && AvatarProfile.isValidSHA256(modelSHA256)
-            && capturedByteCount <= AssetBudget.alpha.capturedBytes
+            && capturedByteCount <= AvatarProfile.maximumRepresentableCapturedBytes
+            && capturedByteCount <= AssetBudget.budget(for: qualityMode).capturedBytes
             && rightsLabel == AvatarProfile.rightsLabel
-            && performanceProfile == AvatarProfile.performanceProfile
             && (0...AvatarProfile.maximumConsecutiveLoadFailures)
                 .contains(consecutiveLoadFailures)
             && profileRevision > 0

@@ -30,6 +30,12 @@ package final class AssetSelectionController {
     package init() {}
 
     package func selectAndCapture() async -> AssetCaptureResult {
+        await selectAndCapture(qualityMode: .lightweight)
+    }
+
+    package func selectAndCapture(
+        qualityMode: AvatarAssetQualityMode
+    ) async -> AssetCaptureResult {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -40,7 +46,7 @@ package final class AssetSelectionController {
         guard await panel.begin() == .OK, let url = panel.url else {
             return .cancelled
         }
-        return Self.capture(url: url)
+        return Self.capture(url: url, qualityMode: qualityMode)
     }
 
     package nonisolated static func capture(
@@ -55,6 +61,26 @@ package final class AssetSelectionController {
         defer { securityScope.stopAccessing(url) }
 
         return captureScoped(url: url, maximumBytes: maximumBytes)
+    }
+
+    package nonisolated static func capture(
+        url: URL,
+        qualityMode: AvatarAssetQualityMode,
+        securityScope: (any SecurityScopedAccess)? = nil
+    ) -> AssetCaptureResult {
+        capture(
+            url: url,
+            maximumBytes: AssetBudget.budget(for: qualityMode).capturedBytes,
+            securityScope: securityScope
+        )
+    }
+
+    package nonisolated static func capture(
+        url: URL,
+        mode: AvatarAssetQualityMode,
+        securityScope: (any SecurityScopedAccess)? = nil
+    ) -> AssetCaptureResult {
+        capture(url: url, qualityMode: mode, securityScope: securityScope)
     }
 
     package nonisolated static func captureScoped(
@@ -107,6 +133,23 @@ package final class AssetSelectionController {
             return .rejected(.assetRejected)
         }
         return .captured(bytes)
+    }
+
+    package nonisolated static func captureScoped(
+        url: URL,
+        qualityMode: AvatarAssetQualityMode
+    ) -> AssetCaptureResult {
+        captureScoped(
+            url: url,
+            maximumBytes: AssetBudget.budget(for: qualityMode).capturedBytes
+        )
+    }
+
+    package nonisolated static func captureScoped(
+        url: URL,
+        mode: AvatarAssetQualityMode
+    ) -> AssetCaptureResult {
+        captureScoped(url: url, qualityMode: mode)
     }
 
     private nonisolated static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {

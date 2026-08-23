@@ -34,9 +34,172 @@ struct AvatarProfileStoreTests {
         #expect(summary.profileRevision == 1)
         #expect(summary.displayName == "Avatar")
         #expect(summary.modelCapturedByteCount == UInt64(modelBytes.count))
+        #expect(summary.qualityMode == .lightweight)
         #expect(try await store.profile(id: summary.id) == summary)
         await expectError(.unknownProfile) {
             _ = try await store.profile(id: UUID())
+        }
+    }
+
+    @Test
+    func explicitQualityModeIsPersistedAndReachesCaptureAndAdmissionExactlyOnce() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modelBytes = try minimalGLB()
+        let model = try #require(await admittedAsset(for: modelBytes))
+        let observations = QualityModeObservations()
+        let recorder = StoreRecorder()
+        let dependencies = AvatarProfileStoreDependencies(
+            admission: { bytes, mode in
+                observations.recordAdmission(mode, byteCount: bytes.count)
+                return .admitted(model)
+            },
+            bookmarkCreator: { url in Data(url.path.utf8) },
+            bookmarkResolver: { bookmark in
+                guard let path = String(data: bookmark, encoding: .utf8) else {
+                    throw TestFailure.failed
+                }
+                return AvatarResolvedBookmark(
+                    url: URL(fileURLWithPath: path),
+                    isStale: false
+                )
+            },
+            securityScope: recorder,
+            capture: { _, maximumBytes, mode in
+                observations.recordCapture(mode, maximumBytes: maximumBytes)
+                return modelBytes
+            }
+        )
+        let store = AvatarProfileStore(
+            root: root,
+            dependencies: dependencies
+        )
+
+        let summary = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar",
+            qualityMode: .highQuality
+        )
+
+        #expect(summary.qualityMode == .highQuality)
+        #expect(observations.captureModes == [.highQuality])
+        #expect(observations.admissionModes == [.highQuality])
+        #expect(observations.captureMaximums == [AssetBudget.highQuality.capturedBytes])
+        let persisted = try #require(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: root.appendingPathComponent("profiles-v2.json"))
+            ) as? [String: Any]
+        )
+        let profile = try #require((persisted["profiles"] as? [[String: Any]])?.first)
+        #expect(profile["performanceProfile"] as? String == "high_quality")
+    }
+
+    @Test
+    func highQualityModeSurvivesReloadContentReplacementAndRetryWithoutFallback() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originalBytes = try minimalGLB()
+        let replacementBytes = try minimalGLB(binaryByteCount: 8)
+        let originalAsset = try #require(await admittedAsset(for: originalBytes))
+        let replacementAsset = try #require(await admittedAsset(for: replacementBytes))
+        let asset = LockedBox<AdmittedAsset>(originalAsset)
+        let bytes = LockedBox(replacementBytes)
+        let observations = QualityModeObservations()
+        let dependencies = makeModeAwareDependencies(
+            modelBox: asset,
+            bytesBox: bytes,
+            observations: observations
+        )
+        let store = AvatarProfileStore(root: root, dependencies: dependencies)
+
+        let imported = try await store.importModel(
+            at: root.appendingPathComponent("model.vrm"),
+            displayName: "Avatar",
+            qualityMode: .highQuality
+        )
+        try await store.recordRendererFailure(id: imported.id)
+        try await store.retry(id: imported.id)
+
+        let restarted = AvatarProfileStore(
+            root: root,
+            dependencies: makeModeAwareDependencies(
+                modelBox: asset,
+                bytesBox: bytes,
+                observations: observations
+            )
+        )
+        #expect(try await restarted.profile(id: imported.id).qualityMode == .highQuality)
+
+        asset.set(replacementAsset)
+        let lease = ProfileMaterializationLease()
+        try await restarted.materializeForRendering(id: imported.id, lease: lease)
+        #expect(lease.takePreparedProfile()?.model.bytes == replacementBytes)
+        #expect(observations.captureModes.last == .highQuality)
+        #expect(observations.admissionModes.last == .highQuality)
+        #expect(observations.captureMaximums.last == AssetBudget.highQuality.capturedBytes)
+        #expect(try await restarted.profile(id: imported.id).qualityMode == .highQuality)
+    }
+
+    @Test
+    func unknownStoredQualityModeIsAClosedCorruptStoreFailure() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var profile: [String: Any] = [
+            "schemaVersion": 2,
+            "id": UUID().uuidString,
+            "displayName": "Avatar",
+            "modelBookmark": Data([1]).base64EncodedString(),
+            "modelSHA256": String(repeating: "a", count: 64),
+            "capturedByteCount": 1,
+            "rightsLabel": AvatarProfile.rightsLabel,
+            "performanceProfile": "future_mode",
+            "consecutiveLoadFailures": 0,
+            "profileRevision": 1,
+            "motionLibrary": [:],
+            "motionBindings": [:],
+        ]
+        try envelopeData(profile: profile).write(
+            to: root.appendingPathComponent(AvatarProfileStore.fileName)
+        )
+
+        await expectError(.corruptStore) {
+            _ = try await AvatarProfileStore(root: root).list()
+        }
+        profile["performanceProfile"] = "high_quality"
+        try envelopeData(profile: profile).write(
+            to: root.appendingPathComponent(AvatarProfileStore.fileName)
+        )
+        #expect(try await AvatarProfileStore(root: root).list().first?.qualityMode == .highQuality)
+    }
+
+    @Test
+    func storedCaptureValidationUsesTheRecordedModeCeiling() throws {
+        let profile = StoredAvatarProfile(
+            id: UUID(),
+            displayName: "Avatar",
+            modelBookmark: Data([1]),
+            modelSHA256: String(repeating: "a", count: 64),
+            capturedByteCount: AssetBudget.lightweight.capturedBytes + 1,
+            profileRevision: 1,
+            motionLibrary: [:],
+            motionBindings: [:],
+            qualityMode: .highQuality
+        )
+
+        let encoded = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(StoredAvatarProfile.self, from: encoded)
+
+        #expect(decoded.qualityMode == .highQuality)
+        #expect(decoded.capturedByteCount == AssetBudget.lightweight.capturedBytes + 1)
+        #expect(profile.performanceProfile == "high_quality")
+
+        var overCap = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        overCap["capturedByteCount"] = AssetBudget.highQuality.capturedBytes + 1
+        let overCapData = try JSONSerialization.data(withJSONObject: overCap)
+        #expect(throws: AvatarProfileStoreError.corruptStore) {
+            try JSONDecoder().decode(StoredAvatarProfile.self, from: overCapData)
         }
     }
 
@@ -1754,6 +1917,34 @@ struct AvatarProfileStoreTests {
         )
     }
 
+    private func makeModeAwareDependencies(
+        modelBox: LockedBox<AdmittedAsset>,
+        bytesBox: LockedBox<Data>,
+        observations: QualityModeObservations
+    ) -> AvatarProfileStoreDependencies {
+        AvatarProfileStoreDependencies(
+            admission: { bytes, mode in
+                observations.recordAdmission(mode, byteCount: bytes.count)
+                return .admitted(modelBox.current)
+            },
+            bookmarkCreator: { url in Data(url.path.utf8) },
+            bookmarkResolver: { bookmark in
+                guard let path = String(data: bookmark, encoding: .utf8) else {
+                    throw TestFailure.failed
+                }
+                return AvatarResolvedBookmark(
+                    url: URL(fileURLWithPath: path),
+                    isStale: false
+                )
+            },
+            securityScope: StoreRecorder(),
+            capture: { _, maximumBytes, mode in
+                observations.recordCapture(mode, maximumBytes: maximumBytes)
+                return bytesBox.current
+            }
+        )
+    }
+
     private func admittedAsset(for bytes: Data) async throws -> AdmittedAsset? {
         switch await AssetAdmission().admit(bytes) {
         case .admitted(let asset): return asset
@@ -1859,6 +2050,42 @@ private final class LockedCounter: @unchecked Sendable {
     func increment() {
         lock.lock()
         count += 1
+        lock.unlock()
+    }
+}
+
+private final class QualityModeObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var captured: [(AvatarAssetQualityMode, UInt64)] = []
+    private var admitted: [(AvatarAssetQualityMode, Int)] = []
+
+    var captureModes: [AvatarAssetQualityMode] {
+        lock.lock()
+        defer { lock.unlock() }
+        return captured.map(\.0)
+    }
+
+    var admissionModes: [AvatarAssetQualityMode] {
+        lock.lock()
+        defer { lock.unlock() }
+        return admitted.map(\.0)
+    }
+
+    var captureMaximums: [UInt64] {
+        lock.lock()
+        defer { lock.unlock() }
+        return captured.map(\.1)
+    }
+
+    func recordCapture(_ mode: AvatarAssetQualityMode, maximumBytes: UInt64) {
+        lock.lock()
+        captured.append((mode, maximumBytes))
+        lock.unlock()
+    }
+
+    func recordAdmission(_ mode: AvatarAssetQualityMode, byteCount: Int) {
+        lock.lock()
+        admitted.append((mode, byteCount))
         lock.unlock()
     }
 }

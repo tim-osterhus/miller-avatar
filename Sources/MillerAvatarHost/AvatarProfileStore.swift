@@ -14,13 +14,33 @@ package struct AvatarResolvedBookmark: Equatable, Sendable {
 }
 
 package struct AvatarProfileStoreDependencies: Sendable {
-    package let admission: @Sendable (Data) -> AssetAdmissionResult
+    package let admission: @Sendable (Data, AvatarAssetQualityMode) -> AssetAdmissionResult
     package let motionAdmission: @Sendable (Data) -> MotionAdmissionResult
     package let bookmarkCreator: @Sendable (URL) throws -> Data
     package let bookmarkResolver: @Sendable (Data) throws -> AvatarResolvedBookmark
     package let securityScope: any SecurityScopedAccess
-    package let capture: @Sendable (URL, UInt64) throws -> Data
+    package let capture: @Sendable (URL, UInt64, AvatarAssetQualityMode) throws -> Data
     package let beforeMotionMaterialization: (@Sendable () async -> Void)?
+
+    package init(
+        admission: @escaping @Sendable (Data, AvatarAssetQualityMode) -> AssetAdmissionResult,
+        motionAdmission: @escaping @Sendable (Data) -> MotionAdmissionResult = { _ in
+            .rejected(.motionRejected)
+        },
+        bookmarkCreator: @escaping @Sendable (URL) throws -> Data,
+        bookmarkResolver: @escaping @Sendable (Data) throws -> AvatarResolvedBookmark,
+        securityScope: any SecurityScopedAccess,
+        capture: @escaping @Sendable (URL, UInt64, AvatarAssetQualityMode) throws -> Data,
+        beforeMotionMaterialization: (@Sendable () async -> Void)? = nil
+    ) {
+        self.admission = admission
+        self.motionAdmission = motionAdmission
+        self.bookmarkCreator = bookmarkCreator
+        self.bookmarkResolver = bookmarkResolver
+        self.securityScope = securityScope
+        self.capture = capture
+        self.beforeMotionMaterialization = beforeMotionMaterialization
+    }
 
     package init(
         admission: @escaping @Sendable (Data) -> AssetAdmissionResult,
@@ -33,13 +53,15 @@ package struct AvatarProfileStoreDependencies: Sendable {
         capture: @escaping @Sendable (URL, UInt64) throws -> Data,
         beforeMotionMaterialization: (@Sendable () async -> Void)? = nil
     ) {
-        self.admission = admission
-        self.motionAdmission = motionAdmission
-        self.bookmarkCreator = bookmarkCreator
-        self.bookmarkResolver = bookmarkResolver
-        self.securityScope = securityScope
-        self.capture = capture
-        self.beforeMotionMaterialization = beforeMotionMaterialization
+        self.init(
+            admission: { bytes, _ in admission(bytes) },
+            motionAdmission: motionAdmission,
+            bookmarkCreator: bookmarkCreator,
+            bookmarkResolver: bookmarkResolver,
+            securityScope: securityScope,
+            capture: { url, maximumBytes, _ in try capture(url, maximumBytes) },
+            beforeMotionMaterialization: beforeMotionMaterialization
+        )
     }
 
     package init(
@@ -61,7 +83,9 @@ package struct AvatarProfileStoreDependencies: Sendable {
 
     package static func production() -> Self {
         Self(
-            admission: { bytes in AssetAdmission().admitSynchronously(bytes) },
+            admission: { bytes, qualityMode in
+                AssetAdmission(mode: qualityMode).admitSynchronously(bytes)
+            },
             motionAdmission: { bytes in MotionAdmission().admitSynchronously(bytes) },
             bookmarkCreator: { url in
                 try url.bookmarkData(
@@ -86,7 +110,7 @@ package struct AvatarProfileStoreDependencies: Sendable {
                 return AvatarResolvedBookmark(url: url, isStale: isStale)
             },
             securityScope: SystemSecurityScopedAccess(),
-            capture: { url, maximumBytes in
+            capture: { url, maximumBytes, _ in
                 switch AssetSelectionController.captureScoped(
                     url: url,
                     maximumBytes: maximumBytes
@@ -294,6 +318,26 @@ public actor AvatarProfileStore {
 
     package init(
         root: URL,
+        admission: @escaping @Sendable (Data, AvatarAssetQualityMode) -> AssetAdmissionResult,
+        bookmarkCreator: @escaping @Sendable (URL) throws -> Data,
+        bookmarkResolver: @escaping @Sendable (Data) throws -> AvatarResolvedBookmark,
+        securityScope: any SecurityScopedAccess,
+        capture: @escaping @Sendable (URL, UInt64, AvatarAssetQualityMode) throws -> Data
+    ) {
+        self.init(
+            root: root,
+            dependencies: AvatarProfileStoreDependencies(
+                admission: admission,
+                bookmarkCreator: bookmarkCreator,
+                bookmarkResolver: bookmarkResolver,
+                securityScope: securityScope,
+                capture: capture
+            )
+        )
+    }
+
+    package init(
+        root: URL,
         admission: @escaping @Sendable (Data) -> AssetAdmissionResult,
         bookmarkCreator: @escaping @Sendable (URL) throws -> Data,
         bookmarkResolver: @escaping @Sendable (Data) throws -> AvatarResolvedBookmark,
@@ -325,6 +369,14 @@ public actor AvatarProfileStore {
     }
 
     public func importModel(at url: URL, displayName: String) throws -> AvatarProfileSummary {
+        try importModel(at: url, displayName: displayName, qualityMode: .lightweight)
+    }
+
+    public func importModel(
+        at url: URL,
+        displayName: String,
+        qualityMode: AvatarAssetQualityMode
+    ) throws -> AvatarProfileSummary {
         guard AvatarProfile.isValidDisplayName(displayName) else {
             throw AvatarProfileStoreError.invalidDisplayName
         }
@@ -333,7 +385,7 @@ public actor AvatarProfileStore {
             throw AvatarProfileStoreError.profileLimit
         }
 
-        let imported = try captureModelForImport(at: url)
+        let imported = try captureModelForImport(at: url, qualityMode: qualityMode)
         let profile = StoredAvatarProfile(
             id: UUID(),
             displayName: displayName,
@@ -342,7 +394,8 @@ public actor AvatarProfileStore {
             capturedByteCount: UInt64(imported.asset.bytes.count),
             profileRevision: 1,
             motionLibrary: [:],
-            motionBindings: [:]
+            motionBindings: [:],
+            qualityMode: qualityMode
         )
         profiles.append(profile)
         try commit(profiles)
@@ -732,6 +785,8 @@ public actor AvatarProfileStore {
         guard !current.isQuarantined else {
             throw AvatarProfileStoreError.quarantined
         }
+        let qualityMode = try current.requireQualityMode()
+        let budget = AssetBudget.budget(for: qualityMode)
 
         let modelResult: MaterializedModel
         do {
@@ -751,18 +806,24 @@ public actor AvatarProfileStore {
                 try leaseCheckpoint(lease)
                 let bytes = try dependencies.capture(
                     resolvedModel.url,
-                    AssetBudget.alpha.capturedBytes
+                    budget.capturedBytes,
+                    qualityMode
                 )
                 try leaseCheckpoint(lease)
-                guard bytes.count <= AssetBudget.alpha.capturedBytes else {
+                guard UInt64(bytes.count) <= budget.capturedBytes,
+                      UInt64(bytes.count) <= AvatarProfile.maximumRepresentableCapturedBytes
+                else {
                     throw AvatarProfileStoreError.resourceLimit
                 }
-                let admission = dependencies.admission(bytes)
+                let admission = dependencies.admission(bytes, qualityMode)
                 try leaseCheckpoint(lease)
                 let asset: AdmittedAsset
                 switch admission {
                 case .admitted(let admitted):
-                    guard admitted.bytes.count <= AssetBudget.alpha.capturedBytes else {
+                    guard UInt64(admitted.bytes.count) <= budget.capturedBytes,
+                          UInt64(admitted.bytes.count)
+                            <= AvatarProfile.maximumRepresentableCapturedBytes
+                    else {
                         throw AvatarProfileStoreError.resourceLimit
                     }
                     asset = admitted
@@ -942,11 +1003,19 @@ public actor AvatarProfileStore {
         guard committed else { throw CancellationError() }
     }
 
-    private func captureModelForImport(at url: URL) throws -> ImportedAsset {
+    private func captureModelForImport(
+        at url: URL,
+        qualityMode: AvatarAssetQualityMode
+    ) throws -> ImportedAsset {
         do {
             return try withSecurityScope(url) {
-                let bytes = try capture(url: url, maximumBytes: AssetBudget.alpha.capturedBytes)
-                let asset = try admit(bytes)
+                let budget = AssetBudget.budget(for: qualityMode)
+                let bytes = try capture(
+                    url: url,
+                    maximumBytes: budget.capturedBytes,
+                    qualityMode: qualityMode
+                )
+                let asset = try admit(bytes, qualityMode: qualityMode)
                 let bookmark = try makeBookmark(url)
                 return ImportedAsset(
                     asset: asset,
@@ -966,7 +1035,8 @@ public actor AvatarProfileStore {
             return try withSecurityScope(url) {
                 let bytes = try capture(
                     url: url,
-                    maximumBytes: MotionBudget.lightweight.capturedBytes
+                    maximumBytes: MotionBudget.lightweight.capturedBytes,
+                    qualityMode: .lightweight
                 )
                 let motion = try admitMotion(bytes)
                 let bookmark = try makeBookmark(url)
@@ -983,10 +1053,16 @@ public actor AvatarProfileStore {
         }
     }
 
-    private func capture(url: URL, maximumBytes: UInt64) throws -> Data {
+    private func capture(
+        url: URL,
+        maximumBytes: UInt64,
+        qualityMode: AvatarAssetQualityMode
+    ) throws -> Data {
         do {
-            let bytes = try dependencies.capture(url, maximumBytes)
-            guard bytes.count <= maximumBytes, bytes.count <= Int.max else {
+            let bytes = try dependencies.capture(url, maximumBytes, qualityMode)
+            guard UInt64(bytes.count) <= maximumBytes,
+                  UInt64(bytes.count) <= AvatarProfile.maximumRepresentableCapturedBytes
+            else {
                 throw AvatarProfileStoreError.resourceLimit
             }
             return bytes
@@ -999,10 +1075,21 @@ public actor AvatarProfileStore {
         }
     }
 
-    private func admit(_ bytes: Data) throws -> AdmittedAsset {
-        switch dependencies.admission(bytes) {
+    private func admit(
+        _ bytes: Data,
+        qualityMode: AvatarAssetQualityMode
+    ) throws -> AdmittedAsset {
+        let budget = AssetBudget.budget(for: qualityMode)
+        guard UInt64(bytes.count) <= budget.capturedBytes,
+              UInt64(bytes.count) <= AvatarProfile.maximumRepresentableCapturedBytes
+        else {
+            throw AvatarProfileStoreError.resourceLimit
+        }
+        switch dependencies.admission(bytes, qualityMode) {
         case .admitted(let asset):
-            guard asset.bytes.count <= AssetBudget.alpha.capturedBytes else {
+            guard UInt64(asset.bytes.count) <= budget.capturedBytes,
+                  UInt64(asset.bytes.count) <= AvatarProfile.maximumRepresentableCapturedBytes
+            else {
                 throw AvatarProfileStoreError.resourceLimit
             }
             return asset
@@ -1082,7 +1169,8 @@ public actor AvatarProfileStore {
                 try leaseCheckpoint(lease)
                 let bytes = try dependencies.capture(
                     resolved.url,
-                    MotionBudget.lightweight.capturedBytes
+                    MotionBudget.lightweight.capturedBytes,
+                    .lightweight
                 )
                 try leaseCheckpoint(lease)
                 guard bytes.count <= MotionBudget.lightweight.capturedBytes else {
@@ -1373,9 +1461,11 @@ public actor AvatarProfileStore {
                       AvatarProfile.isValidDisplayName(profile.displayName),
                       profile.modelBookmark.count <= AvatarProfile.maximumBookmarkBytes,
                       AvatarProfile.isValidSHA256(profile.modelSHA256),
-                      profile.capturedByteCount <= AssetBudget.alpha.capturedBytes,
+                      profile.capturedByteCount
+                        <= AvatarProfile.maximumRepresentableCapturedBytes,
+                      profile.capturedByteCount <= AssetBudget.lightweight.capturedBytes,
                       profile.rightsLabel == AvatarProfile.rightsLabel,
-                      profile.performanceProfile == AvatarProfile.performanceProfile,
+                      profile.performanceProfile == AvatarAssetQualityMode.lightweight.rawValue,
                       (0...AvatarProfile.maximumConsecutiveLoadFailures)
                         .contains(profile.consecutiveLoadFailures)
                 else { throw AvatarProfileStoreError.corruptStore }

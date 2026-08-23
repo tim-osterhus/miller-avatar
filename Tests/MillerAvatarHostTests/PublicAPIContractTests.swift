@@ -64,6 +64,27 @@ import MillerAvatarHost
     }
 
     @Test
+    func profileSummaryAndImportExposeRecordedQualityMode() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/MillerAvatarHost/AvatarProfile.swift")
+        let profileSource = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(profileSource.contains("public let qualityMode: AvatarAssetQualityMode"))
+        #expect(profileSource.contains("qualityMode: AvatarAssetQualityMode"))
+
+        let storeSourceURL = sourceURL.deletingLastPathComponent()
+            .appendingPathComponent("AvatarProfileStore.swift")
+        let storeSource = try String(contentsOf: storeSourceURL, encoding: .utf8)
+        let compactStoreSource = storeSource.filter { !$0.isWhitespace }
+        #expect(compactStoreSource.contains(
+            "publicfuncimportModel(aturl:URL,displayName:String,qualityMode:AvatarAssetQualityMode)throws->AvatarProfileSummary"
+        ))
+        #expect(storeSource.contains("performanceProfile"))
+    }
+
+    @Test
     func storeUsesV2PersistenceAndReturnsSanitizedSummaries() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
