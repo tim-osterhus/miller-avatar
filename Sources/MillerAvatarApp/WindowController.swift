@@ -129,6 +129,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         let oldSurface = currentSurface
         let visibility = oldSurface?.snapshot.visibility ?? .visible
         let reducedMotion = oldSurface?.snapshot.reducedMotion ?? false
+        let mouthCuesEnabled = oldSurface?.snapshot.mouthCuesEnabled ?? true
         pendingDiagnosticLoad = nil
         oldSurface?.onSnapshot = nil
         oldSurface?.onObservation = nil
@@ -142,6 +143,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             PendingDiagnosticLoad(surface: replacement, asset: $0)
         }
         replacement.setReducedMotion(reducedMotion)
+        replacement.setMouthCuesEnabled(mouthCuesEnabled)
         replacement.setVisibility(visibility)
         replacement.start()
         diagnostics.restoreFocusAfterActivation()

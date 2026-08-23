@@ -10,7 +10,7 @@ import MillerAvatarCore
         let sessionID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let bridge = BridgeController(sessionID: sessionID, caller: caller)
 
-        try await bridge.send(.configure(reducedMotion: true))
+        try await bridge.send(.configure(.init(reducedMotion: true, mouthCuesEnabled: false)))
         try await bridge.send(.loadProfile(profilePayload()))
 
         #expect(caller.calls.count == 2)
@@ -27,6 +27,7 @@ import MillerAvatarCore
         let payload = try #require(object["payload"] as? [String: Any])
         #expect(payload["profile"] as? String == "lightweight")
         #expect(payload["reduced_motion"] as? Bool == true)
+        #expect(payload["mouth_cues_enabled"] as? Bool == false)
     }
 
     @Test func serializesSuspendedSendsInSequenceOrder() async throws {
@@ -34,7 +35,7 @@ import MillerAvatarCore
         let sessionID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let bridge = BridgeController(sessionID: sessionID, caller: caller)
 
-        let first = Task { try await bridge.send(.configure(reducedMotion: false)) }
+        let first = Task { try await bridge.send(.configure(.init(reducedMotion: false))) }
         await caller.waitForFirstCall()
         let second = Task {
             try await bridge.send(.loadProfile(profilePayload()))
@@ -66,7 +67,8 @@ import MillerAvatarCore
             generationID: UUID(uuidString: "33333333-3333-4333-8333-333333333333"),
             phase: .speaking,
             playbackID: UUID(uuidString: "44444444-4444-4444-8444-444444444444"),
-            reducedMotion: true
+            reducedMotion: true,
+            mouthCuesEnabled: false
         )))
 
         let call = try #require(caller.calls.last)
@@ -82,6 +84,81 @@ import MillerAvatarCore
         #expect(payload["phase"] as? String == "speaking")
         #expect(payload["playback_id"] as? String == "44444444-4444-4444-8444-444444444444")
         #expect(payload["reduced_motion"] as? Bool == true)
+        #expect(payload["mouth_cues_enabled"] as? Bool == false)
+    }
+
+    @Test
+    func serializesEnrichedMouthCueWithAllVowels() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let bridge = BridgeController(sessionID: UUID(), caller: caller)
+        let payload = SetMouthPayload(
+            generationID: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
+            playbackID: UUID(uuidString: "44444444-4444-4444-8444-444444444444")!,
+            cueIndex: 12,
+            playbackOffsetMilliseconds: 612,
+            scalar: 0.62,
+            vowels: .init(aa: 0.1, ih: 0.2, ou: 0.3, ee: 0.4, oh: 0.5)
+        )
+
+        try await bridge.send(.setMouth(payload))
+
+        let call = try #require(caller.calls.last)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(call.commandJSON.utf8))
+                as? [String: Any]
+        )
+        let encoded = try #require(object["payload"] as? [String: Any])
+        let vowels = try #require(encoded["vowels"] as? [String: Any])
+        #expect(encoded["scalar"] as? Double == 0.62)
+        #expect(vowels["aa"] as? Double == 0.1)
+        #expect(vowels["ih"] as? Double == 0.2)
+        #expect(vowels["ou"] as? Double == 0.3)
+        #expect(vowels["ee"] as? Double == 0.4)
+        #expect(vowels["oh"] as? Double == 0.5)
+    }
+
+    @Test
+    func scalarOnlyMouthCueOmitsVowels() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let bridge = BridgeController(sessionID: UUID(), caller: caller)
+        let payload = SetMouthPayload(
+            generationID: UUID(),
+            playbackID: UUID(),
+            cueIndex: 1,
+            playbackOffsetMilliseconds: 0,
+            scalar: 0.5
+        )
+
+        try await bridge.send(.setMouth(payload))
+
+        let call = try #require(caller.calls.last)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(call.commandJSON.utf8))
+                as? [String: Any]
+        )
+        let encoded = try #require(object["payload"] as? [String: Any])
+        #expect(encoded["vowels"] == nil)
+    }
+
+    @Test
+    func serializesMouthPolicyInSetPolicy() async throws {
+        let caller = RecordingJavaScriptCaller()
+        let bridge = BridgeController(sessionID: UUID(), caller: caller)
+
+        try await bridge.send(.setPolicy(.init(
+            reducedMotion: true,
+            mouthCuesEnabled: false
+        )))
+
+        let call = try #require(caller.calls.last)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(call.commandJSON.utf8))
+                as? [String: Any]
+        )
+        #expect(object["type"] as? String == "set_policy")
+        let payload = try #require(object["payload"] as? [String: Any])
+        #expect(payload["reduced_motion"] as? Bool == true)
+        #expect(payload["mouth_cues_enabled"] as? Bool == false)
     }
 
     @Test func serializesSucceededWithGenerationAndWithoutPlaybackID() async throws {
@@ -120,7 +197,7 @@ import MillerAvatarCore
             prepared.append(sequence)
             dispatchCountAtPreparation.append(caller.calls.count)
         }
-        try await bridge.send(.configure(reducedMotion: false)) { sequence in
+        try await bridge.send(.configure(.init(reducedMotion: false))) { sequence in
             prepared.append(sequence)
             dispatchCountAtPreparation.append(caller.calls.count)
         }

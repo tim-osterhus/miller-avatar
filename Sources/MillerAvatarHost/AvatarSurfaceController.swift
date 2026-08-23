@@ -281,6 +281,11 @@ public final class AvatarSurfaceController {
         host.setReducedMotion(enabled)
     }
 
+    public func setMouthCuesEnabled(_ enabled: Bool) {
+        guard !isDisposed else { return }
+        host.setMouthCuesEnabled(enabled)
+    }
+
     public func retry() {
         guard !isDisposed else { return }
         host.retry()

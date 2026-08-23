@@ -67,6 +67,7 @@ public struct HostSnapshot: Equatable, Sendable {
     public let lastFailure: FailureCode?
     public let counters: HostCounters
     public let reducedMotion: Bool
+    public let mouthCuesEnabled: Bool
     public let retryAvailable: Bool
     public let profileRevision: UInt64?
     public let modelToken: UUID?
@@ -98,6 +99,7 @@ package final class HostOrchestrator {
     private var accountedMotionFailures: Set<MotionAccountingKey> = []
     private var accountedMotionSuccesses: Set<MotionAccountingKey> = []
     private var consecutiveFailures = 0
+    private var requestedMouthCuesEnabled = true
     private var projectionState = ProjectionState()
     private var visibilityState = VisibilityCoordinatorState(
         sessionID: nil,
@@ -121,6 +123,7 @@ package final class HostOrchestrator {
             lastFailure: nil,
             counters: .zero,
             reducedMotion: false,
+            mouthCuesEnabled: true,
             retryAvailable: false,
             profileRevision: nil,
             modelToken: nil,
@@ -248,6 +251,20 @@ package final class HostOrchestrator {
         execute(result.effects)
     }
 
+    package func setMouthCuesEnabled(_ enabled: Bool) {
+        let mutation = beginMutation()
+        let sessionID = snapshot.sessionID
+        requestedMouthCuesEnabled = enabled
+        let result = ProjectionReducer.reduce(
+            state: projectionState,
+            input: .setMouthCuesEnabled(enabled)
+        )
+        projectionState = result.state
+        update(mouthCuesEnabled: requestedMouthCuesEnabled)
+        guard isCurrentMutation(mutation), snapshot.sessionID == sessionID else { return }
+        execute(result.effects)
+    }
+
     package func project(_ payload: ProjectPhasePayload) {
         let mutation = beginMutation()
         let sessionID = snapshot.sessionID
@@ -343,7 +360,10 @@ package final class HostOrchestrator {
         unavailableMotionTokens = []
         hasProfileModelLoaded = false
         motionStatuses = [:]
-        projectionState = ProjectionState(reducedMotion: snapshot.reducedMotion)
+        projectionState = ProjectionState(
+            mouthCuesEnabled: requestedMouthCuesEnabled,
+            reducedMotion: snapshot.reducedMotion
+        )
         applyLifecycleFromAbsent(.startRenderer)
         guard isCurrentMutation(mutation),
               snapshot.lifecycle == .startingRenderer
@@ -385,7 +405,10 @@ package final class HostOrchestrator {
             guard snapshot.lifecycle == .startingRenderer,
                   deadline?.kind == .wrapper
             else { return }
-            driver.send(.configure(reducedMotion: snapshot.reducedMotion))
+            driver.send(.configure(.init(
+                reducedMotion: snapshot.reducedMotion,
+                mouthCuesEnabled: snapshot.mouthCuesEnabled
+            )))
             guard isCurrentMutation(mutation),
                   sessionID == snapshot.sessionID,
                   snapshot.lifecycle == .startingRenderer
@@ -638,15 +661,17 @@ package final class HostOrchestrator {
                     playbackID: payload.playbackID
                 ))
             case .applyMouth(let payload):
-                driver.send(.setMouth(
-                    generationID: payload.generationID,
-                    playbackID: payload.playbackID,
-                    cueIndex: payload.cueIndex,
-                    playbackOffsetMilliseconds: payload.playbackOffsetMilliseconds,
-                    scalar: payload.scalar
-                ))
+                driver.send(.setMouth(payload))
             case .setReducedMotion(let enabled):
-                driver.send(.setPolicy(reducedMotion: enabled))
+                driver.send(.setPolicy(.init(
+                    reducedMotion: enabled,
+                    mouthCuesEnabled: snapshot.mouthCuesEnabled
+                )))
+            case .setMouthCuesEnabled(let enabled):
+                driver.send(.setPolicy(.init(
+                    reducedMotion: snapshot.reducedMotion,
+                    mouthCuesEnabled: enabled
+                )))
             case .reset(let generationID, let reason):
                 driver.send(.reset(generationID: generationID, reason: reason))
             case .reconcile:
@@ -655,12 +680,9 @@ package final class HostOrchestrator {
                     generationID: projectionState.generationID,
                     phase: projectionState.phase,
                     playbackID: projectionState.playbackID,
-                    reducedMotion: projectionState.reducedMotion
+                    reducedMotion: projectionState.reducedMotion,
+                    mouthCuesEnabled: projectionState.mouthCuesEnabled
                 )))
-            case .setMouthCuesEnabled:
-                // Renderer policy wiring arrives with the host policy path
-                // (implementation-plan Task 5); no producer emits this yet.
-                break
             case .clearMouth, .stopContinuousMotion:
                 break
             }
@@ -684,6 +706,7 @@ package final class HostOrchestrator {
         lastFailure: OptionalUpdate<FailureCode> = .unchanged,
         counters: HostCounters? = nil,
         reducedMotion: Bool? = nil,
+        mouthCuesEnabled: Bool? = nil,
         retryAvailable: Bool? = nil,
         profileRevision: OptionalUpdate<UInt64> = .unchanged,
         modelToken: OptionalUpdate<UUID> = .unchanged,
@@ -700,6 +723,7 @@ package final class HostOrchestrator {
             lastFailure: lastFailure.value(or: snapshot.lastFailure),
             counters: counters ?? snapshot.counters,
             reducedMotion: reducedMotion ?? snapshot.reducedMotion,
+            mouthCuesEnabled: mouthCuesEnabled ?? snapshot.mouthCuesEnabled,
             retryAvailable: retryAvailable ?? snapshot.retryAvailable,
             profileRevision: profileRevision.value(or: snapshot.profileRevision),
             modelToken: modelToken.value(or: snapshot.modelToken),

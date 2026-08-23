@@ -23,6 +23,7 @@ private struct SyntheticProjectionState {
     var playbackID: UUID?
     var cueIndex: UInt64 = 0
     var playbackOffsetMilliseconds: UInt64 = 0
+    var vowelCycleIndex = 0
 
     mutating func project(phase: PresentationPhase) -> ProjectPhasePayload? {
         guard projectionSequence < BridgeContract.maximumSafeInteger else { return nil }
@@ -48,7 +49,10 @@ private struct SyntheticProjectionState {
         )
     }
 
-    mutating func mouth(scalar: Double) -> SetMouthPayload? {
+    mutating func mouth(
+        scalar: Double,
+        vowels: MouthVowelWeights? = nil
+    ) -> SetMouthPayload? {
         guard phase == .speaking,
               scalar.isFinite,
               (0...1).contains(scalar),
@@ -66,7 +70,28 @@ private struct SyntheticProjectionState {
             playbackID: playbackID,
             cueIndex: cueIndex,
             playbackOffsetMilliseconds: playbackOffsetMilliseconds,
-            scalar: scalar
+            scalar: scalar,
+            vowels: vowels
+        )
+    }
+
+    mutating func nextVowelCue() -> SetMouthPayload? {
+        let values: [MouthVowelWeights] = [
+            .init(aa: 1, ih: 0, ou: 0, ee: 0, oh: 0),
+            .init(aa: 0, ih: 1, ou: 0, ee: 0, oh: 0),
+            .init(aa: 0, ih: 0, ou: 1, ee: 0, oh: 0),
+            .init(aa: 0, ih: 0, ou: 0, ee: 1, oh: 0),
+            .init(aa: 0, ih: 0, ou: 0, ee: 0, oh: 1),
+        ]
+        let vowels = values[vowelCycleIndex % values.count]
+        vowelCycleIndex = (vowelCycleIndex + 1) % values.count
+        return mouth(scalar: 1, vowels: vowels)
+    }
+
+    mutating func clearMouth() -> SetMouthPayload? {
+        mouth(
+            scalar: 0,
+            vowels: .init(aa: 0, ih: 0, ou: 0, ee: 0, oh: 0)
         )
     }
 
@@ -80,6 +105,7 @@ private struct SyntheticProjectionState {
         playbackID = nil
         cueIndex = 0
         playbackOffsetMilliseconds = 0
+        vowelCycleIndex = 0
     }
 }
 
@@ -101,6 +127,21 @@ final class DiagnosticsViewController: NSViewController {
     private let selectButton = FocusableButton(title: "Select VRM…", target: nil, action: nil)
     private let phasePopup = FocusablePopUpButton()
     private let mouthSlider = FocusableSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let mouthCuesEnabled = FocusableButton(
+        checkboxWithTitle: "Mouth Cues",
+        target: nil,
+        action: nil
+    )
+    private let mouthCycleButton = FocusableButton(
+        title: "Cycle Vowels",
+        target: nil,
+        action: nil
+    )
+    private let clearMouthButton = FocusableButton(
+        title: "Clear Mouth",
+        target: nil,
+        action: nil
+    )
     private let reducedMotion = FocusableButton(
         checkboxWithTitle: "Reduced Motion",
         target: nil,
@@ -237,6 +278,15 @@ final class DiagnosticsViewController: NSViewController {
         mouthSlider.numberOfTickMarks = 5
         mouthSlider.target = self
         mouthSlider.action = #selector(changeMouth)
+        mouthCuesEnabled.state = .on
+        mouthCuesEnabled.target = self
+        mouthCuesEnabled.action = #selector(changeMouthCuesEnabled)
+        mouthCycleButton.target = self
+        mouthCycleButton.action = #selector(cycleVowels)
+        mouthCycleButton.bezelStyle = .rounded
+        clearMouthButton.target = self
+        clearMouthButton.action = #selector(clearMouth)
+        clearMouthButton.bezelStyle = .rounded
         reducedMotion.target = self
         reducedMotion.action = #selector(changeReducedMotion)
 
@@ -250,7 +300,8 @@ final class DiagnosticsViewController: NSViewController {
 
         let controls = NSGridView(views: [
             [startButton, selectButton, phasePopup],
-            [reducedMotion, mouthSlider, resetButton],
+            [reducedMotion, mouthCuesEnabled, mouthSlider],
+            [mouthCycleButton, clearMouthButton, resetButton],
             [hideButton, occludeButton, resumeButton],
             [disposeButton, NSView(), NSView()],
         ])
@@ -333,7 +384,10 @@ final class DiagnosticsViewController: NSViewController {
         selectButton.nextKeyView = phasePopup
         phasePopup.nextKeyView = mouthSlider
         mouthSlider.nextKeyView = reducedMotion
-        reducedMotion.nextKeyView = hideButton
+        reducedMotion.nextKeyView = mouthCuesEnabled
+        mouthCuesEnabled.nextKeyView = mouthCycleButton
+        mouthCycleButton.nextKeyView = clearMouthButton
+        clearMouthButton.nextKeyView = hideButton
         hideButton.nextKeyView = occludeButton
         occludeButton.nextKeyView = resumeButton
         resumeButton.nextKeyView = resetButton
@@ -341,6 +395,7 @@ final class DiagnosticsViewController: NSViewController {
         disposeButton.nextKeyView = startButton
         nativeFocusViews = [
             startButton, selectButton, phasePopup, mouthSlider, reducedMotion,
+            mouthCuesEnabled, mouthCycleButton, clearMouthButton,
             hideButton, occludeButton, resumeButton, resetButton, disposeButton,
         ]
     }
@@ -402,6 +457,13 @@ final class DiagnosticsViewController: NSViewController {
         phaseBadgeLabel.stringValue = badgePhase.uppercased()
         phaseBadgeLabel.setAccessibilityValue(badgePhase)
         reducedMotion.state = snapshot.reducedMotion ? .on : .off
+        mouthCuesEnabled.state = snapshot.mouthCuesEnabled ? .on : .off
+        mouthSlider.isEnabled = snapshot.mouthCuesEnabled
+        mouthCycleButton.isEnabled = snapshot.mouthCuesEnabled
+            && snapshot.lifecycle == .live
+            && snapshot.phase == .speaking
+        clearMouthButton.isEnabled = snapshot.lifecycle == .live
+            && snapshot.phase == .speaking
         if snapshot.lifecycle != .live || snapshot.phase != .speaking || snapshot.reducedMotion {
             mouthSlider.doubleValue = 0
         }
@@ -443,6 +505,10 @@ final class DiagnosticsViewController: NSViewController {
         surfaceController.setReducedMotion(reducedMotion.state == .on)
     }
 
+    @objc private func changeMouthCuesEnabled() {
+        surfaceController.setMouthCuesEnabled(mouthCuesEnabled.state == .on)
+    }
+
     @objc private func simulateHidden() { surfaceController.setVisibility(.hidden) }
     @objc private func simulateOccluded() { surfaceController.setVisibility(.occluded) }
     @objc private func resumeVisible() { surfaceController.setVisibility(.visible) }
@@ -462,6 +528,17 @@ final class DiagnosticsViewController: NSViewController {
         guard let payload = syntheticProjection.mouth(scalar: mouthSlider.doubleValue) else {
             return
         }
+        surfaceController.setMouth(payload)
+    }
+
+    @objc private func cycleVowels() {
+        guard let payload = syntheticProjection.nextVowelCue() else { return }
+        surfaceController.setMouth(payload)
+    }
+
+    @objc private func clearMouth() {
+        mouthSlider.doubleValue = 0
+        guard let payload = syntheticProjection.clearMouth() else { return }
         surfaceController.setMouth(payload)
     }
     @objc private func disposeRenderer() { surfaceController.dispose() }

@@ -15,7 +15,7 @@ import MillerAvatarCore
         #expect(host.snapshot.lifecycle == .startingRenderer)
         #expect(host.snapshot.fallbackVisible)
         driver.observe(session, .wrapperReady)
-        #expect(driver.commands == [.configure(reducedMotion: false)])
+        #expect(driver.commands == [.configure(.init(reducedMotion: false))])
         driver.observe(session, .rendererReady)
         #expect(host.snapshot.lifecycle == .rendererReady)
         let assetToken = UUID()
@@ -543,10 +543,130 @@ import MillerAvatarCore
         host.setReducedMotion(true)
         host.setVisibility(.hidden)
 
-        #expect(driver.commands.contains(.setPolicy(reducedMotion: true)))
+        #expect(driver.commands.contains(.setPolicy(.init(
+            reducedMotion: true,
+            mouthCuesEnabled: true
+        ))))
         #expect(driver.commands.contains(.setVisibility(.hidden)))
         driver.observe(session, .suspended(visibility: .hidden, counters: .zero))
         #expect(host.snapshot.lifecycle == .liveSuspended)
+    }
+
+    @Test
+    func mouthPolicyFlowsThroughConfigureSetPolicyAndDoesNotReplayAnOldCue() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+        host.startRenderer()
+        let session = try! #require(host.snapshot.sessionID)
+        driver.observe(session, .wrapperReady)
+        driver.observe(session, .rendererReady)
+        let assetToken = UUID()
+        host.load(assetToken: assetToken)
+        driver.observeFirstFrame(session, assetToken: assetToken)
+
+        let generation = UUID()
+        let playback = UUID()
+        host.project(.init(
+            projectionSequence: 1,
+            generationID: generation,
+            phase: .speaking,
+            playbackID: playback
+        ))
+        host.setMouth(.init(
+            generationID: generation,
+            playbackID: playback,
+            cueIndex: 1,
+            playbackOffsetMilliseconds: 0,
+            scalar: 0.75,
+            vowels: .init(aa: 0.75, ih: 0, ou: 0, ee: 0, oh: 0)
+        ))
+        let cueCount = driver.commands.reduce(into: 0) { count, command in
+            if case .setMouth = command { count += 1 }
+        }
+
+        host.setMouthCuesEnabled(false)
+        #expect(!host.snapshot.mouthCuesEnabled)
+        #expect(driver.commands.contains(.setPolicy(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        ))))
+
+        host.setMouthCuesEnabled(true)
+        #expect(host.snapshot.mouthCuesEnabled)
+        #expect(driver.commands.last == .setPolicy(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: true
+        )))
+        #expect(driver.commands.reduce(into: 0) { count, command in
+            if case .setMouth = command { count += 1 }
+        } == cueCount)
+    }
+
+    @Test
+    func retryAndReplacementReceiveTheLatestMouthPolicy() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+
+        host.startRenderer()
+        host.setMouthCuesEnabled(false)
+        let first = try! #require(host.snapshot.sessionID)
+        driver.observe(first, .wrapperReady)
+        #expect(driver.commands.contains(.configure(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        ))))
+        driver.observe(first, .failed(.rendererUnavailable))
+
+        host.retry()
+        let second = try! #require(host.snapshot.sessionID)
+        driver.observe(second, .wrapperReady)
+        #expect(driver.commands.last == .configure(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        )))
+    }
+
+    @Test
+    func mouthPolicyChangedAfterFailureSurvivesTerminationAndReconcilesAfterSuspension() {
+        let driver = RecordingHostDriver()
+        let host = HostOrchestrator(driver: driver)
+
+        host.startRenderer()
+        let first = try! #require(host.snapshot.sessionID)
+        driver.observe(first, .wrapperReady)
+        driver.observe(first, .rendererReady)
+        host.load(assetToken: UUID())
+        let token = try! #require(driver.installedTokens.last)
+        driver.observeFirstFrame(first, assetToken: token)
+        host.setMouthCuesEnabled(true)
+
+        driver.observe(first, .failed(.rendererUnavailable))
+        #expect(host.snapshot.lifecycle == .failed(.rendererUnavailable))
+        host.setMouthCuesEnabled(false)
+        #expect(!host.snapshot.mouthCuesEnabled)
+
+        host.retry()
+        let second = try! #require(host.snapshot.sessionID)
+        driver.observe(second, .wrapperReady)
+        #expect(driver.commands.last == .configure(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        )))
+        driver.observe(second, .rendererReady)
+        host.load(assetToken: UUID())
+        let secondToken = try! #require(driver.installedTokens.last)
+        driver.observeFirstFrame(second, assetToken: secondToken)
+        driver.observe(second, .suspended(visibility: .occluded, counters: .zero))
+        driver.observe(second, .resumed(counters: .zero))
+
+        #expect(driver.commands.last == .reconcilePresentation(.init(
+            lastProjectionSequence: nil,
+            generationID: nil,
+            phase: .idle,
+            playbackID: nil,
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        )))
     }
 
     @Test func diagnosticPhaseMouthResetAndFailureUseClosedCommands() {
@@ -585,7 +705,11 @@ import MillerAvatarCore
             }
         })
         #expect(driver.commands.contains { command in
-            if case .setMouth(_, _, 1, 0, 0.75) = command { true } else { false }
+            if case .setMouth(let payload) = command {
+                payload.cueIndex == 1
+                    && payload.playbackOffsetMilliseconds == 0
+                    && payload.scalar == 0.75
+            } else { false }
         })
         #expect(driver.commands.contains(.reset(generationID: nil, reason: .operator)))
         host.simulateRendererFailure()
@@ -622,7 +746,8 @@ import MillerAvatarCore
             generationID: nil,
             phase: .idle,
             playbackID: nil,
-            reducedMotion: true
+            reducedMotion: true,
+            mouthCuesEnabled: true
         )))
         #expect(host.snapshot.phase == .idle)
     }
@@ -667,7 +792,8 @@ import MillerAvatarCore
             generationID: generation,
             phase: .speaking,
             playbackID: playback,
-            reducedMotion: false
+            reducedMotion: false,
+            mouthCuesEnabled: true
         )))
         #expect(driver.commands.filter {
             if case .setMouth = $0 { return true }

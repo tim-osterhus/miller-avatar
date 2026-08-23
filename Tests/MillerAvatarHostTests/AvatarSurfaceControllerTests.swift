@@ -31,6 +31,35 @@ import Testing
         #expect(timer.interval == 0.25)
     }
 
+    @Test
+    func mouthPolicyUpdatesTheLiveRendererWithoutRestartingIt() throws {
+        let driver = RecordingSurfaceDriver()
+        let surface = AvatarSurfaceController(
+            driver: driver,
+            timer: RecordingSurfaceTimer()
+        )
+        surface.start()
+        let sessionID = try #require(driver.sessionID)
+        driver.emitObservation(.wrapperReady, for: sessionID)
+        driver.emitObservation(.rendererReady, for: sessionID)
+
+        surface.setMouthCuesEnabled(false)
+        #expect(!surface.snapshot.mouthCuesEnabled)
+        #expect(driver.startCount == 1)
+        #expect(driver.commands.contains(.setPolicy(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: false
+        ))))
+
+        surface.setMouthCuesEnabled(true)
+        #expect(surface.snapshot.mouthCuesEnabled)
+        #expect(driver.startCount == 1)
+        #expect(driver.commands.last == .setPolicy(.init(
+            reducedMotion: false,
+            mouthCuesEnabled: true
+        )))
+    }
+
     @Test func emptySurfaceHasNoSnapshotTransitionUntilOrchestratorChanges() {
         let driver = RecordingSurfaceDriver()
         let timer = RecordingSurfaceTimer()

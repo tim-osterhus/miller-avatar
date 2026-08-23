@@ -8,7 +8,7 @@ package enum BridgeControllerError: Error, Equatable, Sendable {
 }
 
 package enum BridgeCommand: Equatable, Sendable {
-    case configure(reducedMotion: Bool)
+    case configure(ConfigurePayload)
     case loadProfile(LoadProfilePayload)
     case projectPhase(
         sequence: UInt64,
@@ -18,14 +18,8 @@ package enum BridgeCommand: Equatable, Sendable {
     )
     case reconcilePresentation(ReconcilePresentationPayload)
     case setVisibility(PresentationVisibility)
-    case setPolicy(reducedMotion: Bool)
-    case setMouth(
-        generationID: UUID,
-        playbackID: UUID,
-        cueIndex: UInt64,
-        playbackOffsetMilliseconds: UInt64,
-        scalar: Double
-    )
+    case setPolicy(SetPolicyPayload)
+    case setMouth(SetMouthPayload)
     case reset(generationID: UUID?, reason: ResetReason)
     case dispose(DisposalReason)
 }
@@ -129,10 +123,11 @@ package final class BridgeController {
         _ command: BridgeCommand
     ) throws -> (type: String, payload: [String: Any]) {
         switch command {
-        case .configure(let reducedMotion):
+        case .configure(let payload):
             return ("configure", [
-                "profile": "lightweight",
-                "reduced_motion": reducedMotion,
+                "profile": payload.profile,
+                "reduced_motion": payload.reducedMotion,
+                "mouth_cues_enabled": payload.mouthCuesEnabled,
             ])
         case .loadProfile(let profile):
             guard profile.profileRevision > 0,
@@ -200,32 +195,41 @@ package final class BridgeController {
                     $0.uuidString.lowercased()
                 } ?? NSNull(),
                 "reduced_motion": payload.reducedMotion,
+                "mouth_cues_enabled": payload.mouthCuesEnabled,
             ])
         case .setVisibility(let visibility):
             return ("set_visibility", ["visibility": visibility.rawValue])
-        case .setPolicy(let reducedMotion):
-            return ("set_policy", ["reduced_motion": reducedMotion])
-        case .setMouth(
-            let generationID,
-            let playbackID,
-            let cueIndex,
-            let playbackOffsetMilliseconds,
-            let scalar
-        ):
-            guard cueIndex > 0,
-                  cueIndex <= BridgeContract.maximumSafeInteger,
-                  playbackOffsetMilliseconds <= BridgeContract.maximumSafeInteger,
-                  playbackOffsetMilliseconds <= 86_400_000,
-                  scalar.isFinite,
-                  (0...1).contains(scalar)
-            else { throw BridgeControllerError.invalidCommand }
-            return ("set_mouth", [
-                "generation_id": generationID.uuidString.lowercased(),
-                "playback_id": playbackID.uuidString.lowercased(),
-                "cue_index": cueIndex,
-                "playback_offset_ms": playbackOffsetMilliseconds,
-                "scalar": scalar,
+        case .setPolicy(let payload):
+            return ("set_policy", [
+                "reduced_motion": payload.reducedMotion,
+                "mouth_cues_enabled": payload.mouthCuesEnabled,
             ])
+        case .setMouth(let payload):
+            guard payload.cueIndex > 0,
+                  payload.cueIndex <= BridgeContract.maximumSafeInteger,
+                  payload.playbackOffsetMilliseconds <= BridgeContract.maximumSafeInteger,
+                  payload.playbackOffsetMilliseconds <= 86_400_000,
+                  payload.scalar.isFinite,
+                  (0...1).contains(payload.scalar),
+                  payload.vowels?.isValid ?? true
+            else { throw BridgeControllerError.invalidCommand }
+            var payloadObject: [String: Any] = [
+                "generation_id": payload.generationID.uuidString.lowercased(),
+                "playback_id": payload.playbackID.uuidString.lowercased(),
+                "cue_index": payload.cueIndex,
+                "playback_offset_ms": payload.playbackOffsetMilliseconds,
+                "scalar": payload.scalar,
+            ]
+            if let vowels = payload.vowels {
+                payloadObject["vowels"] = [
+                    "aa": vowels.aa,
+                    "ih": vowels.ih,
+                    "ou": vowels.ou,
+                    "ee": vowels.ee,
+                    "oh": vowels.oh,
+                ]
+            }
+            return ("set_mouth", payloadObject)
         case .reset(let generationID, let reason):
             guard generationID != nil || reason == .operator else {
                 throw BridgeControllerError.invalidCommand

@@ -20,6 +20,7 @@ struct WindowControllerReplacementTests {
         first.driver.emit(.rendererReady)
         first.surface.setVisibility(.occluded)
         first.surface.setReducedMotion(true)
+        first.surface.setMouthCuesEnabled(false)
 
         let selection = makeAsset()
         controller.prepareDiagnosticSelection(selection)
@@ -32,9 +33,11 @@ struct WindowControllerReplacementTests {
         #expect(first.surface.view.superview == nil)
         #expect(replacement.surface.snapshot.visibility == .occluded)
         #expect(replacement.surface.snapshot.reducedMotion)
+        #expect(!replacement.surface.snapshot.mouthCuesEnabled)
         #expect(replacement.driver.wasAttachedAtStart == true)
         #expect(replacement.driver.snapshotAtStart?.visibility == .occluded)
         #expect(replacement.driver.snapshotAtStart?.reducedMotion == true)
+        #expect(replacement.driver.snapshotAtStart?.mouthCuesEnabled == false)
         #expect(replacement.timer.startCount == 1)
         #expect(replacement.driver.installedTokens.isEmpty)
 
