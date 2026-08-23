@@ -454,7 +454,7 @@ signed-boundary probe launched the diagnostic app:
 - Web type checking: PASS. Web test compilation and execution: PASS, 116/116.
   The exact generated-module closure contains 20 emitted inputs, including the
   package-owned `src/mouth-controller.ts`.
-- Swift package tests: PASS, 350/350.
+- Swift package tests: PASS, 351/351.
 - `scripts/verify-dependencies.sh`: PASS with 65 locked packages and 20 emitted
   inputs.
 - `scripts/test.sh`: PASS, including all Web, Swift, shell-contract,
