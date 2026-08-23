@@ -520,6 +520,61 @@ import UniformTypeIdentifiers
         ).isRejected)
     }
 
+    @Test func admitsFiniteMorphNormalDeltasOutsideUnitVectorRange() async throws {
+        let fixture = morphDeltaDocument(semantic: "NORMAL", values: [
+            2, -1.5, 0,
+            0, 0, 0,
+            -1.25, 1.75, 0.5,
+        ])
+
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: fixture.document,
+                binary: fixture.binary
+            )
+        ).isAdmitted)
+    }
+
+    @Test func morphDeltasPreservePositionEnvelopeAndAdmitVec3Tangents() async throws {
+        let excessivePosition = morphDeltaDocument(semantic: "POSITION", values: [
+            10_001, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+        ])
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: excessivePosition.document,
+                binary: excessivePosition.binary
+            )
+        ).isRejected)
+
+        let tangent = morphDeltaDocument(semantic: "TANGENT", values: [
+            1.5, -1.5, 0,
+            0, 0, 0,
+            -2, 2, 0.5,
+        ])
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: tangent.document,
+                binary: tangent.binary
+            )
+        ).isAdmitted)
+    }
+
+    @Test func rejectsNonfiniteMorphDeltas() async throws {
+        let fixture = morphDeltaDocument(semantic: "NORMAL", values: [
+            .nan, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+        ])
+        #expect(await AssetAdmission().admit(
+            try SyntheticGLBFactory.make(
+                document: fixture.document,
+                binary: fixture.binary
+            )
+        ).isRejected)
+    }
+
     @Test func validatesJointIndicesAgainstEachNodeReferencedSkin() async throws {
         let valid = skinnedDocument(jointIndex: 0)
         #expect(await AssetAdmission().admit(
@@ -1474,6 +1529,54 @@ private func triangleDocument(
         binaryByteCount: binary.count
     )
     return (document, binary)
+}
+
+private func morphDeltaDocument(
+    semantic: String,
+    values: [Float]
+) -> (document: [String: Any], binary: Data) {
+    precondition(values.count == 9)
+    var binary = Data()
+    for value: Float in [
+        0, 0, 0,
+        1, 0, 0,
+        0, 1, 0,
+    ] + values {
+        binary.append(littleEndian: value.bitPattern)
+    }
+    return (
+        SyntheticGLBFactory.minimalDocument(
+            extra: [
+                "buffers": [["byteLength": binary.count]],
+                "bufferViews": [
+                    ["buffer": 0, "byteOffset": 0, "byteLength": 36],
+                    ["buffer": 0, "byteOffset": 36, "byteLength": 36],
+                ],
+                "accessors": [
+                    [
+                        "bufferView": 0,
+                        "componentType": 5126,
+                        "count": 3,
+                        "type": "VEC3",
+                    ],
+                    [
+                        "bufferView": 1,
+                        "componentType": 5126,
+                        "count": 3,
+                        "type": "VEC3",
+                    ],
+                ],
+                "meshes": [[
+                    "primitives": [[
+                        "attributes": ["POSITION": 0],
+                        "targets": [[semantic: 1]],
+                    ]],
+                ]],
+            ],
+            binaryByteCount: binary.count
+        ),
+        binary
+    )
 }
 
 private func springDocument() -> [String: Any] {

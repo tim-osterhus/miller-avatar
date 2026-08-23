@@ -1112,7 +1112,7 @@ private struct SemanticValidator {
                             morphValues,
                             maximum: budget.morphScalarValues
                         )
-                        try validateAttribute(accessor, semantic: semantic, jointLimit: nil)
+                        try validateMorphTargetAttribute(accessor, semantic: semantic)
                     }
                 }
                 if let material = primitive["material"] {
@@ -1186,6 +1186,25 @@ private struct SemanticValidator {
                     throw AdmissionError.invalid
                 }
             }
+        }
+    }
+
+    private func validateMorphTargetAttribute(
+        _ accessor: AccessorInfo,
+        semantic: String
+    ) throws {
+        guard accessor.componentType == 5126,
+              accessor.componentCount == 3
+        else {
+            throw AdmissionError.invalid
+        }
+        switch semantic {
+        case "POSITION":
+            try validateAttribute(accessor, semantic: semantic, jointLimit: nil)
+        case "NORMAL", "TANGENT":
+            return
+        default:
+            throw AdmissionError.invalid
         }
     }
 
