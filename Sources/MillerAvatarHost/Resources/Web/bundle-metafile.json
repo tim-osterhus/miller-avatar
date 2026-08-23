@@ -401,7 +401,7 @@
       "format": "esm"
     },
     "src/bridge.ts": {
-      "bytes": 31754,
+      "bytes": 32076,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -437,7 +437,7 @@
       "format": "esm"
     },
     "src/contract.ts": {
-      "bytes": 6405,
+      "bytes": 7083,
       "imports": [],
       "format": "esm"
     },
@@ -565,13 +565,18 @@
       ],
       "format": "esm"
     },
+    "src/mouth-controller.ts": {
+      "bytes": 2513,
+      "imports": [],
+      "format": "esm"
+    },
     "src/presentation.ts": {
-      "bytes": 8712,
+      "bytes": 10408,
       "imports": [],
       "format": "esm"
     },
     "src/renderer.ts": {
-      "bytes": 27397,
+      "bytes": 31700,
       "imports": [
         {
           "path": "node_modules/three/build/three.module.js",
@@ -592,6 +597,11 @@
           "path": "src/motion-loader.ts",
           "kind": "import-statement",
           "original": "./motion-loader.js"
+        },
+        {
+          "path": "src/mouth-controller.ts",
+          "kind": "import-statement",
+          "original": "./mouth-controller.js"
         },
         {
           "path": "src/motion-controller.ts",
@@ -623,7 +633,7 @@
       "format": "esm"
     },
     "src/validation.ts": {
-      "bytes": 31925,
+      "bytes": 34525,
       "imports": [
         {
           "path": "src/contract.ts",
@@ -636,7 +646,7 @@
   },
   "outputs": {
     "app.js": {
-      "bytes": 827499,
+      "bytes": 831332,
       "inputs": {
         "node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js": {
           "bytesInOutput": 31826
@@ -657,13 +667,13 @@
           "bytesInOutput": 991
         },
         "src/bridge.ts": {
-          "bytesInOutput": 15631
+          "bytesInOutput": 15731
         },
         "src/camera.ts": {
           "bytesInOutput": 1434
         },
         "src/contract.ts": {
-          "bytesInOutput": 1276
+          "bytesInOutput": 1306
         },
         "src/disposal.ts": {
           "bytesInOutput": 402
@@ -683,17 +693,20 @@
         "src/motion-loader.ts": {
           "bytesInOutput": 5636
         },
+        "src/mouth-controller.ts": {
+          "bytesInOutput": 745
+        },
         "src/presentation.ts": {
-          "bytesInOutput": 4149
+          "bytesInOutput": 4766
         },
         "src/renderer.ts": {
-          "bytesInOutput": 12481
+          "bytesInOutput": 13825
         },
         "src/runtime.ts": {
           "bytesInOutput": 545
         },
         "src/validation.ts": {
-          "bytesInOutput": 15073
+          "bytesInOutput": 15986
         }
       }
     }

@@ -61,16 +61,16 @@
       "sha256": "bdb5f63053966caf87c1549a8b3904384a83a80088646b94bbaad08341fa7aa5"
     },
     "Web/src/bridge.ts": {
-      "bytes": 31754,
-      "sha256": "c83443fb02f0fec5e1b75e20e5756eac54d1ea91e79a05b56fe5b5e09bc38cf8"
+      "bytes": 32076,
+      "sha256": "f170171dbf627135f11aaa6316d6eb54313710127735ff744b89cc1700722c60"
     },
     "Web/src/camera.ts": {
       "bytes": 4619,
       "sha256": "b13c90185cbec5bba523692dc1737f79b6ba88312d3921ce6d75bf4c97ce72ba"
     },
     "Web/src/contract.ts": {
-      "bytes": 6405,
-      "sha256": "f4ba2cc5f47e918b73ca045149c65b8a4fc80fdd0899e2c37f1c933a42823736"
+      "bytes": 7083,
+      "sha256": "7e1ab65801ee2ec4d3a89c51a50ccc7249958878a4751ebee219f0672868307a"
     },
     "Web/src/disposal.ts": {
       "bytes": 920,
@@ -100,13 +100,17 @@
       "bytes": 14476,
       "sha256": "707b13a07f3ebdd2517654d795a56530524f3792481573c5ade10d210066b7ce"
     },
+    "Web/src/mouth-controller.ts": {
+      "bytes": 2513,
+      "sha256": "32140c3da1f09862515efdb6a4e575dfd8fd60f46b7f8c893f9fabc609033ef1"
+    },
     "Web/src/presentation.ts": {
-      "bytes": 8712,
-      "sha256": "06649d64b3d6fd4ec77f0d76d52d825440fe3364cc450a9d35feb51edcac9efb"
+      "bytes": 10408,
+      "sha256": "7a0a76166fdf725a122eca75ff9c6008860f68a61595685f9cb6c6eafca7d831"
     },
     "Web/src/renderer.ts": {
-      "bytes": 27397,
-      "sha256": "92470b1442b431af8a615c1abd123c77fbc5bb2343fc638cff80f367ce9370e2"
+      "bytes": 31700,
+      "sha256": "3131b2f459383ee2b12de25452749c12f2f78d3e57be7197167a0c01ded82f3e"
     },
     "Web/src/runtime.ts": {
       "bytes": 1466,
@@ -117,19 +121,19 @@
       "sha256": "3164ff84bd29e3dd67896b21094049596ecf02c9ea76a3546cab3fd51304a4ff"
     },
     "Web/src/validation.ts": {
-      "bytes": 31925,
-      "sha256": "b90770f4953206123f09507b2e7470ece8920f9f80e47d662d571d1a6dbb9fda"
+      "bytes": 34525,
+      "sha256": "41507165ff2ba45d99e79e2d71c70fa14b9c079505cdb49d167b86cd377d057f"
     }
   },
   "files": {
     "app.js": {
-      "bytes": 827499,
-      "sha256": "008e39a78629c610f4c17a631d35dfa44b50ff07adb26407b39570a7f6d7b1f5",
+      "bytes": 831332,
+      "sha256": "7fb0012536d51ad8aa3291c227f16971fa4dc4894b705d235cc33ad735a3a08c",
       "mime": "text/javascript; charset=utf-8"
     },
     "bundle-metafile.json": {
-      "bytes": 19515,
-      "sha256": "a8caf87e00feaa3257f2c6517fb2aaf0af86e9601621a0188fb92bda619d0e62",
+      "bytes": 19849,
+      "sha256": "7668c64aef579bd29a0fedc3670b653e71aad1402100b789b5208ed64610c9af",
       "mime": "application/json; charset=utf-8"
     },
     "index.html": {
@@ -143,5 +147,5 @@
       "mime": "text/css; charset=utf-8"
     }
   },
-  "contract_sha256": "6819fcc5b3193c12c264f3b0d6b5b604e3267bcebcdf6e198c93c6720403e7a3"
+  "contract_sha256": "0d1c499fb5fea17b81b2930022afe41013c46c84456dabd8c84178979bcd69ef"
 }
