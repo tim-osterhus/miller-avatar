@@ -10,6 +10,11 @@ below describe that earlier checkpoint, not the current release state. The
 later checkpoint sections preserve each correction in order; **Alpha.8
 repeating-motion stabilization** describes the current package checkpoint.
 
+The Alpha.8 sections remain historical evidence for the published v0.1.0
+source checkpoint. The final section records the planned combined v0.1.1
+release scope; it is not a claim that that tag has been published or that its
+owner-visible gates have already passed.
+
 ## Closed scope
 
 - Runtime dependency: exact `@pixiv/three-vrm-animation@3.5.5`, alongside the
@@ -332,3 +337,65 @@ placement, dynamic surface resizing, profile replacement, retry, Reduced
 Motion, Basic Chat, and Live Voice behavior. Those observations complete the
 source-package v0.1 gate; signing and notarization remain responsibilities of
 consuming applications.
+
+## v0.1.1 combined release qualification
+
+Status: `PLANNED_COMBINED_LIP_SYNC_AND_HIGH_QUALITY`
+
+The next package release is one immutable `v0.1.1` containing both optional
+played-output lip sync and High Quality VRM model admission. There is no
+separate High Quality package tag. The release review and full package gate
+must cover the existing lip-sync tranche together with HQ1–HQ3 before the tag
+is published.
+
+### High Quality admission scope
+
+Lightweight remains the default and the compatibility meaning of legacy
+profiles. High Quality is selected per model import and recorded in the
+existing `performanceProfile` field. The recorded mode remains authoritative
+for capture, admission, persisted validation, materialization, reload, retry,
+and content-change re-admission. Changing the next-import default does not
+reclassify an existing profile.
+
+The High Quality envelope keeps three explicit finite outer ceilings. Captured
+GLB bytes, buffer bytes, and accessor-referenced bytes each allow exactly 2.5
+GiB (2,684,354,560 bytes). Other aggregate byte/count/geometry ceilings use a
+20x posture relative to Lightweight. One image dimension uses a 4x posture,
+with a 32,768-pixel limit instead of 8,192. JSON nesting and the
+renderer-supported skin layout remain integrity/compatibility constraints.
+Lightweight keeps its five-second preflight deadline. High Quality has no fixed
+preflight deadline. Both modes retain explicit cancellation.
+
+The larger envelope does not bypass safety checks. Both modes still reject
+malformed or non-VRM-1 GLB input, external resources, invalid offsets, ranges,
+and cross-references. They also reject non-finite values, checked arithmetic
+overflow, unsupported renderer shapes, security-scope or file-identity/digest
+failures, and explicit cancellation.
+
+A model can fit the policy and still fail on a real machine. Address-space,
+native allocation, GPU, and renderer limits remain real runtime constraints.
+Such a failure remains a load/resource failure. It may follow the existing
+retry and quarantine path instead of silently falling back to Lightweight.
+
+VRMA admission is unchanged and remains under its existing Lightweight budget
+in either model mode. VRMA remains skeletal-only and cannot own or restore
+expression or mouth presentation.
+
+### Optional lip-sync scope
+
+The package keeps scalar-only mouth cues compatible and accepts a complete
+five-vowel value in the closed order `aa`, `ih`, `ou`, `ee`, `oh`. Miller's
+private Live peer derives optional cues only from played remote output. Raw
+audio, FFT/spectral data, transcript text, and provider values do not cross the
+Avatar bridge, and Miller Avatar does not acquire microphone audio. Partial
+expression models use the documented fallback. Qualification may report a
+responsive five-vowel approximation. It must not claim phoneme accuracy.
+
+### Evidence boundary
+
+The combined release is not qualified by this historical record until the
+HQ1–HQ3 source/headless checks, package release-discipline checks, and the
+optional lip-sync review complete. Private model and audio qualification remains
+owner-visible evidence only. No private model, motion, audio, transcript,
+source path, or identifying metadata may enter this repository, its bundle, or
+this public record.

@@ -10,6 +10,11 @@ public APIs. Miller now consumes those package products as an optional,
 in-process presentation feature. The package remains independently usable and
 does not depend on Miller assistant state.
 
+For the package boundary, start with [`docs/architecture.md`](docs/architecture.md);
+from a toolchain-ready checkout, `swift test` runs the source package tests.
+Bundle regeneration is a maintainer-only offline step described in
+[`docs/development.md`](docs/development.md).
+
 The caller owns its session, request, generation, playback, projection, and cue
 identity values. It supplies the semantic payloads used for projection and
 mouth cues; the package validates ordering and fences stale renderer callbacks
@@ -53,6 +58,49 @@ pre-populated offline cache; a clean checkout alone is insufficient.
 
 The admitted model envelope is VRM 1.0 with user-supplied models. User-supplied
 VRMA support is bounded to a local motion library in each profile.
+
+## Import quality and the combined v0.1.1 release
+
+Lightweight remains the recommended default for VRM model import. It retains the
+current tested admission table in `docs/asset-policy.md`, and existing profile
+records continue to mean Lightweight. High Quality is an explicit opt-in for a
+model import, not a silent relaxation of the default.
+
+The planned combined `v0.1.1` package release adds the High Quality profile
+mode alongside optional lip sync. High Quality defines three explicit outer
+byte ceilings. Captured GLB bytes, buffer bytes, and accessor-referenced bytes
+are each capped at exactly **2.5 GiB (2,684,354,560 bytes)**. Other aggregate
+byte, count, and geometry ceilings use a 20x posture relative to Lightweight.
+One image dimension is raised 4x, from 8,192 to 32,768 pixels.
+JSON nesting and the renderer's supported skin-attribute layout remain
+unchanged. High Quality has no fixed five-second preflight deadline, but
+explicit cancellation remains active.
+
+The larger envelope does not remove admission safety. Both modes still reject
+non-VRM-1 or malformed GLB input, external resources, invalid indices, ranges,
+and cross-references. They also reject non-finite values, checked-arithmetic
+overflow, unsupported renderer shapes, failed security scope, changed file
+identity, and explicit cancellation.
+
+High Quality does not promise that every model fits every machine.
+Address-space, native allocation, GPU, and renderer failures remain real load
+failures below the policy ceiling. Those failures can still quarantine a
+profile.
+
+The selected mode is recorded with the profile in the existing
+`performanceProfile` field. Reload, retry, materialization, and content-change
+validation use that recorded mode. Changing the next-import default does not
+reclassify an existing profile. VRMA motion admission remains separate and
+keeps its existing Lightweight budget in either model mode.
+
+The same `v0.1.1` release carries additive optional lip sync. Scalar-only mouth
+cues remain compatible, while complete five-vowel cues use `aa`, `ih`, `ou`,
+`ee`, and `oh`. Miller derives those cues from played remote Live Voice output.
+Raw audio and spectral data do not cross the package bridge. Miller Avatar does
+not acquire microphone audio. Models without every vowel expression use
+the documented fallback. This is a responsive approximation, not a phoneme-
+accuracy claim. Until the combined tag is published, the repository's
+`v0.1.0` source-only release remains the public package checkpoint.
 
 ## Bounded VRMA motion
 

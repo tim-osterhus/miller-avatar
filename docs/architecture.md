@@ -16,16 +16,21 @@ renderer-neutral reducers cover native lifecycle, semantic presentation,
 mouth-cue revocation, Reduced Motion, suspension/resume reconciliation, and
 serialized visibility commands. It also admits immutable in-memory bytes for the
 closed GLB-form VRM 1.0 envelope; the full policy is in `asset-policy.md`.
+The mouth boundary remains scalar-compatible and can carry one complete
+five-vowel value (`aa`, `ih`, `ou`, `ee`, `oh`). The package validates and
+renders those bounded cues; it does not capture audio or derive them from
+microphone input.
 
 The caller owns semantic session, request, generation, playback, projection,
 and cue identity values. `ProjectPhasePayload` carries the caller's projection
 sequence, generation ID, phase, and playback ID. `SetMouthPayload` carries the
-caller's generation/playback IDs, cue index, playback offset, and scalar. The
-package validates ordering, lease matching, and safe bounds; it does not derive
-these values from Miller assistant state. The standalone diagnostic app creates
-synthetic values for its controls. The host also allocates an internal renderer
-session UUID for callback fencing and exposes it in `HostSnapshot`; that value
-is not Miller's request or session identity.
+caller's generation/playback IDs, cue index, playback offset, scalar, and an
+optional complete five-vowel value. The package validates ordering, lease
+matching, and safe bounds; it does not derive these values from Miller
+assistant state. The standalone diagnostic app creates synthetic values for its
+controls. The host also allocates an internal renderer session UUID for
+callback fencing and exposes it in `HostSnapshot`; that value is not Miller's
+request or session identity.
 
 ## Public host surface
 
@@ -93,7 +98,7 @@ contains exactly:
 | `id` / `displayName` | Stable profile identity and bounded display label. |
 | `modelBookmark` | Security-scoped bookmark data; no source path is stored. |
 | `modelSHA256` / `capturedByteCount` | Digest and captured-byte metadata for revalidation. |
-| `rightsLabel` / `performanceProfile` | Fixed metadata: `local_user_supplied` and `lightweight`. |
+| `rightsLabel` / `performanceProfile` | Fixed rights metadata plus the recorded model import mode: `local_user_supplied` and, in the combined v0.1.1 contract, `lightweight` or `high_quality`. |
 | `consecutiveLoadFailures` | Persisted failure count from `0` through `3`; quarantine is derived at `3`. |
 | `profileRevision` | Monotonic revision for profile replacement and stale-load fencing. |
 | `motionLibrary` / `motionBindings` | Bounded motion references and the closed built-in role map. |
@@ -109,6 +114,39 @@ required. Removing a profile removes only local metadata and leaves the
 original user file untouched. The store creates its root with mode `0700` and
 its profile file with mode `0600`; persistence is owner-only and path-free in
 its error surface.
+
+### Model quality authority
+
+Lightweight is the default and preserves the current admission table. The
+combined `v0.1.1` contract adds an explicit per-import High Quality mode for VRM
+models. High Quality sets the captured GLB, buffer, and accessor-referenced
+byte ceilings to exactly 2.5 GiB (2,684,354,560 bytes) each, raises other
+aggregate byte/count/geometry ceilings to a 20x posture, and raises the maximum
+dimension of one image 4x, from 8,192 to 32,768 pixels. JSON nesting and the
+renderer-supported skin-attribute layout remain integrity/compatibility
+constraints rather than quality controls. High Quality removes the fixed
+five-second preflight deadline but keeps explicit cancellation.
+
+The existing `performanceProfile` field is the stored authority; schema version
+2 remains sufficient. A legacy `lightweight` value and version-1 migration stay
+Lightweight, while `high_quality` is decoded as High Quality. Unknown mode
+strings remain corrupt store data. Capture, admission, persisted validation,
+materialization, reload, retry, and content-change re-admission use the recorded
+mode. Changing a caller's next-import default never silently reclassifies an
+existing profile.
+
+High Quality retains the same format, integrity, and safety checks as
+Lightweight: VRM 1.0/GLB framing, JSON and cross-reference validity, bounded
+indices and ranges, finite numeric values, checked arithmetic, supported
+renderer shapes, security-scope/file-identity checks, and cancellation. Its
+larger policy envelope is not a promise that a particular machine can allocate
+or render every admitted model. Address-space, native allocation, GPU, or
+renderer failure remains a load/resource failure and follows the existing
+retry and quarantine paths.
+
+VRMA motion admission remains separate and keeps its existing Lightweight
+budget in both model quality modes. VRMA never gains authority over expressions
+or mouth presentation.
 
 ### Bounded VRMA motion library
 
@@ -194,6 +232,14 @@ attachment, typed and Live semantic projection, and played-output mouth-cue
 generation. It does not create a sidecar or second audio path. Package failures
 remain Avatar-local and cannot gate Miller's typed, Live, history, settings,
 approval, or tool authorities.
+
+For optional lip sync, Miller's private Live peer inspects only played remote
+output and sends bounded scalar or five-vowel cues through the existing typed
+mouth boundary. Raw PCM, FFT/spectral data, transcript text, and provider values
+do not cross into Miller Avatar. Models with partial expression capability use
+the package fallback, and no layer claims phoneme accuracy. High Quality
+admission and optional lip sync ship together in one immutable `v0.1.1`
+package; neither changes VRMA's budget or authority.
 
 The repositories document automated checks and command paths. The remediated
 C7 source/headless matrix passes. The alpha.8 package checkpoint derives

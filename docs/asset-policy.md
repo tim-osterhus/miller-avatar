@@ -43,7 +43,10 @@ against the skin paired with the mesh on each node, not against an unrelated
 skin. An allowlisted extension is accepted only when its declared value is a
 JSON object at its supported location.
 
-## Inclusive resource ceilings
+## Inclusive Lightweight resource ceilings
+
+The table below is the default Lightweight policy. It is intentionally finite
+and remains the compatibility baseline for existing profiles.
 
 | Resource | Ceiling |
 | --- | ---: |
@@ -84,6 +87,43 @@ Decoded image estimates use four bytes per pixel. Full mip estimates multiply
 that value by `4/3` and round upward. All aggregate arithmetic uses checked
 64-bit operations.
 
+## Opt-in High Quality model mode
+
+The combined `v0.1.1` package adds High Quality for VRM model imports. It is
+selected explicitly for an import and recorded on that profile; it does not
+change the Lightweight default or silently reclassify an existing profile.
+The profile's recorded mode is used again for capture, admission, reload,
+materialization, retry, and content-change validation.
+
+High Quality raises the policy envelope while keeping it finite:
+
+| Resource posture | Lightweight | High Quality |
+| --- | ---: | ---: |
+| Captured GLB bytes | 128 MiB | **2.5 GiB (2,684,354,560 bytes)** |
+| Buffer bytes | 64 MiB | **2.5 GiB (2,684,354,560 bytes)** |
+| Accessor-referenced bytes | 64 MiB | **2.5 GiB (2,684,354,560 bytes)** |
+| Aggregate byte, count, and geometry ceilings | baseline | 20x posture |
+| One image dimension | 8,192 pixels | 4x, or 32,768 pixels |
+| JSON nesting | 64 levels | unchanged |
+| Renderer-supported skin layout | current supported layout | unchanged |
+| Native preflight deadline | 5 seconds | no fixed deadline |
+
+The 2.5 GiB values are explicit finite ceilings, not sentinel maxima. The
+larger envelope does not weaken validation. High Quality still rejects
+non-GLB or non-VRM-1 input, malformed JSON or GLB structure, external resource
+references, invalid indices/offsets/ranges/cross-references, non-finite values,
+checked integer or size overflow, unsupported renderer semantic shapes,
+security-scope failure, changed file identity or digest, and explicit
+cancellation. JSON nesting remains bounded for parser integrity, and the
+renderer-compatible skin layout remains a format constraint.
+
+High Quality also does not promise that a machine can load every model below
+the policy ceiling. Platform address-space pressure, native allocation failure,
+GPU exhaustion, and renderer failure remain real load/resource failures and use
+the existing retry and quarantine behavior. They are not hidden by silently
+falling back to Lightweight. Lightweight retains its five-second deadline;
+High Quality has no fixed deadline but still responds to explicit cancellation.
+
 ## Numeric envelopes
 
 | Value | Allowed envelope |
@@ -102,14 +142,15 @@ that value by `4/3` and round upward. All aggregate arithmetic uses checked
 | Spring gravity direction | absolute component at most 1.1 |
 | Constraint weight | 0 through 1 |
 
-Admission checks cancellation and its monotonic deadline between parse stages.
-A cancellation, deadline, aggregate overflow, or resource ceiling returns
-`resource_limit`. Invalid asset content returns `asset_rejected`. Rejection
-does not create an asset token or retain captured bytes in background work.
+Admission checks cancellation and, when the selected mode supplies one, its
+monotonic deadline between parse stages. A cancellation, deadline, aggregate
+overflow, or resource ceiling returns `resource_limit`. Invalid asset content
+returns `asset_rejected`. Rejection does not create an asset token or retain
+captured bytes in background work.
 
 Admission runs its bounded parser and semantic validation away from the caller's
-UI executor. It checks cancellation and deadline checkpoints within long JSON,
-accessor, and floating-point scans as well as between stages.
+UI executor. It checks cancellation and, for Lightweight, deadline checkpoints
+within long JSON, accessor, and floating-point scans as well as between stages.
 
 Each admitted asset includes a capability summary derived only from the
 validated envelope: whether the asset declares VRM look-at or spring-bone
@@ -118,7 +159,8 @@ URL, renderer, or GPU information.
 
 ## VRMA motion policy
 
-VRMA admission is separate from model admission. A model GLB remains invalid
+VRMA admission is separate from model admission and remains under its existing
+Lightweight budget in both model quality modes. A model GLB remains invalid
 when its root JSON contains an `animations` member. A motion enters only through
 the bounded VRMA admission path.
 
