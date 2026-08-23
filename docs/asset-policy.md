@@ -124,6 +124,12 @@ the existing retry and quarantine behavior. They are not hidden by silently
 falling back to Lightweight. Lightweight retains its five-second deadline;
 High Quality has no fixed deadline but still responds to explicit cancellation.
 
+Version 0.1.2 corrects one format-validation mismatch without changing either
+resource budget. Base vertex normals and tangents retain the unit-vector
+component envelope below. Morph-target `NORMAL` and `TANGENT` accessors are
+finite FLOAT/VEC3 displacement deltas and are not unit vectors; morph-target
+`POSITION` remains subject to the existing position envelope.
+
 ## Mouth cues and privacy boundary
 
 Miller Avatar accepts scalar-only mouth cues for compatibility and optionally a
@@ -150,7 +156,8 @@ reset, suspension, and disposal clear scalar and vowel state together.
 | Quaternion | absolute component at most 1.0001 and length from 0.99 through 1.01 |
 | Matrix and inverse-bind component | absolute value at most 1,000,000 |
 | Position and morph position | absolute component at most 10,000 |
-| Normal and tangent | absolute component at most 1.1 |
+| Base normal and tangent | absolute component at most 1.1 |
+| Morph normal and tangent delta | finite FLOAT/VEC3 |
 | Texture coordinate | absolute component at most 1,000 |
 | Color and skin weight | 0 through 1 |
 | Nonzero skin-weight sum | 0.99 through 1.01 |

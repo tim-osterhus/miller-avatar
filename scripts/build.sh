@@ -258,7 +258,7 @@ executable_input_sha256=$(shasum -a 256 "$executable_input_manifest_entries" | a
 web_bundle_manifest_sha256=$(shasum -a 256 "$repo_root/Sources/MillerAvatarHost/Resources/Web/bundle-manifest.json" | awk '{print $1}')
 {
     printf '%s' '{"schema":"miller-avatar.build-manifest/v1"'
-    printf '%s' ',"product":{"name":"Miller Avatar","bundle_identifier":"ai.millrace.miller-avatar","short_version":"0.1.1","build_version":"1","deployment_target":"15.0"}'
+    printf '%s' ',"product":{"name":"Miller Avatar","bundle_identifier":"ai.millrace.miller-avatar","short_version":"0.1.2","build_version":"1","deployment_target":"15.0"}'
     printf '%s' ',"toolchain":{"command_line_tools":"16.4.0.0.1.1747106510","swift":"6.1.2","clang":"17.0.0","macos_sdk":"15.5","architecture":"arm64"}'
     printf ',"source_revision":"%s"' "$source_revision"
     printf ',"executable_input_sha256":"%s"' "$executable_input_sha256"

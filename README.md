@@ -23,7 +23,13 @@ creates synthetic values only for its controls. The renderer session UUID
 exposed in `HostSnapshot` is an internal callback-fencing value, not Miller's
 request or session state.
 
-## Version 0.1.1
+## Version 0.1.2
+
+Version 0.1.2 is a narrow admission-compatibility patch. It correctly treats
+VRM/glTF morph-target `NORMAL` and `TANGENT` values as finite displacement
+deltas rather than applying the unit-vector range used for base vertex
+attributes. The existing morph-position envelope, finite-value checks, format
+validation, and Lightweight/High Quality resource ceilings remain unchanged.
 
 The current repository milestone assembles a Swift 6.1 macOS 15 diagnostic
 application with a native-first fallback UI and contained WebKit renderer. It
