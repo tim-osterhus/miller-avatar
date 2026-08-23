@@ -8,6 +8,8 @@ public struct ProjectionState: Equatable, Sendable {
     public var lastCueIndex: UInt64?
     public var lastPlaybackOffsetMilliseconds: UInt64?
     public var mouthScalar: Double
+    public var mouthVowels: MouthVowelWeights?
+    public var mouthCuesEnabled: Bool
     public var reducedMotion: Bool
     public var isSuspended: Bool
     public var isTerminated: Bool
@@ -20,6 +22,8 @@ public struct ProjectionState: Equatable, Sendable {
         lastCueIndex: UInt64? = nil,
         lastPlaybackOffsetMilliseconds: UInt64? = nil,
         mouthScalar: Double = 0,
+        mouthVowels: MouthVowelWeights? = nil,
+        mouthCuesEnabled: Bool = true,
         reducedMotion: Bool = false,
         isSuspended: Bool = false,
         isTerminated: Bool = false
@@ -31,6 +35,8 @@ public struct ProjectionState: Equatable, Sendable {
         self.lastCueIndex = lastCueIndex
         self.lastPlaybackOffsetMilliseconds = lastPlaybackOffsetMilliseconds
         self.mouthScalar = mouthScalar
+        self.mouthVowels = mouthVowels
+        self.mouthCuesEnabled = mouthCuesEnabled
         self.reducedMotion = reducedMotion
         self.isSuspended = isSuspended
         self.isTerminated = isTerminated
@@ -41,6 +47,7 @@ public enum ProjectionInput: Equatable, Sendable {
     case project(ProjectPhasePayload)
     case mouth(SetMouthPayload)
     case setReducedMotion(Bool)
+    case setMouthCuesEnabled(Bool)
     case suspend
     case resume
     case reset(generationID: UUID?, reason: ResetReason)
@@ -52,6 +59,7 @@ public enum ProjectionEffect: Equatable, Sendable {
     case applyProjection(ProjectPhasePayload)
     case applyMouth(SetMouthPayload)
     case setReducedMotion(Bool)
+    case setMouthCuesEnabled(Bool)
     case stopContinuousMotion
     case reset(generationID: UUID?, reason: ResetReason)
     case clearMouth
@@ -74,13 +82,15 @@ public enum ProjectionReducer {
             return applyMouth(state: state, cue: cue)
         case .setReducedMotion(let enabled):
             return setReducedMotion(state: state, enabled: enabled)
+        case .setMouthCuesEnabled(let enabled):
+            return setMouthCuesEnabled(state: state, enabled: enabled)
         case .suspend:
             guard !state.isSuspended else {
                 return ReducerResult(state: state)
             }
             var next = state
             next.isSuspended = true
-            next.mouthScalar = 0
+            clearMouthPresentation(&next)
             return ReducerResult(state: next, effects: [.clearMouth])
         case .resume:
             guard state.isSuspended else {
@@ -88,7 +98,7 @@ public enum ProjectionReducer {
             }
             var next = state
             next.isSuspended = false
-            next.mouthScalar = 0
+            clearMouthPresentation(&next)
             return ReducerResult(state: next, effects: [.reconcile])
         case .reset(let generationID, let reason):
             return reset(
@@ -128,7 +138,7 @@ public enum ProjectionReducer {
         if replacesLease {
             next.lastCueIndex = nil
             next.lastPlaybackOffsetMilliseconds = nil
-            next.mouthScalar = 0
+            clearMouthPresentation(&next)
         }
 
         guard !state.isSuspended else {
@@ -157,7 +167,8 @@ public enum ProjectionReducer {
               cue.playbackOffsetMilliseconds <= BridgeContract.maximumSafeInteger,
               cue.playbackOffsetMilliseconds <= 86_400_000,
               cue.scalar.isFinite,
-              (0...1).contains(cue.scalar)
+              (0...1).contains(cue.scalar),
+              cue.vowels?.isValid ?? true
         else {
             return ReducerResult(state: state)
         }
@@ -165,12 +176,16 @@ public enum ProjectionReducer {
         var next = state
         next.lastCueIndex = cue.cueIndex
         next.lastPlaybackOffsetMilliseconds = cue.playbackOffsetMilliseconds
-        guard !state.isSuspended, !state.reducedMotion else {
-            next.mouthScalar = 0
+        guard !state.isSuspended,
+              !state.reducedMotion,
+              state.mouthCuesEnabled
+        else {
+            clearMouthPresentation(&next)
             return ReducerResult(state: next)
         }
 
         next.mouthScalar = cue.scalar
+        next.mouthVowels = cue.vowels
         return ReducerResult(state: next, effects: [.applyMouth(cue)])
     }
 
@@ -185,7 +200,7 @@ public enum ProjectionReducer {
         var next = state
         next.reducedMotion = enabled
         if enabled {
-            next.mouthScalar = 0
+            clearMouthPresentation(&next)
         }
         guard !state.isSuspended else {
             return ReducerResult(state: next)
@@ -194,6 +209,30 @@ public enum ProjectionReducer {
         var effects: [ProjectionEffect] = [.setReducedMotion(enabled)]
         if enabled {
             effects.append(.stopContinuousMotion)
+            effects.append(.clearMouth)
+        }
+        return ReducerResult(state: next, effects: effects)
+    }
+
+    private static func setMouthCuesEnabled(
+        state: ProjectionState,
+        enabled: Bool
+    ) -> ReducerResult<ProjectionState, ProjectionEffect> {
+        guard enabled != state.mouthCuesEnabled else {
+            return ReducerResult(state: state)
+        }
+
+        var next = state
+        next.mouthCuesEnabled = enabled
+        if !enabled {
+            clearMouthPresentation(&next)
+        }
+        guard !state.isSuspended else {
+            return ReducerResult(state: next)
+        }
+
+        var effects: [ProjectionEffect] = [.setMouthCuesEnabled(enabled)]
+        if !enabled {
             effects.append(.clearMouth)
         }
         return ReducerResult(state: next, effects: effects)
@@ -229,7 +268,12 @@ public enum ProjectionReducer {
         state.playbackID = nil
         state.lastCueIndex = nil
         state.lastPlaybackOffsetMilliseconds = nil
+        clearMouthPresentation(&state)
+    }
+
+    private static func clearMouthPresentation(_ state: inout ProjectionState) {
         state.mouthScalar = 0
+        state.mouthVowels = nil
     }
 
     private static func isValid(_ projection: ProjectPhasePayload) -> Bool {

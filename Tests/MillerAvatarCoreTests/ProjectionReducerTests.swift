@@ -280,6 +280,251 @@ import Testing
         }
     }
 
+    @Test func enrichedCuesStoreAcceptedVowelTargetsInReducerState() {
+        let weights = MouthVowelWeights(aa: 0.1, ih: 0.6, ou: 0, ee: 0.3, oh: 0)
+        let enriched = SetMouthPayload(
+            generationID: generationA,
+            playbackID: playbackP,
+            cueIndex: 1,
+            playbackOffsetMilliseconds: 100,
+            scalar: 0.62,
+            vowels: weights
+        )
+
+        let state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        let result = reduce(state, .mouth(enriched))
+
+        #expect(result.effects == [.applyMouth(enriched)])
+        #expect(result.state.mouthScalar == 0.62)
+        #expect(result.state.mouthVowels == weights)
+        #expect(result.state.lastCueIndex == 1)
+    }
+
+    @Test func scalarOnlyCuesLeaveVowelStateNil() {
+        let state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        let result = reduce(state, .mouth(cue(playback: playbackP, index: 1)))
+
+        #expect(result.state.mouthScalar == 0.5)
+        #expect(result.state.mouthVowels == nil)
+        #expect(result.effects.count == 1)
+    }
+
+    @Test func policyOffAcceptsOrderingMetadataButSuppressesMouthOutput() {
+        let weights = MouthVowelWeights(aa: 0, ih: 0.9, ou: 0, ee: 0, oh: 0)
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(cue(playback: playbackP, index: 1))).state
+        #expect(state.mouthScalar == 0.5)
+
+        let disabled = reduce(state, .setMouthCuesEnabled(false))
+        #expect(!disabled.state.mouthCuesEnabled)
+        #expect(disabled.state.mouthScalar == 0)
+        #expect(disabled.state.mouthVowels == nil)
+        #expect(disabled.effects == [.setMouthCuesEnabled(false), .clearMouth])
+
+        let enriched = SetMouthPayload(
+            generationID: generationA,
+            playbackID: playbackP,
+            cueIndex: 2,
+            playbackOffsetMilliseconds: 200,
+            scalar: 0.9,
+            vowels: weights
+        )
+        let suppressed = reduce(disabled.state, .mouth(enriched))
+
+        #expect(suppressed.state.lastCueIndex == 2)
+        #expect(suppressed.state.lastPlaybackOffsetMilliseconds == 200)
+        #expect(suppressed.state.mouthScalar == 0)
+        #expect(suppressed.state.mouthVowels == nil)
+        #expect(suppressed.effects.isEmpty)
+    }
+
+    @Test func reEnablingMouthPolicyDoesNotReplayAPriorCue() {
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(cue(playback: playbackP, index: 1))).state
+        state = reduce(state, .setMouthCuesEnabled(false)).state
+
+        let enabled = reduce(state, .setMouthCuesEnabled(true))
+        #expect(enabled.state.mouthCuesEnabled)
+        #expect(enabled.state.mouthScalar == 0)
+        #expect(enabled.state.mouthVowels == nil)
+        #expect(enabled.effects == [.setMouthCuesEnabled(true)])
+
+        let replay = reduce(
+            enabled.state,
+            .mouth(cue(playback: playbackP, index: 1))
+        )
+        #expect(replay.state == enabled.state)
+        #expect(replay.effects.isEmpty)
+
+        let fresh = reduce(
+            enabled.state,
+            .mouth(cue(playback: playbackP, index: 2))
+        )
+        #expect(fresh.state.mouthScalar == 0.5)
+        #expect(fresh.effects.count == 1)
+    }
+
+    @Test func policyChangesWhileSuspendedDeferRendererEffectsUntilResume() {
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(enrichedCue(playback: playbackP, index: 3))).state
+        #expect(state.mouthVowels != nil)
+
+        let suspended = reduce(state, .suspend)
+        #expect(suspended.state.isSuspended)
+        #expect(suspended.effects == [.clearMouth])
+
+        let disabled = reduce(suspended.state, .setMouthCuesEnabled(false))
+        #expect(!disabled.state.mouthCuesEnabled)
+        #expect(disabled.state.mouthScalar == 0)
+        #expect(disabled.state.mouthVowels == nil)
+        #expect(disabled.effects.isEmpty)
+
+        let resumed = reduce(disabled.state, .resume)
+        #expect(resumed.state.isSuspended == false)
+        #expect(!resumed.state.mouthCuesEnabled)
+        #expect(resumed.state.mouthScalar == 0)
+        #expect(resumed.state.mouthVowels == nil)
+        #expect(resumed.effects == [.reconcile])
+    }
+
+    @Test func suspendedPolicyCycleReplaysNoCueAndAppliesOnlyNewerCuesAfterResume() {
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(cue(playback: playbackP, index: 1))).state
+        state = reduce(state, .setMouthCuesEnabled(false)).state
+        state = reduce(state, .suspend).state
+
+        let reEnabledWhileSuspended = reduce(state, .setMouthCuesEnabled(true))
+        #expect(reEnabledWhileSuspended.state.mouthCuesEnabled)
+        #expect(reEnabledWhileSuspended.state.mouthScalar == 0)
+        #expect(reEnabledWhileSuspended.state.mouthVowels == nil)
+        #expect(reEnabledWhileSuspended.effects.isEmpty)
+
+        let resumed = reduce(reEnabledWhileSuspended.state, .resume)
+        #expect(resumed.state.mouthScalar == 0)
+        #expect(resumed.state.mouthVowels == nil)
+        #expect(resumed.effects == [.reconcile])
+
+        let replay = reduce(
+            resumed.state,
+            .mouth(cue(playback: playbackP, index: 1))
+        )
+        #expect(replay.state == resumed.state)
+        #expect(replay.effects.isEmpty)
+
+        let newerWhileOffCandidate = resumed.state
+        let disabledAgain = reduce(newerWhileOffCandidate, .setMouthCuesEnabled(false))
+        let newerSuppressed = reduce(
+            disabledAgain.state,
+            .mouth(cue(playback: playbackP, index: 2))
+        )
+        #expect(newerSuppressed.state.lastCueIndex == 2)
+        #expect(newerSuppressed.state.mouthScalar == 0)
+        #expect(newerSuppressed.state.mouthVowels == nil)
+        #expect(newerSuppressed.effects.isEmpty)
+
+        let enabledFresh = reduce(newerSuppressed.state, .setMouthCuesEnabled(true))
+        #expect(enabledFresh.effects.contains(.setMouthCuesEnabled(true)))
+        let newerAccepted = reduce(
+            enabledFresh.state,
+            .mouth(cue(playback: playbackP, index: 3))
+        )
+        #expect(newerAccepted.state.mouthScalar == 0.5)
+        #expect(newerAccepted.effects.count == 1)
+    }
+
+    @Test func unchangedMouthPolicyIsANoOp() {
+        let state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+
+        let result = reduce(state, .setMouthCuesEnabled(true))
+        #expect(result.state == state)
+        #expect(result.effects.isEmpty)
+    }
+
+    @Test func everyRevocationPathClearsVowelPresentation() {
+        let revocations: [ProjectionInput] = [
+            .project(speaking(
+                sequence: 2,
+                generation: generationB,
+                playback: playbackQ
+            )),
+            .project(ProjectPhasePayload(
+                projectionSequence: 2,
+                generationID: generationA,
+                phase: .failed,
+                playbackID: nil
+            )),
+            .suspend,
+            .setReducedMotion(true),
+            .reset(generationID: generationA, reason: .cancelled),
+            .rendererFailed,
+            .dispose,
+        ]
+
+        for revocation in revocations {
+            var state = reduce(
+                ProjectionState(),
+                .project(speaking(sequence: 1, playback: playbackP))
+            ).state
+            state = reduce(state, .mouth(enrichedCue(playback: playbackP, index: 1))).state
+            #expect(state.mouthVowels != nil)
+
+            let result = reduce(state, revocation)
+            #expect(result.state.mouthScalar == 0)
+            #expect(result.state.mouthVowels == nil)
+            #expect(result.effects.contains(.clearMouth))
+        }
+    }
+
+    @Test func staleCuesCannotRestoreVowelWeightsAfterPolicyOrPlaybackChanges() {
+        var state = reduce(
+            ProjectionState(),
+            .project(speaking(sequence: 1, playback: playbackP))
+        ).state
+        state = reduce(state, .mouth(enrichedCue(playback: playbackP, index: 1))).state
+        state = reduce(state, .setMouthCuesEnabled(false)).state
+        state = reduce(state, .setMouthCuesEnabled(true)).state
+        #expect(state.mouthVowels == nil)
+
+        let staleAfterPolicy = reduce(
+            state,
+            .mouth(enrichedCue(playback: playbackP, index: 1))
+        )
+        #expect(staleAfterPolicy.state == state)
+        #expect(staleAfterPolicy.effects.isEmpty)
+
+        state = staleAfterPolicy.state
+        state = reduce(state, .project(speaking(sequence: 2, playback: playbackQ))).state
+
+        let staleAfterReplacement = reduce(
+            state,
+            .mouth(enrichedCue(playback: playbackP, index: 2))
+        )
+        #expect(staleAfterReplacement.state == state)
+        #expect(staleAfterReplacement.state.mouthVowels == nil)
+        #expect(staleAfterReplacement.effects.isEmpty)
+    }
+
     @Test func validNeutralFixtureFeedsEveryOperationThroughTheReducer() throws {
         let raw = try fixtureRaw(
             at: "Tests/IntegrationFixtures/valid/miller-owned-presentation.json"
@@ -292,7 +537,7 @@ import Testing
         )
         #expect(root["schema"] as? String == "miller-avatar.integration-fixture/v1")
         let operations = try arrayOfObjects(root["operations"])
-        #expect(operations.count == 18)
+        #expect(operations.count == 23)
 
         var state = ProjectionState()
         for operation in operations {
@@ -315,7 +560,7 @@ import Testing
         )
         #expect(root["schema"] as? String == "miller-avatar.integration-fixture/v1")
         let cases = try arrayOfObjects(root["cases"])
-        #expect(cases.count == 8)
+        #expect(cases.count == 10)
 
         for testCase in cases {
             var state = ProjectionState()
@@ -364,6 +609,17 @@ import Testing
             cueIndex: index,
             playbackOffsetMilliseconds: index * 100,
             scalar: 0.5
+        )
+    }
+
+    private func enrichedCue(playback: UUID, index: UInt64) -> SetMouthPayload {
+        SetMouthPayload(
+            generationID: generationA,
+            playbackID: playback,
+            cueIndex: index,
+            playbackOffsetMilliseconds: index * 100,
+            scalar: 0.5,
+            vowels: MouthVowelWeights(aa: 0, ih: 0.5, ou: 0, ee: 0, oh: 0)
         )
     }
 
@@ -422,8 +678,12 @@ import Testing
                 playbackID: playbackID,
                 cueIndex: cueIndex,
                 playbackOffsetMilliseconds: offset,
-                scalar: scalar.doubleValue
+                scalar: scalar.doubleValue,
+                vowels: try optionalVowelWeights(input["vowels"])
             ))
+        case "set_mouth_cues_enabled":
+            guard let enabled = input["enabled"] as? Bool else { throw FixtureError.invalid }
+            return .setMouthCuesEnabled(enabled)
         case "set_reduced_motion":
             guard let enabled = input["enabled"] as? Bool else { throw FixtureError.invalid }
             return .setReducedMotion(enabled)
@@ -456,6 +716,18 @@ import Testing
         return uuid
     }
 
+    private func optionalVowelWeights(_ value: Any?) throws -> MouthVowelWeights? {
+        if value is NSNull || value == nil { return nil }
+        guard let values = value as? [String: Any], values.count == 5,
+              let aa = (values["aa"] as? NSNumber)?.doubleValue,
+              let ih = (values["ih"] as? NSNumber)?.doubleValue,
+              let ou = (values["ou"] as? NSNumber)?.doubleValue,
+              let ee = (values["ee"] as? NSNumber)?.doubleValue,
+              let oh = (values["oh"] as? NSNumber)?.doubleValue
+        else { throw FixtureError.invalid }
+        return MouthVowelWeights(aa: aa, ih: ih, ou: ou, ee: ee, oh: oh)
+    }
+
     private func safeUInt(_ value: Any?) -> UInt64? {
         guard let number = value as? NSNumber,
               number.doubleValue.isFinite,
@@ -479,6 +751,8 @@ import Testing
         #expect(state.lastCueIndex == optionalUInt(expected["last_cue_index"]))
         #expect(state.lastPlaybackOffsetMilliseconds == optionalUInt(expected["last_playback_offset_ms"]))
         #expect(state.mouthScalar == (expected["mouth_scalar"] as? NSNumber)?.doubleValue)
+        #expect(state.mouthVowels == (try optionalVowelWeights(expected["mouth_vowels"])))
+        #expect(state.mouthCuesEnabled == (expected["mouth_cues_enabled"] as? Bool))
         #expect(state.reducedMotion == (expected["reduced_motion"] as? Bool))
         #expect(state.isSuspended == (expected["is_suspended"] as? Bool))
         #expect(state.isTerminated == (expected["is_terminated"] as? Bool))
@@ -500,6 +774,7 @@ import Testing
         case .reset: "reset"
         case .clearMouth: "clear_mouth"
         case .reconcile: "reconcile"
+        case .setMouthCuesEnabled: "set_mouth_cues_enabled"
         }
     }
 }

@@ -657,6 +657,10 @@ package final class HostOrchestrator {
                     playbackID: projectionState.playbackID,
                     reducedMotion: projectionState.reducedMotion
                 )))
+            case .setMouthCuesEnabled:
+                // Renderer policy wiring arrives with the host policy path
+                // (implementation-plan Task 5); no producer emits this yet.
+                break
             case .clearMouth, .stopContinuousMotion:
                 break
             }
