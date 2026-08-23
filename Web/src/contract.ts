@@ -116,8 +116,44 @@ export interface LoadProfilePayload {
   motion_bindings: MotionBindings;
 }
 
+export const mouthVowelKeys = ["aa", "ih", "ou", "ee", "oh"] as const;
+
+export type MouthVowelWeights = {
+  readonly [Vowel in typeof mouthVowelKeys[number]]: number;
+};
+
+export type MouthVowelCapabilities = {
+  readonly [Vowel in typeof mouthVowelKeys[number]]: boolean;
+};
+
+export interface SetMouthPayload {
+  generation_id: string;
+  playback_id: string;
+  cue_index: number;
+  playback_offset_ms: number;
+  scalar: number;
+}
+
+export interface EnrichedSetMouthPayload extends SetMouthPayload {
+  vowels: MouthVowelWeights;
+}
+
+export interface LegacyModelCapabilities {
+  aa: boolean;
+  look_at: boolean;
+  spring_bone: boolean;
+  mtoon_materials: number;
+}
+
+export interface EnrichedModelCapabilities extends LegacyModelCapabilities {
+  vowels: MouthVowelCapabilities;
+}
+
 export type PresentationCommand =
-  | { type: "configure"; payload: { profile: "lightweight"; reduced_motion: boolean } }
+  | {
+      type: "configure";
+      payload: { profile: "lightweight"; reduced_motion: boolean; mouth_cues_enabled: boolean };
+    }
   | { type: "load_profile"; payload: LoadProfilePayload }
   | {
       type: "project_phase";
@@ -136,20 +172,12 @@ export type PresentationCommand =
         phase: PresentationPhase;
         playback_id: string | null;
         reduced_motion: boolean;
+        mouth_cues_enabled: boolean;
       };
     }
   | { type: "set_visibility"; payload: { visibility: PresentationVisibility } }
-  | { type: "set_policy"; payload: { reduced_motion: boolean } }
-  | {
-      type: "set_mouth";
-      payload: {
-        generation_id: string;
-        playback_id: string;
-        cue_index: number;
-        playback_offset_ms: number;
-        scalar: number;
-      };
-    }
+  | { type: "set_policy"; payload: { reduced_motion: boolean; mouth_cues_enabled: boolean } }
+  | { type: "set_mouth"; payload: SetMouthPayload | EnrichedSetMouthPayload }
   | { type: "reset"; payload: { generation_id: string | null; reason: ResetReason } }
   | { type: "dispose"; payload: { reason: DisposalReason } };
 
@@ -161,12 +189,7 @@ export type PresentationObservation =
       payload: {
         profile_revision: number;
         model_token: string;
-        capabilities: {
-          aa: boolean;
-          look_at: boolean;
-          spring_bone: boolean;
-          mtoon_materials: number;
-        };
+        capabilities: LegacyModelCapabilities | EnrichedModelCapabilities;
       };
     }
   | {

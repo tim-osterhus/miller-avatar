@@ -6,6 +6,7 @@ import {
   type FrameScheduler,
   type LoadTimeoutScheduler,
   type RendererBackend,
+  type RendererPolicy,
 } from "../src/bridge.js";
 import type { PresentationEffect } from "../src/presentation.js";
 import type { MotionActiveEvent, MotionFault } from "../src/motion-controller.js";
@@ -20,7 +21,7 @@ test("fake backend proves scheduling, suspension, exact resume deltas, and dispo
   const messages: Array<Record<string, unknown>> = [];
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   assert.equal(backend.loadedURL, `miller-avatar-local://app/session/${session}/${model}.vrm`);
   assert.deepEqual(messages.slice(0, 4).map((message) => message.type), [
@@ -72,12 +73,86 @@ test("fake backend proves scheduling, suspension, exact resume deltas, and dispo
   assert.equal(messages.at(-1)?.type, "disposed");
 });
 
+test("configure propagates both policy fields into the backend policy object and presentation policy", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  core.start();
+
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: false }));
+
+  assert.deepEqual(backend.configurations, [{ reducedMotion: false, mouthCuesEnabled: false }]);
+  const presentation = core.snapshot().presentation;
+  assert.equal(presentation.reducedMotion, false);
+  assert.equal(presentation.mouthCuesEnabled, false);
+});
+
+test("set_policy propagates both fields through reducer effects and backend application", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const core = new WebRendererCore(session, backend, scheduler, () => {});
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
+  await core.accept(loadProfileCommand(2));
+
+  await core.accept(command(3, "set_policy", { reduced_motion: true, mouth_cues_enabled: false }));
+
+  const presentation = core.snapshot().presentation;
+  assert.equal(presentation.reducedMotion, true);
+  assert.equal(presentation.mouthCuesEnabled, false);
+  assert.deepEqual(backend.appliedEffects, [
+    { type: "set_reduced_motion", enabled: true },
+    { type: "set_mouth_cues_enabled", enabled: false },
+    { type: "clear_mouth" },
+  ]);
+});
+
+test("profile_model_loaded retains legacy capabilities for a legacy fake backend", async () => {
+  const backend = new FakeBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
+  await core.accept(loadProfileCommand(2));
+
+  const loaded = messages.find((message) => message.type === "profile_model_loaded");
+  assert.deepEqual(loaded?.payload, {
+    profile_revision: 1,
+    model_token: model,
+    capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 2 },
+  });
+});
+
+test("profile_model_loaded reports enriched five-vowel capabilities when the backend reports them", async () => {
+  const backend = new EnrichedCapabilitiesBackend();
+  const scheduler = new FakeScheduler();
+  const messages: Array<Record<string, unknown>> = [];
+  const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
+  core.start();
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
+  await core.accept(loadProfileCommand(2));
+
+  const loaded = messages.find((message) => message.type === "profile_model_loaded");
+  assert.deepEqual(loaded?.payload, {
+    profile_revision: 1,
+    model_token: model,
+    capabilities: {
+      aa: true,
+      look_at: true,
+      spring_bone: true,
+      mtoon_materials: 2,
+      vowels: { aa: true, ih: false, ou: true, ee: false, oh: false },
+    },
+  });
+});
+
 test("enabling Reduced Motion while live renders one zero-delta static frame", async () => {
   const backend = new FakeBackend();
   const scheduler = new FakeScheduler();
   const core = new WebRendererCore(session, backend, scheduler, () => {});
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
@@ -87,7 +162,7 @@ test("enabling Reduced Motion while live renders one zero-delta static frame", a
   }));
   backend.events.length = 0;
 
-  await core.accept(command(4, "set_policy", { reduced_motion: true }));
+  await core.accept(command(4, "set_policy", { reduced_motion: true, mouth_cues_enabled: true }));
 
   assert.deepEqual(backend.events, [
     "apply:set_reduced_motion",
@@ -103,7 +178,7 @@ test("terminal presentation phases render without re-running first-frame proof",
   const scheduler = new FakeScheduler();
   const core = new WebRendererCore(session, backend, scheduler, () => {});
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
@@ -125,7 +200,7 @@ test("context loss emits one failure, disposes, and fences later commands", asyn
   const messages: Array<Record<string, unknown>> = [];
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "set_visibility", { visibility: "occluded" }));
   const before = core.snapshot().counters;
@@ -145,7 +220,7 @@ test("context loss emits one failure, disposes, and fences later commands", asyn
   assert.equal(backend.disposals, 1);
   const terminalMessageCount = messages.length;
   core.contextLost();
-  await core.accept(command(5, "set_policy", { reduced_motion: false }));
+  await core.accept(command(5, "set_policy", { reduced_motion: false, mouth_cues_enabled: true }));
   assert.equal(messages.length, terminalMessageCount);
   assert.equal(backend.disposals, 1);
 });
@@ -170,7 +245,7 @@ test("first structurally invalid command emits failure then disposal and silentl
   assertFailureDisposal(messages.slice(terminalStart), "bridge_invalid", null);
 
   const terminalMessageCount = messages.length;
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   core.contextLost();
   assert.equal(messages.length, terminalMessageCount);
   assert.equal(backend.disposals, 1);
@@ -186,7 +261,7 @@ test("timed out loads abort, dispose the backend, and retain command correlation
     loadTimeoutScheduler: timeout,
   });
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   const terminalStart = messages.length;
   const loading = core.accept(loadProfileCommand(2));
   assert.equal(timeout.pending, 1);
@@ -207,7 +282,7 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
   const playback = "44444444-4444-4444-8444-444444444444";
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
@@ -223,6 +298,7 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
     phase: "speaking",
     playback_id: playback,
     reduced_motion: true,
+    mouth_cues_enabled: false,
   }));
 
   assert.deepEqual(core.snapshot().presentation, {
@@ -231,9 +307,23 @@ test("resume-only reconciliation restores the native snapshot after Web suspensi
     phase: "speaking",
     playbackID: playback,
     mouthScalar: 0,
+    mouthVowels: null,
+    mouthCuesEnabled: false,
     reducedMotion: true,
     suspended: false,
     terminated: false,
+  });
+  const reconcileEffects = backend.appliedEffects.filter((effect) => effect.type === "reconcile");
+  assert.equal(reconcileEffects.length, 2);
+  assert.deepEqual(reconcileEffects.at(-1), {
+    type: "reconcile",
+    lastProjectionSequence: 1,
+    generationID: generation,
+    phase: "speaking",
+    playbackID: playback,
+    mouthScalar: 0,
+    mouthCuesEnabled: false,
+    reducedMotion: true,
   });
 });
 
@@ -245,7 +335,7 @@ test("resume applies an authoritative reset reconciliation before unsuspending m
   const playback = "44444444-4444-4444-8444-444444444444";
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
@@ -269,7 +359,7 @@ test("reset-origin motion activity is suppressed when it has no projection cause
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2));
   await core.accept(command(3, "project_phase", {
     projection_sequence: 1,
@@ -293,7 +383,7 @@ test("profile load reports only nonterminal missing and rejected bindings", asyn
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: true, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, {
     idle: { status: "ready", token: motion },
     speaking: { status: "rejected", token: null },
@@ -320,7 +410,7 @@ test("model-first profile loading returns before asynchronous motion replacement
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, {
     idle: { status: "ready", token: motion },
     speaking: { status: "ready", token: motion },
@@ -353,7 +443,7 @@ test("profile motion deadline is nonterminal and classifies every pending role a
   });
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, {
     idle: { status: "ready", token: motion },
     speaking: { status: "ready", token: motion },
@@ -387,7 +477,7 @@ test("runtime motion faults fan out nonterminal role status without failing the 
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, {
     idle: { status: "ready", token: motion },
   }));
@@ -410,7 +500,7 @@ test("disposing a profile cancels motion work without status and disposes a late
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
   const beforeDispose = messages.length;
   await core.accept(command(3, "dispose", { reason: "operator" }));
@@ -429,7 +519,7 @@ test("suspended profile motion completion commits without advancing clocks", asy
   const core = new WebRendererCore(session, backend, scheduler, (value) => messages.push(JSON.parse(value)));
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
   await core.accept(command(3, "set_visibility", { visibility: "hidden" }));
   const suspendedCounters = core.snapshot().counters;
@@ -461,7 +551,7 @@ test("late motion success after per-motion timeout is discarded exactly once", a
   });
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
   assert.equal(timeout.pending, 2);
 
@@ -488,7 +578,7 @@ test("stale motion output racing renderer disposal is discarded exactly once", a
   backend.core = core;
 
   core.start();
-  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false }));
+  await core.accept(command(1, "configure", { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: true }));
   await core.accept(loadProfileCommand(2, { idle: { status: "ready", token: motion } }));
   await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -522,9 +612,14 @@ class FakeBackend implements RendererBackend {
   frameRenders = 0;
   readonly events: string[] = [];
   readonly applyCauses: Array<{ type: string; causedBySequence: number | null }> = [];
+  readonly appliedEffects: PresentationEffect[] = [];
+  readonly configurations: RendererPolicy[] = [];
   private motionFaultHandler: ((fault: MotionFault) => void) | undefined;
   private motionActiveHandler: ((event: MotionActiveEvent) => void) | undefined;
-  configure(reducedMotion: boolean): void { this.events.push(`configure:${reducedMotion}`); }
+  configure(policy: RendererPolicy): void {
+    this.configurations.push(policy);
+    this.events.push(`configure:${policy.reducedMotion}/${policy.mouthCuesEnabled}`);
+  }
   async loadModel(url: string, _signal: AbortSignal) {
     this.loadedURL = url;
     return { capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 2 } };
@@ -541,6 +636,7 @@ class FakeBackend implements RendererBackend {
   update(delta: number): void { this.events.push(`update:${delta}`); }
   apply(effect: PresentationEffect, causedBySequence?: number): void {
     this.events.push(`apply:${effect.type}`);
+    this.appliedEffects.push(effect);
     this.applyCauses.push({ type: effect.type, causedBySequence: causedBySequence ?? null });
   }
   setSuspended(suspended: boolean): void { this.events.push(`setSuspended:${suspended}`); }
@@ -589,6 +685,21 @@ class PendingBackend extends FakeBackend {
         reject(new DOMException("aborted", "AbortError"));
       }, { once: true });
     });
+  }
+}
+
+class EnrichedCapabilitiesBackend extends FakeBackend {
+  override async loadModel(url: string, _signal: AbortSignal): Promise<Awaited<ReturnType<FakeBackend["loadModel"]>>> {
+    this.loadedURL = url;
+    return {
+      capabilities: {
+        aa: true,
+        look_at: true,
+        spring_bone: true,
+        mtoon_materials: 2,
+        vowels: { aa: true, ih: false, ou: true, ee: false, oh: false },
+      },
+    };
   }
 }
 

@@ -51,6 +51,7 @@ assert.deepEqual(validNames, [
   "command-project-phase.json",
   "command-project-succeeded.json",
   "command-reset.json",
+  "command-set-mouth-vowels.json",
   "command-set-mouth.json",
   "command-set-policy.json",
   "command-set-visibility.json",
@@ -59,6 +60,7 @@ assert.deepEqual(validNames, [
   "observation-first-frame.json",
   "observation-motion-active.json",
   "observation-motion-status.json",
+  "observation-profile-model-loaded-vowels.json",
   "observation-profile-model-loaded.json",
   "observation-renderer-ready.json",
   "observation-resumed.json",
@@ -175,6 +177,7 @@ testLoadProfileShapeAndOneShotRule();
 testObservationIdentityAndCausality();
 testMotionStatusAndActiveMatrices();
 testStructuralBoundaries();
+testMouthCuePolicyValidation();
 
 console.log(
   `contract fixtures: ${validNames.length} valid accepted, ${invalidNames.length} invalid rejected`,
@@ -477,6 +480,183 @@ function testStructuralBoundaries(): void {
       ...invalidMouth,
       scalar: 0.5,
     }))), /invalid_sequence/);
+  }
+}
+
+function testMouthCuePolicyValidation(): void {
+  assert.throws(() =>
+    commandDecoder().decode(JSON.stringify(command("configure", {
+      profile: "lightweight",
+      reduced_motion: false,
+    }))), /invalid_keys/);
+  assert.throws(() =>
+    commandDecoder().decode(JSON.stringify(command("set_policy", {
+      reduced_motion: false,
+    }))), /invalid_keys/);
+  assert.throws(() =>
+    commandDecoder().decode(JSON.stringify(commandAt(1, "reconcile_presentation", {
+      last_projection_sequence: null,
+      generation_id: null,
+      phase: "idle",
+      playback_id: null,
+      reduced_motion: false,
+    }))), /invalid_keys/);
+  assert.throws(() =>
+    commandDecoder().decode(JSON.stringify(command("configure", {
+      profile: "lightweight",
+      reduced_motion: false,
+      mouth_cues_enabled: "yes",
+    }))), /invalid_value/);
+  assert.throws(() =>
+    commandDecoder().decode(JSON.stringify(command("set_policy", {
+      reduced_motion: true,
+      mouth_cues_enabled: 1,
+    }))), /invalid_value/);
+
+  const vowels = { aa: 0.9, ih: 0.8, ou: 0.7, ee: 0.6, oh: 0.5 };
+  const cueEnvelope = commandDecoder();
+  cueEnvelope.decode(JSON.stringify(commandAt(1, "project_phase", {
+    projection_sequence: 1,
+    generation_id: generationID,
+    phase: "speaking",
+    playback_id: playbackID,
+  })));
+  const enriched = cueEnvelope.decode(JSON.stringify(commandAt(2, "set_mouth", {
+    generation_id: generationID,
+    playback_id: playbackID,
+    cue_index: 1,
+    playback_offset_ms: 10,
+    scalar: 0.25,
+    vowels,
+  })));
+  assert.deepEqual(
+    (enriched.command as { payload: Record<string, unknown> }).payload.vowels,
+    vowels,
+  );
+
+  const legacyEnvelope = commandDecoder();
+  legacyEnvelope.decode(JSON.stringify(commandAt(1, "project_phase", {
+    projection_sequence: 1,
+    generation_id: generationID,
+    phase: "speaking",
+    playback_id: playbackID,
+  })));
+  const legacy = legacyEnvelope.decode(JSON.stringify(commandAt(2, "set_mouth", {
+    generation_id: generationID,
+    playback_id: playbackID,
+    cue_index: 1,
+    playback_offset_ms: 10,
+    scalar: 0.25,
+  })));
+  assert.equal("vowels" in (legacy.command as { payload: Record<string, unknown> }).payload, false);
+
+  for (const badVowels of [
+    { ...vowels, aa: 1.5 },
+    { ...vowels, oh: -0.5 },
+    { ...vowels, aa: Number.NaN },
+    { ...vowels, ih: "0.8" },
+  ]) {
+    const decoder = commandDecoder();
+    decoder.decode(JSON.stringify(commandAt(1, "project_phase", {
+      projection_sequence: 1,
+      generation_id: generationID,
+      phase: "speaking",
+      playback_id: playbackID,
+    })));
+    assert.throws(() => decoder.decode(JSON.stringify(commandAt(2, "set_mouth", {
+      generation_id: generationID,
+      playback_id: playbackID,
+      cue_index: 1,
+      playback_offset_ms: 10,
+      scalar: 0.25,
+      vowels: badVowels,
+    }))), /invalid_value/);
+  }
+
+  const vowelCapabilities = {
+    aa: true,
+    look_at: true,
+    spring_bone: false,
+    mtoon_materials: 1,
+    vowels: { aa: true, ih: true, ou: true, ee: true, oh: false },
+  };
+  const enrichedLoad = observationDecoder().decode(JSON.stringify(observationAt(
+    1,
+    1,
+    "profile_model_loaded",
+    { profile_revision: 1, model_token: modelToken, capabilities: vowelCapabilities },
+  )));
+  assert.deepEqual(
+    (enrichedLoad.observation as { payload: { capabilities: Record<string, unknown> } })
+      .payload.capabilities.vowels,
+    vowelCapabilities.vowels,
+  );
+  assert.throws(() =>
+    observationDecoder().decode(JSON.stringify(observationAt(1, 1, "profile_model_loaded", {
+      profile_revision: 1,
+      model_token: modelToken,
+      capabilities: { ...vowelCapabilities, aa: false },
+    }))), /invalid_value/);
+  assert.throws(() =>
+    observationDecoder().decode(JSON.stringify(observationAt(1, 1, "profile_model_loaded", {
+      profile_revision: 1,
+      model_token: modelToken,
+      capabilities: {
+        ...vowelCapabilities,
+        vowels: { ...vowelCapabilities.vowels, ou: "true" },
+      },
+    }))), /invalid_value/);
+
+  for (const badCapabilities of [
+    { ...vowelCapabilities, vowels: null },
+    { ...vowelCapabilities, vowels: { aa: true, ih: true, ou: true, ee: true } },
+    { ...vowelCapabilities, vowels: { ...vowelCapabilities.vowels, blink: true } },
+  ]) {
+    assert.throws(() =>
+      observationDecoder().decode(JSON.stringify(observationAt(1, 1, "profile_model_loaded", {
+        profile_revision: 1,
+        model_token: modelToken,
+        capabilities: badCapabilities,
+      }))), /invalid_(keys|value|shape)/);
+  }
+
+  Object.defineProperty(Object.prototype, "vowels", {
+    configurable: true,
+    value: { aa: false, ih: false, ou: false, ee: false, oh: false },
+  });
+  try {
+    const scalarOnlyDecoder = commandDecoder();
+    scalarOnlyDecoder.decode(JSON.stringify(commandAt(1, "project_phase", {
+      projection_sequence: 1,
+      generation_id: generationID,
+      phase: "speaking",
+      playback_id: playbackID,
+    })));
+    const scalarOnly = scalarOnlyDecoder.decode(JSON.stringify(commandAt(2, "set_mouth", {
+      generation_id: generationID,
+      playback_id: playbackID,
+      cue_index: 1,
+      playback_offset_ms: 10,
+      scalar: 0.25,
+    })));
+    assert.equal(Object.hasOwn(
+      (scalarOnly.command as { payload: Record<string, unknown> }).payload,
+      "vowels",
+    ), false);
+
+    const legacyLoad = observationDecoder().decode(JSON.stringify(observationAt(
+      1,
+      1,
+      "profile_model_loaded",
+      { profile_revision: 1, model_token: modelToken, capabilities: capabilities() },
+    )));
+    assert.equal(Object.hasOwn(
+      (legacyLoad.observation as { payload: { capabilities: Record<string, unknown> } })
+        .payload.capabilities,
+      "vowels",
+    ), false);
+  } finally {
+    Reflect.deleteProperty(Object.prototype, "vowels");
   }
 }
 

@@ -15,6 +15,9 @@ import {
   terminalMotionRoles,
   type AvatarMotionRole,
   type LoadProfilePayload,
+  type MouthVowelCapabilities,
+  type MouthVowelWeights,
+  mouthVowelKeys,
   type MotionBindingPayload,
   type MotionBindings,
   type MotionStatus,
@@ -416,15 +419,45 @@ export class PresentationObservationDecoder {
   }
 }
 
+const setMouthBaseKeys = [
+  "generation_id",
+  "playback_id",
+  "cue_index",
+  "playback_offset_ms",
+  "scalar",
+] as const;
+
+const legacyCapabilityKeys = ["aa", "look_at", "spring_bone", "mtoon_materials"] as const;
+
+function decodeSetMouthBase(payload: BridgeObject): {
+  generation_id: string;
+  playback_id: string;
+  cue_index: number;
+  playback_offset_ms: number;
+  scalar: number;
+} {
+  return {
+    generation_id: requireUUID(payload.generation_id),
+    playback_id: requireUUID(payload.playback_id),
+    cue_index: requireInteger(payload.cue_index, 1),
+    playback_offset_ms: requireInteger(payload.playback_offset_ms, 0, 86_400_000),
+    scalar: requireNumber(payload.scalar, 0, 1),
+  };
+}
+
 function decodeCommand(type: string, payload: BridgeObject): PresentationCommand {
   switch (type) {
     case "configure": {
-      requireKeys(payload, ["profile", "reduced_motion"]);
+      requireKeys(payload, ["profile", "reduced_motion", "mouth_cues_enabled"]);
       const profile = requireString(payload.profile);
       if (profile !== "lightweight") fail("invalid_value");
       return {
         type,
-        payload: { profile, reduced_motion: requireBoolean(payload.reduced_motion) },
+        payload: {
+          profile,
+          reduced_motion: requireBoolean(payload.reduced_motion),
+          mouth_cues_enabled: requireBoolean(payload.mouth_cues_enabled),
+        },
       };
     }
     case "load_profile": {
@@ -475,6 +508,7 @@ function decodeCommand(type: string, payload: BridgeObject): PresentationCommand
         "phase",
         "playback_id",
         "reduced_motion",
+        "mouth_cues_enabled",
       ]);
       const lastProjectionSequence = payload.last_projection_sequence === null
         ? null
@@ -491,6 +525,7 @@ function decodeCommand(type: string, payload: BridgeObject): PresentationCommand
           phase,
           playback_id: playbackID,
           reduced_motion: requireBoolean(payload.reduced_motion),
+          mouth_cues_enabled: requireBoolean(payload.mouth_cues_enabled),
         },
       };
     }
@@ -501,26 +536,28 @@ function decodeCommand(type: string, payload: BridgeObject): PresentationCommand
         payload: { visibility: requireVocabulary(payload.visibility, presentationVisibilities) },
       };
     case "set_policy":
-      requireKeys(payload, ["reduced_motion"]);
-      return { type, payload: { reduced_motion: requireBoolean(payload.reduced_motion) } };
-    case "set_mouth":
-      requireKeys(payload, [
-        "generation_id",
-        "playback_id",
-        "cue_index",
-        "playback_offset_ms",
-        "scalar",
-      ]);
+      requireKeys(payload, ["reduced_motion", "mouth_cues_enabled"]);
       return {
         type,
         payload: {
-          generation_id: requireUUID(payload.generation_id),
-          playback_id: requireUUID(payload.playback_id),
-          cue_index: requireInteger(payload.cue_index, 1),
-          playback_offset_ms: requireInteger(payload.playback_offset_ms, 0, 86_400_000),
-          scalar: requireNumber(payload.scalar, 0, 1),
+          reduced_motion: requireBoolean(payload.reduced_motion),
+          mouth_cues_enabled: requireBoolean(payload.mouth_cues_enabled),
         },
       };
+    case "set_mouth": {
+      if (Object.hasOwn(payload, "vowels")) {
+        requireKeys(payload, [...setMouthBaseKeys, "vowels"]);
+        return {
+          type,
+          payload: {
+            ...decodeSetMouthBase(payload),
+            vowels: requireMouthVowelWeights(payload.vowels),
+          },
+        };
+      }
+      requireKeys(payload, setMouthBaseKeys);
+      return { type, payload: decodeSetMouthBase(payload) };
+    }
     case "reset": {
       requireKeys(payload, ["generation_id", "reason"]);
       const generationID = requireOptionalUUID(payload.generation_id);
@@ -553,7 +590,26 @@ function decodeObservation(type: string, payload: BridgeObject): PresentationObs
     case "profile_model_loaded": {
       requireKeys(payload, ["profile_revision", "model_token", "capabilities"]);
       const capabilities = requireObject(payload.capabilities);
-      requireKeys(capabilities, ["aa", "look_at", "spring_bone", "mtoon_materials"]);
+      if (Object.hasOwn(capabilities, "vowels")) {
+        requireKeys(capabilities, [...legacyCapabilityKeys, "vowels"]);
+        const vowels = requireMouthVowelCapabilities(capabilities.vowels);
+        if (requireBoolean(capabilities.aa) !== vowels.aa) fail("invalid_value");
+        return {
+          type,
+          payload: {
+            profile_revision: requireInteger(payload.profile_revision, 1),
+            model_token: requireUUID(payload.model_token),
+            capabilities: {
+              aa: requireBoolean(capabilities.aa),
+              look_at: requireBoolean(capabilities.look_at),
+              spring_bone: requireBoolean(capabilities.spring_bone),
+              mtoon_materials: requireInteger(capabilities.mtoon_materials, 0, 512),
+              vowels,
+            },
+          },
+        };
+      }
+      requireKeys(capabilities, legacyCapabilityKeys);
       return {
         type,
         payload: {
@@ -933,6 +989,30 @@ function requireUUID(value: unknown): string {
     fail("invalid_value");
   }
   return string;
+}
+
+function requireMouthVowelWeights(value: unknown): MouthVowelWeights {
+  const weights = requireObject(value);
+  requireKeys(weights, mouthVowelKeys);
+  return {
+    aa: requireNumber(weights.aa, 0, 1),
+    ih: requireNumber(weights.ih, 0, 1),
+    ou: requireNumber(weights.ou, 0, 1),
+    ee: requireNumber(weights.ee, 0, 1),
+    oh: requireNumber(weights.oh, 0, 1),
+  };
+}
+
+function requireMouthVowelCapabilities(value: unknown): MouthVowelCapabilities {
+  const capabilities = requireObject(value);
+  requireKeys(capabilities, mouthVowelKeys);
+  return {
+    aa: requireBoolean(capabilities.aa),
+    ih: requireBoolean(capabilities.ih),
+    ou: requireBoolean(capabilities.ou),
+    ee: requireBoolean(capabilities.ee),
+    oh: requireBoolean(capabilities.oh),
+  };
 }
 
 function requireOptionalUUID(value: unknown): string | null {

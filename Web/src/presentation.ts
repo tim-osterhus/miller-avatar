@@ -1,4 +1,5 @@
 import type {
+  MouthVowelWeights,
   PresentationCommand,
   PresentationPhase,
   ResetReason,
@@ -12,6 +13,8 @@ export interface PresentationState {
   lastCueIndex?: number;
   lastPlaybackOffsetMilliseconds?: number;
   mouthScalar: number;
+  mouthVowels: MouthVowelWeights | null;
+  mouthCuesEnabled: boolean;
   reducedMotion: boolean;
   suspended: boolean;
   terminated: boolean;
@@ -30,8 +33,10 @@ export type PresentationEffect =
     phase: PresentationPhase;
     playbackID: string | null;
     mouthScalar: number;
+    mouthCuesEnabled: boolean;
     reducedMotion: boolean;
-  };
+  }
+  | { type: "set_mouth_cues_enabled"; enabled: boolean };
 
 export interface PresentationResult {
   state: PresentationState;
@@ -49,6 +54,8 @@ export function initialPresentationState(): PresentationState {
     phase: "idle",
     playbackID: null,
     mouthScalar: 0,
+    mouthVowels: null,
+    mouthCuesEnabled: true,
     reducedMotion: false,
     suspended: false,
     terminated: false,
@@ -63,19 +70,19 @@ export function reducePresentation(
   if (input.type === "reconcile_presentation") return reconcile(state, input);
   if (input.type === "project_phase") return project(state, input);
   if (input.type === "set_mouth") return mouth(state, input);
-  if (input.type === "set_policy") return policy(state, input.payload.reduced_motion);
+  if (input.type === "set_policy") return policy(state, input.payload);
   if (input.type === "reset") return reset(state, input.payload.generation_id, input.payload.reason);
   if (input.type === "suspend") {
     if (state.suspended) {
       return input.visibility === "hidden" ? changed(revoke(state), []) : unchanged(state);
     }
-    let next = { ...state, suspended: true, mouthScalar: 0 };
+    let next = clearMouthOutput({ ...state, suspended: true });
     if (input.visibility === "hidden") next = revoke(next);
     return changed(next, [{ type: "clear_mouth" }]);
   }
   if (input.type === "resume") {
     if (!state.suspended) return unchanged(state);
-    const next = { ...state, suspended: false, mouthScalar: 0 };
+    const next = clearMouthOutput({ ...state, suspended: false });
     return changed(next, [{
       type: "reconcile",
       lastProjectionSequence: next.lastProjectionSequence ?? null,
@@ -83,6 +90,7 @@ export function reducePresentation(
       phase: next.phase,
       playbackID: next.playbackID,
       mouthScalar: next.mouthScalar,
+      mouthCuesEnabled: next.mouthCuesEnabled,
       reducedMotion: next.reducedMotion,
     }]);
   }
@@ -139,14 +147,21 @@ function reconcile(
     || !validPhase(value.phase, value.generation_id, value.playback_id)
   ) return unchanged(state);
 
-  const next = clearLeaseOutput({
+  const samePlaybackLease = value.generation_id === state.generationID
+    && value.playback_id === state.playbackID;
+  const next = clearMouthOutput({
     ...state,
     generationID: value.generation_id,
     phase: value.phase,
     playbackID: value.playback_id,
+    mouthCuesEnabled: value.mouth_cues_enabled,
     reducedMotion: value.reduced_motion,
     suspended: false,
   });
+  if (!samePlaybackLease) {
+    delete next.lastCueIndex;
+    delete next.lastPlaybackOffsetMilliseconds;
+  }
   if (value.last_projection_sequence === null) {
     delete next.lastProjectionSequence;
   } else {
@@ -159,6 +174,7 @@ function reconcile(
     phase: value.phase,
     playbackID: value.playback_id,
     mouthScalar: 0,
+    mouthCuesEnabled: next.mouthCuesEnabled,
     reducedMotion: value.reduced_motion,
   }]);
 }
@@ -168,6 +184,9 @@ function mouth(
   command: Extract<PresentationCommand, { type: "set_mouth" }>,
 ): PresentationResult {
   const cue = command.payload;
+  const vowels = Object.hasOwn(cue, "vowels")
+    ? (cue as { vowels: MouthVowelWeights }).vowels
+    : null;
   if (!Number.isSafeInteger(cue.cue_index)
     || cue.cue_index < 1
     || cue.cue_index > Number.MAX_SAFE_INTEGER
@@ -178,6 +197,7 @@ function mouth(
     || !Number.isFinite(cue.scalar)
     || cue.scalar < 0
     || cue.scalar > 1
+    || (vowels !== null && !validVowelWeights(vowels))
     || state.phase !== "speaking"
     || cue.generation_id !== state.generationID
     || cue.playback_id !== state.playbackID
@@ -188,16 +208,38 @@ function mouth(
     lastCueIndex: cue.cue_index,
     lastPlaybackOffsetMilliseconds: cue.playback_offset_ms,
   };
-  if (state.suspended || state.reducedMotion) return changed({ ...accepted, mouthScalar: 0 }, []);
-  return changed({ ...accepted, mouthScalar: cue.scalar }, [{ type: "apply_mouth", command }]);
+  if (state.suspended || state.reducedMotion || !state.mouthCuesEnabled) {
+    return changed(clearMouthOutput(accepted), []);
+  }
+  return changed({
+    ...accepted,
+    mouthScalar: cue.scalar,
+    mouthVowels: vowels,
+  }, [{ type: "apply_mouth", command }]);
 }
 
-function policy(state: PresentationState, enabled: boolean): PresentationResult {
-  if (enabled === state.reducedMotion) return unchanged(state);
-  const next = { ...state, reducedMotion: enabled, mouthScalar: enabled ? 0 : state.mouthScalar };
+function validVowelWeights(vowels: MouthVowelWeights): boolean {
+  return [vowels.aa, vowels.ih, vowels.ou, vowels.ee, vowels.oh]
+    .every((weight) => Number.isFinite(weight) && weight >= 0 && weight <= 1);
+}
+
+function policy(
+  state: PresentationState,
+  payload: Extract<PresentationCommand, { type: "set_policy" }>["payload"],
+): PresentationResult {
+  const reducedMotion = payload.reduced_motion;
+  const mouthCuesEnabled = payload.mouth_cues_enabled;
+  const reducedChanged = reducedMotion !== state.reducedMotion;
+  const cuesChanged = mouthCuesEnabled !== state.mouthCuesEnabled;
+  if (!reducedChanged && !cuesChanged) return unchanged(state);
+  let next = { ...state, reducedMotion, mouthCuesEnabled };
+  const suppressOutput = reducedMotion || !mouthCuesEnabled;
+  if (suppressOutput) next = clearMouthOutput(next);
   if (state.suspended) return changed(next, []);
-  const effects: PresentationEffect[] = [{ type: "set_reduced_motion", enabled }];
-  if (enabled) effects.push({ type: "clear_mouth" });
+  const effects: PresentationEffect[] = [];
+  if (reducedChanged) effects.push({ type: "set_reduced_motion", enabled: reducedMotion });
+  if (cuesChanged) effects.push({ type: "set_mouth_cues_enabled", enabled: mouthCuesEnabled });
+  if (suppressOutput) effects.push({ type: "clear_mouth" });
   return changed(next, effects);
 }
 
@@ -218,10 +260,14 @@ function revoke(state: PresentationState): PresentationState {
 }
 
 function clearLeaseOutput(state: PresentationState): PresentationState {
-  const next = { ...state, mouthScalar: 0 };
+  const next = clearMouthOutput({ ...state });
   delete next.lastCueIndex;
   delete next.lastPlaybackOffsetMilliseconds;
   return next;
+}
+
+function clearMouthOutput(state: PresentationState): PresentationState {
+  return { ...state, mouthScalar: 0, mouthVowels: null };
 }
 
 function validPhase(phase: PresentationPhase, generationID: string | null, playbackID: string | null): boolean {

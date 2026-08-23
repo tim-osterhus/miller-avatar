@@ -3,6 +3,8 @@ import {
   bridgeContract,
   type AvatarMotionRole,
   type DisposalReason,
+  type EnrichedModelCapabilities,
+  type LegacyModelCapabilities,
   type LoadProfilePayload,
   type PresentationCommand,
   type PresentationCommandEnvelope,
@@ -38,18 +40,18 @@ export interface FirstFrameEvidence {
 }
 
 export interface LoadedAvatar {
-  capabilities: {
-    aa: boolean;
-    look_at: boolean;
-    spring_bone: boolean;
-    mtoon_materials: number;
-  };
+  capabilities: LegacyModelCapabilities | EnrichedModelCapabilities;
+}
+
+export interface RendererPolicy {
+  readonly reducedMotion: boolean;
+  readonly mouthCuesEnabled: boolean;
 }
 
 export type MotionRegistry = ReadonlyMap<AvatarMotionRole, ConvertedMotion>;
 
 export interface RendererBackend {
-  configure(reducedMotion: boolean): void;
+  configure(policy: RendererPolicy): void;
   loadModel(url: string, signal: AbortSignal): Promise<LoadedAvatar>;
   loadMotion(input: UniqueMotionInput, signal: AbortSignal): Promise<ConvertedMotion>;
   replaceMotions(registry: MotionRegistry, identity?: MotionRuntimeIdentity): void;
@@ -185,15 +187,20 @@ export class WebRendererCore {
       return;
     }
     switch (command.type) {
-      case "configure":
-        this.backend.configure(command.payload.reduced_motion);
+      case "configure": {
+        const policy: RendererPolicy = {
+          reducedMotion: command.payload.reduced_motion,
+          mouthCuesEnabled: command.payload.mouth_cues_enabled,
+        };
+        this.backend.configure(policy);
         this.presentation = reducePresentation(this.presentation, {
           type: "set_policy",
-          payload: { reduced_motion: command.payload.reduced_motion },
+          payload: { reduced_motion: policy.reducedMotion, mouth_cues_enabled: policy.mouthCuesEnabled },
         }).state;
         this.state = reduceLifecycle(this.state, { type: "configured" }).state;
         this.observe(sequence, { type: "renderer_ready", payload: { webgl: "webgl2" } });
         return;
+      }
       case "load_profile":
         await this.load(command.payload, sequence);
         return;

@@ -11,7 +11,7 @@ import {
   type ConvertedMotion,
   type UniqueMotionInput,
 } from "./motion-loader.js";
-import type { LoadedAvatar, MotionRegistry, RendererBackend } from "./bridge.js";
+import type { LoadedAvatar, MotionRegistry, RendererBackend, RendererPolicy } from "./bridge.js";
 import {
   MotionController,
   type MotionActiveEvent,
@@ -321,6 +321,7 @@ export class ThreeVRMRendererBackend implements RendererBackend {
   private cameraBounds: Bounds3 | undefined;
   private motionBounds: ReadonlyMap<AvatarMotionRole, Bounds3> = new Map();
   private reducedMotion = false;
+  private mouthCuesEnabled = true;
   private suspended = false;
   private phase: PresentationPhase = "idle";
   private mouthScalar = 0;
@@ -360,9 +361,11 @@ export class ThreeVRMRendererBackend implements RendererBackend {
     this.resize();
   }
 
-  configure(reducedMotion: boolean): void {
+  configure(policy: RendererPolicy): void {
+    const { reducedMotion, mouthCuesEnabled } = policy;
     const changed = this.reducedMotion !== reducedMotion;
     this.reducedMotion = reducedMotion;
+    this.mouthCuesEnabled = mouthCuesEnabled;
     this.motionController?.setReducedMotion(reducedMotion);
     if (reducedMotion || this.suspended) this.clock.stop();
     else this.clock.start();
@@ -509,7 +512,10 @@ export class ThreeVRMRendererBackend implements RendererBackend {
         this.projectMotion(effect.command.payload, causedBySequence ?? null);
         return;
       case "set_reduced_motion":
-        this.configure(effect.enabled);
+        this.configure({ reducedMotion: effect.enabled, mouthCuesEnabled: this.mouthCuesEnabled });
+        return;
+      case "set_mouth_cues_enabled":
+        this.mouthCuesEnabled = effect.enabled;
         return;
       case "reset":
         this.phase = "idle";
@@ -523,7 +529,10 @@ export class ThreeVRMRendererBackend implements RendererBackend {
         }, causedBySequence ?? null);
         return;
       case "reconcile":
-        this.configure(effect.reducedMotion);
+        this.configure({
+          reducedMotion: effect.reducedMotion,
+          mouthCuesEnabled: effect.mouthCuesEnabled,
+        });
         this.phase = effect.phase;
         this.mouthScalar = effect.mouthScalar;
         if (effect.lastProjectionSequence !== null) {

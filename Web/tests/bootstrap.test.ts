@@ -6,6 +6,7 @@ import {
   type FrameScheduler,
   type RendererBackend,
 } from "../src/runtime.js";
+import type { RendererPolicy } from "../src/bridge.js";
 import type { PresentationEffect } from "../src/presentation.js";
 
 const session = "11111111-1111-4111-8111-111111111111";
@@ -30,10 +31,10 @@ test("production bootstrap installs its only receiver and reports renderer readi
     session_id: session,
     sequence: 1,
     type: "configure",
-    payload: { profile: "lightweight", reduced_motion: false },
+    payload: { profile: "lightweight", reduced_motion: false, mouth_cues_enabled: false },
   }));
 
-  assert.deepEqual(backend.configurations, [false]);
+  assert.deepEqual(backend.configurations, [{ reducedMotion: false, mouthCuesEnabled: false }]);
   assert.deepEqual(observations.map((observation) => observation.type), [
     "wrapper_ready",
     "renderer_ready",
@@ -52,9 +53,9 @@ test("production bootstrap rejects an entry URL without a canonical active sessi
 });
 
 class RecordingBackend implements RendererBackend {
-  configurations: boolean[] = [];
+  configurations: RendererPolicy[] = [];
 
-  configure(reducedMotion: boolean): void { this.configurations.push(reducedMotion); }
+  configure(policy: RendererPolicy): void { this.configurations.push(policy); }
   async loadAsset() {
     return { capabilities: { aa: true, look_at: true, spring_bone: true, mtoon_materials: 1 } };
   }
